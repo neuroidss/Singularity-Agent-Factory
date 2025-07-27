@@ -1,14 +1,14 @@
 
 import { GoogleGenAI, Type } from "@google/genai";
-import type { AIResponse, LLMTool } from "../types";
+import type { AIResponse, LLMTool, APIConfig } from "../types";
 
-const API_KEY = process.env.API_KEY;
-
-if (!API_KEY) {
-    throw new Error("API_KEY environment variable not set.");
-}
-
-const ai = new GoogleGenAI({ apiKey: API_KEY });
+const getAIClient = (apiConfig: APIConfig): GoogleGenAI => {
+    const apiKey = apiConfig.googleAIAPIKey;
+    if (!apiKey) {
+        throw new Error("Google AI API Key not provided. Please configure it in the application settings.");
+    }
+    return new GoogleGenAI({ apiKey });
+};
 
 export const selectRelevantTools = async (
     userInput: string,
@@ -16,7 +16,9 @@ export const selectRelevantTools = async (
     retrieverSystemInstructionTemplate: string,
     modelId: string,
     temperature: number,
+    apiConfig: APIConfig,
 ): Promise<string[]> => {
+    const ai = getAIClient(apiConfig);
      const retrieverSchema = {
         type: Type.OBJECT,
         properties: {
@@ -68,8 +70,12 @@ export const generateResponse = async (
     systemInstruction: string,
     modelId: string,
     temperature: number,
-    onRawResponseChunk: (chunk: string) => void
+    onRawResponseChunk: (chunk: string) => void,
+    apiConfig: APIConfig,
+    // onProgress is unused for this service, but included for signature consistency
+    onProgress?: (message: string) => void, 
 ): Promise<AIResponse> => {
+    const ai = getAIClient(apiConfig);
     let responseText = "";
 
     const mainResponseSchema = {

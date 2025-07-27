@@ -72,16 +72,12 @@ The current implementation is pre-seeded with a few essential meta-tools to acce
     ```bash
     npm install
     ```
-2.  **Set up your environment (Optional, for Google AI Models):**
-    If you wish to use Google AI's models, create a file named `.env.local` in the project's root directory. Inside this file, add your Gemini API key:
-    ```
-    GEMINI_API_KEY=YOUR_API_KEY_HERE
-    ```
-    For local models (Ollama, Hugging Face), this step is not required.
+2.  **Configure Models:**
+    -   **For API-based Models (Google, OpenAI, Ollama):** Select a model from the dropdown. The "API Configuration" section will appear. Enter your API Key and/or endpoint URL there. Keys are stored in your browser's local storage.
+    -   **For Hugging Face (In-Browser) Models:** Select a model from the "HuggingFace" group. The "Hugging Face Configuration" panel will appear, allowing you to choose an execution device (WebGPU or WASM). The first time you run a request, the model (several hundred MB) will be downloaded and cached by your browser.
 
 3.  **Run the development server:**
     ```bash
     npm run dev
     ```
 This will start the development server, and you can view the application in your browser at the local URL provided in your terminal (usually `http://localhost:5173` or similar).
-

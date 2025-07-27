@@ -1,9 +1,10 @@
 
 import React, { useState, useCallback, useMemo, useEffect } from 'react';
 import * as aiService from './services/aiService';
-import { PREDEFINED_TOOLS, AVAILABLE_MODELS } from './constants';
+import { PREDEFINED_TOOLS, AVAILABLE_MODELS, DEFAULT_HUGGING_FACE_DEVICE } from './constants';
 import type { LLMTool, EnrichedAIResponse, DebugInfo, AIResponse, APIConfig, AIModel } from './types';
 import { UIToolRunner } from './components/UIToolRunner';
+import { ModelProvider } from './types';
 
 const generateMachineReadableId = (name: string, existingTools: LLMTool[]): string => {
   let baseId = name
@@ -49,11 +50,21 @@ const App: React.FC = () => {
       () => parseFloat(localStorage.getItem('modelTemperature') || '0.0')
     );
     const [apiConfig, setApiConfig] = useState<APIConfig>(() => {
+        const defaultConfig: APIConfig = { 
+            openAIBaseUrl: '', 
+            openAIAPIKey: '', 
+            ollamaHost: '', 
+            googleAIAPIKey: '',
+            huggingFaceDevice: DEFAULT_HUGGING_FACE_DEVICE,
+        };
         try {
             const stored = localStorage.getItem('apiConfig');
-            return stored ? JSON.parse(stored) : { openAIBaseUrl: '', openAIAPIKey: '', ollamaHost: '' };
+            if (stored) {
+                return { ...defaultConfig, ...JSON.parse(stored) };
+            }
+            return defaultConfig;
         } catch {
-            return { openAIBaseUrl: '', openAIAPIKey: '', ollamaHost: '' };
+            return defaultConfig;
         }
     });
 
@@ -203,7 +214,7 @@ const App: React.FC = () => {
                 
                 const toolsForSelection = tools.map(t => ({id: t.id, name: t.name, description: t.description}));
                 
-                const relevantToolNames = await aiService.selectRelevantTools(userInput, toolsForSelection, retrieverLogicTool.implementationCode, selectedModel, apiConfig, temperature);
+                const relevantToolNames = await aiService.selectRelevantTools(userInput, toolsForSelection, retrieverLogicTool.implementationCode, selectedModel, apiConfig, temperature, setInfo);
                 const relevantTools = relevantToolNames.map(name => {
                     const found = findToolByName(name);
                     if (!found) throw new Error(`Tool retriever returned a non-existent tool name: ${name}`);
@@ -241,7 +252,7 @@ ${JSON.stringify(toolsForPrompt, ['name', 'description', 'category', 'version', 
                 
                 setLastDebugInfo(prev => prev ? { ...prev, rawAIResponse: "⏳ Waiting for stream..." } : null);
 
-                const aiResponse: AIResponse = await aiService.generateResponse(augmentedUserInput, systemInstruction, selectedModel, apiConfig, temperature, handleRawResponseChunk);
+                const aiResponse: AIResponse = await aiService.generateResponse(userInput, systemInstruction, selectedModel, apiConfig, temperature, handleRawResponseChunk, setInfo);
                 
                 let enrichedResult: EnrichedAIResponse = { ...aiResponse };
                 let toolToExecute: LLMTool | undefined;
@@ -379,6 +390,9 @@ ${JSON.stringify(toolsForPrompt, ['name', 'description', 'category', 'version', 
         apiConfig, setApiConfig
     };
 
+    const isHuggingFaceModel = selectedModel.provider === ModelProvider.HuggingFace;
+    const showRemoteApiConfig = !isHuggingFaceModel && ['GoogleAI', 'OpenAI_API', 'Ollama'].includes(selectedModel.provider);
+
     return (
         <div className="min-h-screen bg-gray-900 text-white flex flex-col p-4 sm:p-6 lg:p-8">
             <UIToolRunner tool={getUITool('Application Header')} props={uiProps} />
@@ -389,7 +403,14 @@ ${JSON.stringify(toolsForPrompt, ['name', 'description', 'category', 'version', 
                 <div className="flex flex-col gap-4">
                   <UIToolRunner tool={getUITool('AI Model Selector')} props={uiProps} />
                   <UIToolRunner tool={getUITool('Model Parameters Configuration')} props={uiProps} />
-                  <UIToolRunner tool={getUITool('API Endpoint Configuration')} props={{ ...uiProps, selectedModelProvider: selectedModel.provider }} />
+                  
+                  {isHuggingFaceModel && (
+                      <UIToolRunner tool={getUITool('Hugging Face Configuration')} props={uiProps} />
+                  )}
+                  {showRemoteApiConfig && (
+                    <UIToolRunner tool={getUITool('API Endpoint Configuration')} props={{ ...uiProps, selectedModelProvider: selectedModel.provider }} />
+                  )}
+
                   <UIToolRunner tool={getUITool('User Input Form')} props={uiProps} />
                 </div>
                 

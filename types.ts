@@ -63,6 +63,7 @@ export enum ModelProvider {
   GoogleAI = 'GoogleAI',
   OpenAI_API = 'OpenAI_API',
   Ollama = 'Ollama',
+  HuggingFace = 'HuggingFace',
 }
 
 export interface AIModel {
@@ -71,11 +72,15 @@ export interface AIModel {
   provider: ModelProvider;
 }
 
+export type HuggingFaceDevice = 'wasm' | 'webgpu';
+
 // API Configuration for non-Google models
 export interface APIConfig {
+  googleAIAPIKey: string;
   openAIBaseUrl: string;
   openAIAPIKey: string;
   ollamaHost: string;
+  huggingFaceDevice: HuggingFaceDevice;
 }
 
 // Props passed to UI tools. All properties are optional.

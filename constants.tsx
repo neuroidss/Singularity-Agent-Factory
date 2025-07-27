@@ -1,6 +1,6 @@
 
 import React from 'react';
-import type { LLMTool, AIModel } from './types';
+import type { LLMTool, AIModel, HuggingFaceDevice } from './types';
 import { ModelProvider } from './types';
 
 export const AVAILABLE_MODELS: AIModel[] = [
@@ -9,6 +9,13 @@ export const AVAILABLE_MODELS: AIModel[] = [
     { id: 'gemini-2.5-flash-lite', name: 'Gemini 2.5 Flash-Lite', provider: ModelProvider.GoogleAI },
     { id: 'gemini-2.0-flash', name: 'Gemini 2.0 Flash', provider: ModelProvider.GoogleAI },
     { id: 'gemini-2.0-flash-lite', name: 'Gemini 2.0 Flash-Lite', provider: ModelProvider.GoogleAI },
+    
+    // Hugging Face Transformers.js (runs in-browser)
+    { id: 'onnx-community/gemma-3-1b-it-ONNX', name: 'Gemma 3 1B IT (HF)', provider: ModelProvider.HuggingFace },
+    { id: 'onnx-community/Qwen3-0.6B-ONNX', name: 'Qwen3 0.6B (HF)', provider: ModelProvider.HuggingFace },
+    { id: 'onnx-community/gemma-3n-E2B-it-ONNX', name: 'Gemma 3N E2B (HF)', provider: ModelProvider.HuggingFace },
+    { id: 'onnx-community/Qwen3-1.7B-ONNX', name: 'Qwen3 1.7B (HF)', provider: ModelProvider.HuggingFace },
+    { id: 'onnx-community/Qwen3-4B-ONNX', name: 'Qwen3 4B (HF)', provider: ModelProvider.HuggingFace },
     
     // Non-Google models are now fully enabled.
     { id: 'custom-openai', name: 'Custom (OpenAI-Compatible)', provider: ModelProvider.OpenAI_API },
@@ -20,6 +27,12 @@ export const AVAILABLE_MODELS: AIModel[] = [
     { id: 'qwen3:1.7b', name: 'Qwen3 1.7B (Ollama)', provider: ModelProvider.Ollama },
     { id: 'qwen3:0.6b', name: 'Qwen3 0.6B (Ollama)', provider: ModelProvider.Ollama }
 ];
+
+export const HUGGING_FACE_DEVICES: {label: string, value: HuggingFaceDevice}[] = [
+    { label: 'WebGPU (recommended)', value: 'webgpu' },
+    { label: 'WASM (slower, compatible)', value: 'wasm' },
+];
+export const DEFAULT_HUGGING_FACE_DEVICE: HuggingFaceDevice = 'webgpu';
 
 
 export const PREDEFINED_TOOLS: LLMTool[] = [
@@ -161,21 +174,21 @@ Your response MUST be a single, valid JSON object with an 'action' and a 'reason
   {
     id: 'api_endpoint_configuration',
     name: 'API Endpoint Configuration',
-    description: 'Configure endpoints for OpenAI-compatible and Ollama models. Settings are saved automatically.',
+    description: 'Configure endpoints and API keys for different model providers. Settings are saved automatically.',
     category: 'UI Component',
-    version: 1,
+    version: 2,
     parameters: [
       { name: 'apiConfig', type: 'string', description: 'The current API configuration object', required: true },
       { name: 'setApiConfig', type: 'string', description: 'Function to update the API configuration', required: true },
       { name: 'selectedModelProvider', type: 'string', description: 'The provider of the currently selected model', required: true },
     ],
     implementationCode: `
-      const { openAIBaseUrl, openAIAPIKey, ollamaHost } = apiConfig;
+      const { openAIBaseUrl, openAIAPIKey, ollamaHost, googleAIAPIKey } = apiConfig;
       const provider = selectedModelProvider;
 
-      if (provider === 'GoogleAI') {
-        return null; // Don't show this config for Google models
-      }
+      const handleGoogleKeyChange = (e) => {
+        setApiConfig({ ...apiConfig, googleAIAPIKey: e.target.value });
+      };
       
       const handleOpenAIUrlChange = (e) => {
         setApiConfig({ ...apiConfig, openAIBaseUrl: e.target.value });
@@ -197,7 +210,7 @@ Your response MUST be a single, valid JSON object with an 'action' and a 'reason
           <input
             type={type}
             id={id}
-            value={value}
+            value={value || ''}
             onChange={onChange}
             placeholder={placeholder}
             className="w-full bg-gray-800 border border-gray-600 rounded-lg p-2.5 text-white focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
@@ -207,8 +220,18 @@ Your response MUST be a single, valid JSON object with an 'action' and a 'reason
 
       return (
         <div className="w-full max-w-2xl mx-auto mb-4 p-4 bg-gray-800/80 border border-gray-700 rounded-lg">
-          <h3 className="text-md font-semibold text-gray-200 mb-3">Endpoint Configuration for {provider}</h3>
+          <h3 className="text-md font-semibold text-gray-200 mb-3">API Configuration for {provider}</h3>
           <div className="space-y-3">
+            {provider === 'GoogleAI' && (
+                <InputField 
+                  label="Google AI API Key"
+                  id="google-key"
+                  type="password"
+                  value={googleAIAPIKey}
+                  onChange={handleGoogleKeyChange}
+                  placeholder="Enter your Google AI API Key"
+                />
+            )}
             {provider === 'OpenAI_API' && (
               <>
                 <InputField 
@@ -237,6 +260,49 @@ Your response MUST be a single, valid JSON object with an 'action' and a 'reason
                 placeholder="e.g., http://localhost:11434"
               />
             )}
+          </div>
+        </div>
+      );
+    `
+  },
+  {
+    id: 'hugging_face_configuration',
+    name: 'Hugging Face Configuration',
+    description: 'Configure the device for in-browser models from Hugging Face.',
+    category: 'UI Component',
+    version: 1,
+    parameters: [
+      { name: 'apiConfig', type: 'string', description: 'The current API configuration object', required: true },
+      { name: 'setApiConfig', type: 'string', description: 'Function to update the API configuration', required: true },
+    ],
+    implementationCode: `
+      const { huggingFaceDevice } = apiConfig;
+      
+      const DEVICES = [
+        { label: 'WebGPU (recommended)', value: 'webgpu' },
+        { label: 'WASM (slower, compatible)', value: 'wasm' },
+      ];
+
+      const handleDeviceChange = (e) => {
+        setApiConfig({ ...apiConfig, huggingFaceDevice: e.target.value });
+      };
+
+      return (
+        <div className="w-full max-w-2xl mx-auto mb-4 p-4 bg-gray-800/80 border border-gray-700 rounded-lg">
+          <h3 className="text-md font-semibold text-gray-200 mb-3">Hugging Face Configuration</h3>
+           <p className="text-xs text-gray-400 mb-3">Settings for running models directly in your browser. Loading a model for the first time will trigger a download.</p>
+          <div className="space-y-3">
+             <div>
+                <label htmlFor="hf-device" className="block text-sm font-medium text-gray-400 mb-1">Execution Device</label>
+                <select 
+                    id="hf-device" 
+                    value={huggingFaceDevice} 
+                    onChange={handleDeviceChange} 
+                    className="w-full bg-gray-800 border border-gray-600 rounded-lg p-2.5 text-white focus:ring-2 focus:ring-indigo-500"
+                >
+                    {DEVICES.map(d => <option key={d.value} value={d.value}>{d.label}</option>)}
+                </select>
+             </div>
           </div>
         </div>
       );

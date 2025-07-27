@@ -89,7 +89,8 @@ export const generateResponse = async (
     modelId: string,
     apiConfig: APIConfig,
     temperature: number,
-    onRawResponseChunk: (chunk: string) => void
+    onRawResponseChunk: (chunk: string) => void,
+    onProgress?: (message: string) => void,
 ): Promise<AIResponse> => {
     const url = `${apiConfig.ollamaHost}/api/generate`;
     return commonGenerateResponse(
