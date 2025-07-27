@@ -1,11 +1,28 @@
 
+
 import { GoogleGenAI, Type } from "@google/genai";
 import type { AIResponse, LLMTool, APIConfig } from "../types";
 
 const getAIClient = (apiConfig: APIConfig): GoogleGenAI => {
-    const apiKey = apiConfig.googleAIAPIKey;
+    // Prioritize the key from the UI configuration.
+    let apiKey = apiConfig.googleAIAPIKey;
+
+    // Fallback to environment variable if the UI key is not provided.
     if (!apiKey) {
-        throw new Error("Google AI API Key not provided. Please configure it in the application settings.");
+        try {
+            // Safely access process.env to avoid breaking in pure browser environments.
+            if (typeof process !== 'undefined' && process.env && process.env.GEMINI_API_KEY) {
+                apiKey = process.env.GEMINI_API_KEY;
+            }
+        } catch (e) {
+            // In some sandboxed environments, accessing 'process' can throw an error.
+            // We can ignore this and proceed without the environment variable.
+            console.warn("Could not access process.env to check for GEMINI_API_KEY.");
+        }
+    }
+
+    if (!apiKey) {
+        throw new Error("Google AI API Key not found. Please set it in the app's API Configuration or create a GEMINI_API_KEY environment variable.");
     }
     return new GoogleGenAI({ apiKey });
 };
@@ -90,59 +107,54 @@ export const generateResponse = async (
                 type: Type.STRING,
                 description: "A concise explanation for the chosen action.",
             },
-            executePayload: {
-                type: Type.OBJECT,
-                description: "Payload for EXECUTE_EXISTING action. MUST be provided if action is 'EXECUTE_EXISTING'.",
-                properties: {
-                    selectedToolName: { type: Type.STRING, description: "Name of the tool to run." },
-                    executionParameters: { type: Type.STRING, description: "JSON string of parameters for the tool. Example: '{\\\"input\\\":\\\"hello world\\\"}'" }
-                },
+             // For EXECUTE_EXISTING
+            selectedToolName: {
+                type: Type.STRING,
+                description: "For EXECUTE_EXISTING: Name of the tool to run."
             },
-            createPayload: {
+            executionParameters: {
+                type: Type.STRING,
+                description: "For EXECUTE_EXISTING: JSON string of parameters for the tool. Example: '{\\\"input\\\":\\\"hello world\\\"}'"
+            },
+            // For CREATE
+            newToolDefinition: {
                 type: Type.OBJECT,
-                description: "Payload for CREATE action. MUST be provided if action is 'CREATE'.",
+                description: "For CREATE: Full definition of the new tool.",
                 properties: {
-                    newToolDefinition: {
-                        type: Type.OBJECT,
-                        description: "Full definition of the new tool.",
-                        properties: {
-                            name: { type: Type.STRING, description: "Human-readable name for the new tool." },
-                            description: { type: Type.STRING, description: "A concise, one-sentence explanation of what the new tool does." },
-                            category: { type: Type.STRING, enum: ['Text Generation', 'Image Generation', 'Data Analysis', 'Automation', 'Audio Processing', 'Mathematics', 'UI Component'], },
-                            version: { type: Type.INTEGER, description: "Set to 1 for new tools." },
-                            parameters: {
-                                type: Type.ARRAY,
-                                items: {
-                                    type: Type.OBJECT,
-                                    properties: {
-                                        name: { type: Type.STRING },
-                                        type: { type: Type.STRING, enum: ['string', 'number', 'boolean'] },
-                                        description: { type: Type.STRING },
-                                        required: { type: Type.BOOLEAN }
-                                    },
-                                    required: ["name", "type", "description", "required"]
-                                }
+                    name: { type: Type.STRING, description: "Human-readable name for the new tool." },
+                    description: { type: Type.STRING, description: "A concise, one-sentence explanation of what the new tool does." },
+                    category: { type: Type.STRING, enum: ['Text Generation', 'Image Generation', 'Data Analysis', 'Automation', 'Audio Processing', 'Mathematics', 'UI Component'], },
+                    version: { type: Type.INTEGER, description: "Set to 1 for new tools." },
+                    parameters: {
+                        type: Type.ARRAY,
+                        items: {
+                            type: Type.OBJECT,
+                            properties: {
+                                name: { type: Type.STRING },
+                                type: { type: Type.STRING, enum: ['string', 'number', 'boolean'] },
+                                description: { type: Type.STRING },
+                                required: { type: Type.BOOLEAN }
                             },
-                            implementationCode: { type: Type.STRING, description: "The tool's code (JSX for UI, JS for others). Escape internal double quotes (e.g., \\\"a\\\")." }
-                        },
-                        required: ["name", "description", "category", "version", "parameters", "implementationCode"],
-                    }
+                            required: ["name", "type", "description", "required"]
+                        }
+                    },
+                    implementationCode: { type: Type.STRING, description: "The tool's code (JSX for UI, JS for others). Escape internal double quotes (e.g., \\\"a\\\")." }
                 },
+                required: ["name", "description", "category", "version", "parameters", "implementationCode"],
             },
-            improvePayload: {
-                type: Type.OBJECT,
-                description: "Payload for IMPROVE_EXISTING action. MUST be provided if action is 'IMPROVE_EXISTING'.",
-                properties: {
-                    toolNameToModify: { type: Type.STRING, description: "Name of the tool to modify." },
-                    newImplementationCode: { type: Type.STRING, description: "The complete new code for the tool." }
-                },
+            // For IMPROVE_EXISTING
+            toolNameToModify: {
+                type: Type.STRING,
+                description: "For IMPROVE_EXISTING: Name of the tool to modify."
             },
-            clarifyPayload: {
-                type: Type.OBJECT,
-                description: "Payload for CLARIFY action. MUST be provided if action is 'CLARIFY'.",
-                properties: {
-                    clarificationRequest: { type: Type.STRING, description: "Question to ask the user." }
-                },
+            newImplementationCode: {
+                type: Type.STRING,
+                description: "For IMPROVE_EXISTING: The complete new code for the tool."
+            },
+            // For CLARIFY
+            clarificationRequest: {
+                type: Type.STRING,
+                description: "For CLARIFY: Question to ask the user."
             }
         },
         required: ["action", "reason"],
@@ -174,48 +186,18 @@ export const generateResponse = async (
         }
         
         const parsedResponse = JSON.parse(trimmedResponse);
-
-        // Transform the nested payload from the AI into the flat structure the app expects.
-        const flattenedResponse: Partial<AIResponse> = {
-            action: parsedResponse.action,
-            reason: parsedResponse.reason,
-        };
-
-        switch (parsedResponse.action) {
-            case 'EXECUTE_EXISTING':
-                if (parsedResponse.executePayload) {
-                    flattenedResponse.selectedToolName = parsedResponse.executePayload.selectedToolName;
-                    flattenedResponse.executionParameters = parsedResponse.executePayload.executionParameters;
-                }
-                break;
-            case 'CREATE':
-                if (parsedResponse.createPayload) {
-                    flattenedResponse.newToolDefinition = parsedResponse.createPayload.newToolDefinition;
-                }
-                break;
-            case 'IMPROVE_EXISTING':
-                if (parsedResponse.improvePayload) {
-                    flattenedResponse.toolNameToModify = parsedResponse.improvePayload.toolNameToModify;
-                    flattenedResponse.newImplementationCode = parsedResponse.improvePayload.newImplementationCode;
-                }
-                break;
-            case 'CLARIFY':
-                if (parsedResponse.clarifyPayload) {
-                    flattenedResponse.clarificationRequest = parsedResponse.clarifyPayload.clarificationRequest;
-                }
-                break;
-        }
+        let response: Partial<AIResponse> = parsedResponse;
 
 
-        if (flattenedResponse.executionParameters && typeof flattenedResponse.executionParameters === 'string') {
+        if (response.executionParameters && typeof response.executionParameters === 'string') {
             try {
-                flattenedResponse.executionParameters = JSON.parse(flattenedResponse.executionParameters);
+                response.executionParameters = JSON.parse(response.executionParameters);
             } catch (e) {
-                throw new Error(`Failed to parse 'executionParameters' JSON string: ${flattenedResponse.executionParameters}`);
+                throw new Error(`Failed to parse 'executionParameters' JSON string: ${response.executionParameters}`);
             }
         }
 
-        const validatedResponse = flattenedResponse as AIResponse;
+        const validatedResponse = response as AIResponse;
         
         switch (validatedResponse.action) {
             case 'EXECUTE_EXISTING':

@@ -79,6 +79,7 @@ export interface APIConfig {
   googleAIAPIKey: string;
   openAIBaseUrl: string;
   openAIAPIKey: string;
+  openAIModelId: string;
   ollamaHost: string;
   huggingFaceDevice: HuggingFaceDevice;
 }

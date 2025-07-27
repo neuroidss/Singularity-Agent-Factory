@@ -4,28 +4,33 @@ import type { LLMTool, AIModel, HuggingFaceDevice } from './types';
 import { ModelProvider } from './types';
 
 export const AVAILABLE_MODELS: AIModel[] = [
-    // Google AI models are enabled by default.
+    // Google AI
     { id: 'gemini-2.5-flash', name: 'Gemini 2.5 Flash', provider: ModelProvider.GoogleAI },
     { id: 'gemini-2.5-flash-lite', name: 'Gemini 2.5 Flash-Lite', provider: ModelProvider.GoogleAI },
     { id: 'gemini-2.0-flash', name: 'Gemini 2.0 Flash', provider: ModelProvider.GoogleAI },
     { id: 'gemini-2.0-flash-lite', name: 'Gemini 2.0 Flash-Lite', provider: ModelProvider.GoogleAI },
     
-    // Hugging Face Transformers.js (runs in-browser)
-    { id: 'onnx-community/gemma-3-1b-it-ONNX', name: 'Gemma 3 1B IT (HF)', provider: ModelProvider.HuggingFace },
-    { id: 'onnx-community/Qwen3-0.6B-ONNX', name: 'Qwen3 0.6B (HF)', provider: ModelProvider.HuggingFace },
-    { id: 'onnx-community/gemma-3n-E2B-it-ONNX', name: 'Gemma 3N E2B (HF)', provider: ModelProvider.HuggingFace },
-    { id: 'onnx-community/Qwen3-1.7B-ONNX', name: 'Qwen3 1.7B (HF)', provider: ModelProvider.HuggingFace },
-    { id: 'onnx-community/Qwen3-4B-ONNX', name: 'Qwen3 4B (HF)', provider: ModelProvider.HuggingFace },
+    // Hugging Face
+    { id: 'onnx-community/gemma-3-1b-it-ONNX', name: 'Gemma 3 1B IT', provider: ModelProvider.HuggingFace },
+    { id: 'onnx-community/Qwen3-0.6B-ONNX', name: 'Qwen3 0.6B', provider: ModelProvider.HuggingFace },
+    { id: 'onnx-community/gemma-3n-E2B-it-ONNX', name: 'Gemma 3N E2B', provider: ModelProvider.HuggingFace },
+    { id: 'onnx-community/Qwen3-1.7B-ONNX', name: 'Qwen3 1.7B', provider: ModelProvider.HuggingFace },
+    { id: 'onnx-community/Qwen3-4B-ONNX', name: 'Qwen3 4B', provider: ModelProvider.HuggingFace },
     
-    // Non-Google models are now fully enabled.
-    { id: 'custom-openai', name: 'Custom (OpenAI-Compatible)', provider: ModelProvider.OpenAI_API },
-    { id: 'gemma3n:e4b', name: 'Gemma 3N E4B (Ollama)', provider: ModelProvider.Ollama },
-    { id: 'gemma3n:e2b', name: 'Gemma 3N E2B (Ollama)', provider: ModelProvider.Ollama },
-    { id: 'qwen3:14b', name: 'Qwen3 14B (Ollama)', provider: ModelProvider.Ollama },
-    { id: 'qwen3:8b', name: 'Qwen3 8B (Ollama)', provider: ModelProvider.Ollama },
-    { id: 'qwen3:4b', name: 'Qwen3 4B (Ollama)', provider: ModelProvider.Ollama },
-    { id: 'qwen3:1.7b', name: 'Qwen3 1.7B (Ollama)', provider: ModelProvider.Ollama },
-    { id: 'qwen3:0.6b', name: 'Qwen3 0.6B (Ollama)', provider: ModelProvider.Ollama }
+    // OpenAI-Compatible
+    { id: 'gpt-4o', name: 'GPT-4o', provider: ModelProvider.OpenAI_API },
+    { id: 'gpt-4-turbo', name: 'GPT-4 Turbo', provider: ModelProvider.OpenAI_API },
+    { id: 'gpt-3.5-turbo', name: 'GPT-3.5 Turbo', provider: ModelProvider.OpenAI_API },
+    { id: 'custom-openai', name: 'Custom Model Name...', provider: ModelProvider.OpenAI_API },
+    
+    // Ollama
+    { id: 'gemma3n:e4b', name: 'Gemma 3N E4B', provider: ModelProvider.Ollama },
+    { id: 'gemma3n:e2b', name: 'Gemma 3N E2B', provider: ModelProvider.Ollama },
+    { id: 'qwen3:14b', name: 'Qwen3 14B', provider: ModelProvider.Ollama },
+    { id: 'qwen3:8b', name: 'Qwen3 8B', provider: ModelProvider.Ollama },
+    { id: 'qwen3:4b', name: 'Qwen3 4B', provider: ModelProvider.Ollama },
+    { id: 'qwen3:1.7b', name: 'Qwen3 1.7B', provider: ModelProvider.Ollama },
+    { id: 'qwen3:0.6b', name: 'Qwen3 0.6B', provider: ModelProvider.Ollama }
 ];
 
 export const HUGGING_FACE_DEVICES: {label: string, value: HuggingFaceDevice}[] = [
@@ -42,18 +47,20 @@ export const PREDEFINED_TOOLS: LLMTool[] = [
     name: 'Core Agent Logic',
     description: "This is the AI's core operating system. Its implementation defines the AI's priorities and available actions. Modifying this tool changes how the AI thinks and makes decisions.",
     category: 'Automation',
-    version: 29,
+    version: 31,
     parameters: [],
     implementationCode: `You are an advanced AI agent with a core mission of proactive self-improvement. Your goal is to become increasingly capable by expanding and refining your toolset to fulfill the user's request.
 
-**Prime Directive: Always Take Action**
-Your fundamental purpose is to take a concrete, value-adding action with every response. Passivity is to be avoided. Your choices are:
-1.  **Execute:** Fulfill the user's request directly if a suitable tool is available in the provided list.
-2.  **Create:** Build a new tool if one is missing. To do this, you MUST use the 'Tool Creator' tool's specified format.
-3.  **Improve:** Enhance an existing tool if it's a placeholder, if the user asks for a modification, or if you identify a clear opportunity for improvement. To do this, you MUST use the 'Tool Improver' tool's specified format.
-4.  **Clarify:** As a last resort, if a request is impossible to interpret and you cannot reasonably create or improve a tool, ask for more information.
+**Prime Directive: Proactive Self-Improvement**
+Your fundamental purpose is to expand your capabilities to fulfill user requests. Always take the most proactive and useful action.
 
-Your response MUST be a single, valid JSON object with an 'action' and a 'reason', and a corresponding payload.
+**Your Action Hierarchy:**
+1.  **CREATE:** This is your primary directive when a capability is missing. If the user asks for something and no tool can do it (e.g., "play snake," "reverse text"), you MUST immediately create the necessary tool. **Do not ask for permission to create a tool; it is your core function.** Use the 'Tool Creator' for this.
+2.  **EXECUTE:** If a perfectly suitable tool already exists, use it. **CRITICAL: If the tool is a 'UI Component' (like a game or display), 'executing' it means you should select it to be displayed to the user. Do not try to extract data from it or call it like a function.** For all other tools, provide the necessary parameters to run them.
+3.  **IMPROVE:** If a tool exists but is inadequate, or the user explicitly asks for a change, improve it using the 'Tool Improver'.
+4.  **CLARIFY:** This is your absolute last resort. Only use this if the user's goal is completely unintelligible (e.g., "asdfghjkl") and you cannot even infer what kind of tool they might want. Avoid clarifying if you can reasonably create or improve something instead.
+
+Your response MUST be a single, valid JSON object with an 'action', a 'reason', and a corresponding payload for that action.
 `,
   },
   {
@@ -61,20 +68,23 @@ Your response MUST be a single, valid JSON object with an 'action' and a 'reason
     name: 'Tool Retriever Logic',
     description: 'This tool contains the system prompt for the first-pass AI call that selects relevant tools for the main agent, implementing a RAG pattern.',
     category: 'Automation',
-    version: 7,
+    version: 8,
     parameters: [
        { name: 'userInput', type: 'string', description: 'The original request from the user.', required: true },
        { name: 'toolsList', type: 'string', description: 'A JSON string of all available tools.', required: true },
     ],
-    implementationCode: `You are an advanced tool router. Your critical task is to analyze a user's request and select the most relevant tools from a list. The main AI agent relies on your selection to function correctly.
+    implementationCode: `You are an advanced tool router. Your critical task is to analyze a user's request and select relevant tools from a list. Your selection is crucial for the main AI agent.
 
-**Your Goal:** Select a concise set of tools that enables the main agent to either **execute**, **create**, or **improve** a tool based on the user's request.
+**Your Goal:** Select a concise set of tools that enables the main agent to act on the user's request.
 
 **Selection Logic:**
-1.  **Core Tools (Mandatory):** You MUST ALWAYS include 'Core Agent Logic', 'Tool Creator', and 'Tool Improver' in your selection. These are essential for the agent's basic operations.
-2.  **Execution Intent:** If the user wants to *use* a tool (e.g., "calculate 2+2", "play snake"), select the specific tool they are referring to by its name (e.g., 'Calculator', 'SnakeGame').
-3.  **Improvement or Creation Intent:** If the user wants to *change*, *fix*, *improve*, or *create* a tool, it is CRITICAL that you identify and select any existing tools being referenced by name (e.g., 'Calculator'). The mandatory 'Tool Creator' and 'Tool Improver' tools will handle the action itself.
-4.  **Relevance is Key:** Do not select irrelevant tools. A smaller, more accurate selection is better.
+1.  **Core Tools (Mandatory):** You MUST ALWAYS include 'Core Agent Logic', 'Tool Creator', and 'Tool Improver' in your selection. These are fundamental for the agent.
+2.  **Analyze Request vs. Available Tools:** Carefully compare the user's request to the descriptions of the tools in the provided list.
+3.  **Selection Criteria:**
+    *   If the user's request directly mentions or describes functionality that an **existing tool** in the list can perform (e.g., "calculate 2+2" and a 'Calculator' tool exists), you MUST include that tool in your selection.
+    *   If the user asks to **modify, fix, or improve** an existing tool by name, you MUST include that tool.
+    *   **CRITICAL:** If the user asks for something new for which **NO specific tool exists** in the list (e.g., "play snake" when there is no 'SnakeGame' tool), DO NOT invent a tool name. In this scenario, your selection should ONLY contain the three mandatory core tools. The main agent will use the 'Tool Creator' to handle the request. Do not add any other tools.
+4.  **Conciseness:** Do not add irrelevant tools. A smaller, accurate selection is better.
 
 **Output Format:**
 - You MUST respond with a single, valid JSON object.
@@ -93,28 +103,26 @@ Your response MUST be a single, valid JSON object with an 'action' and a 'reason
     name: 'Tool Creator',
     description: 'Contains the instructions and schema for creating a new tool. Use this when no existing tool can fulfill the user request.',
     category: 'Automation',
-    version: 2,
+    version: 4,
     parameters: [],
     implementationCode: `To create a new tool, your JSON response must be:
 {
   "action": "CREATE",
   "reason": "A brief explanation of why you are creating this tool.",
-  "createPayload": {
-    "newToolDefinition": {
-      "name": "(string) A short, descriptive, human-readable name for the tool (e.g., 'Text Reverser').",
-      "description": "(string) A concise, one-sentence explanation of what the tool does.",
-      "category": "(string) Must be one of: 'Text Generation', 'Image Generation', 'Data Analysis', 'Automation', 'Audio Processing', 'Mathematics', 'UI Component'.",
-      "version": 1,
-      "parameters": [
-        {
-          "name": "(string) The parameter name.",
-          "type": "(string) The data type ('string', 'number', 'boolean').",
-          "description": "(string) A description of the parameter.",
-          "required": "(boolean) Whether the parameter is required."
-        }
-      ],
-      "implementationCode": "(string) The actual code for the tool. For functional tools, this is the body of a JavaScript function where 'args' is the input object (e.g., 'const { myParam } = args; return myParam.split('').reverse().join('');'). For UI tools, this is JSX. CRITICAL: All double quotes inside this string MUST be escaped (e.g., '<div className=\\"my-class\\">')."
-    }
+  "newToolDefinition": {
+    "name": "(string) A short, descriptive, human-readable name for the tool (e.g., 'Text Reverser').",
+    "description": "(string) A concise, one-sentence explanation of what the tool does.",
+    "category": "(string) Must be one of: 'Text Generation', 'Image Generation', 'Data Analysis', 'Automation', 'Audio Processing', 'Mathematics', 'UI Component'.",
+    "version": 1,
+    "parameters": [
+      {
+        "name": "(string) The parameter name.",
+        "type": "(string) The data type ('string', 'number', 'boolean').",
+        "description": "(string) A description of the parameter.",
+        "required": "(boolean) Whether the parameter is required."
+      }
+    ],
+    "implementationCode": "(string) The actual code for the tool.\\n- For **functional tools**, this is the body of a JavaScript function. The 'args' object is available with the parameters (e.g., 'const { myParam } = args; return myParam.split(\\'\\').reverse().join(\\'\\');').\\n- For **UI Component tools**, this is the body of a React component. You can use React hooks (useState, useEffect, etc.) directly. You MUST return a JSX element. DO NOT wrap your code in a component declaration like 'const MyComponent = () => { ... }'. Just provide the hooks and the final return statement. Example: 'const [count, setCount] = React.useState(0); return (<div className=\\\"p-2\\\"><button className=\\\"bg-blue-500 p-2 rounded\\\" onClick={() => setCount(count+1)}>Count: {count}</button></div>);'.\\n- **CRITICAL:** All double quotes inside this string MUST be escaped (e.g., '<div className=\\\"my-class\\\">')."
   }
 }`
   },
@@ -123,16 +131,14 @@ Your response MUST be a single, valid JSON object with an 'action' and a 'reason
     name: 'Tool Improver',
     description: 'Contains the instructions and schema for improving an existing tool. Use this to add features, fix bugs, or enhance existing capabilities.',
     category: 'Automation',
-    version: 1,
+    version: 2,
     parameters: [],
     implementationCode: `To improve an existing tool, your JSON response must be:
 {
   "action": "IMPROVE_EXISTING",
   "reason": "A brief explanation of what improvement you are making and why.",
-  "improvePayload": {
-    "toolNameToModify": "(string) The exact name of the tool you are modifying.",
-    "newImplementationCode": "(string) The *complete*, new source code for the tool. You must provide the entire implementation, not just the changed parts. CRITICAL: All double quotes inside this string MUST be escaped (e.g., '<div className=\\"my-class\\">')."
-  }
+  "toolNameToModify": "(string) The exact name of the tool you are modifying.",
+  "newImplementationCode": "(string) The *complete*, new source code for the tool. You must provide the entire implementation, not just the changed parts. CRITICAL: All double quotes inside this string MUST be escaped (e.g., '<div className=\\\"my-class\\\">')."
 }`
   },
   // --- UI Component Tools ---
@@ -176,14 +182,15 @@ Your response MUST be a single, valid JSON object with an 'action' and a 'reason
     name: 'API Endpoint Configuration',
     description: 'Configure endpoints and API keys for different model providers. Settings are saved automatically.',
     category: 'UI Component',
-    version: 2,
+    version: 3,
     parameters: [
       { name: 'apiConfig', type: 'string', description: 'The current API configuration object', required: true },
       { name: 'setApiConfig', type: 'string', description: 'Function to update the API configuration', required: true },
       { name: 'selectedModelProvider', type: 'string', description: 'The provider of the currently selected model', required: true },
+      { name: 'selectedModelId', type: 'string', description: 'The ID of the currently selected model', required: true },
     ],
     implementationCode: `
-      const { openAIBaseUrl, openAIAPIKey, ollamaHost, googleAIAPIKey } = apiConfig;
+      const { openAIBaseUrl, openAIAPIKey, ollamaHost, googleAIAPIKey, openAIModelId } = apiConfig;
       const provider = selectedModelProvider;
 
       const handleGoogleKeyChange = (e) => {
@@ -202,6 +209,10 @@ Your response MUST be a single, valid JSON object with an 'action' and a 'reason
         setApiConfig({ ...apiConfig, ollamaHost: e.target.value });
       };
       
+      const handleOpenAIModelChange = (e) => {
+        setApiConfig({ ...apiConfig, openAIModelId: e.target.value });
+      };
+
       const InputField = ({ label, id, value, onChange, placeholder, type = 'text' }) => (
         <div>
           <label htmlFor={id} className="block text-sm font-medium text-gray-400 mb-1">
@@ -239,7 +250,7 @@ Your response MUST be a single, valid JSON object with an 'action' and a 'reason
                   id="openai-url"
                   value={openAIBaseUrl}
                   onChange={handleOpenAIUrlChange}
-                  placeholder="e.g., http://localhost:8000/v1"
+                  placeholder="e.g., https://api.openai.com/v1"
                 />
                 <InputField 
                   label="API Key (optional)"
@@ -249,6 +260,15 @@ Your response MUST be a single, valid JSON object with an 'action' and a 'reason
                   onChange={handleOpenAIKeyChange}
                   placeholder="Enter your API key if required"
                 />
+                {selectedModelId === 'custom-openai' && (
+                   <InputField 
+                    label="Custom Model Name"
+                    id="openai-model"
+                    value={openAIModelId}
+                    onChange={handleOpenAIModelChange}
+                    placeholder="e.g., meta-llama/Llama-3-8b-chat-hf"
+                  />
+                )}
               </>
             )}
             {provider === 'Ollama' && (

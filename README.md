@@ -1,3 +1,4 @@
+
 # Singularity Agent Factory
 
 **Live Demo:** [https://neuroidss.github.io/Singularity-Agent-Factory/](https://neuroidss.github.io/Singularity-Agent-Factory/)
@@ -73,7 +74,10 @@ The current implementation is pre-seeded with a few essential meta-tools to acce
     npm install
     ```
 2.  **Configure Models:**
-    -   **For API-based Models (Google, OpenAI, Ollama):** Select a model from the dropdown. The "API Configuration" section will appear. Enter your API Key and/or endpoint URL there. Keys are stored in your browser's local storage.
+    -   **For Google AI Models:** You can provide your API key in two ways. The in-app configuration takes precedence over the environment variable.
+        -   *Method 1 (Environment Variable):* You can set a `GEMINI_API_KEY` environment variable. The application will use this key if no key is entered in the UI. This method requires a development server (like Vite) that exposes environment variables to the browser.
+        -   *Method 2 (In-App UI):* Select a Gemini model from the dropdown. The "API Configuration" section will appear. Enter your API Key there. This is the most direct method and stores the key in your browser's local storage.
+    -   **For other API-based Models (OpenAI, Ollama):** Select a model from the dropdown. The "API Configuration" section will appear. Enter your API Key and/or endpoint URL there.
     -   **For Hugging Face (In-Browser) Models:** Select a model from the "HuggingFace" group. The "Hugging Face Configuration" panel will appear, allowing you to choose an execution device (WebGPU or WASM). The first time you run a request, the model (several hundred MB) will be downloaded and cached by your browser.
 
 3.  **Run the development server:**

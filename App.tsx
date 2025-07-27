@@ -50,23 +50,45 @@ const App: React.FC = () => {
       () => parseFloat(localStorage.getItem('modelTemperature') || '0.0')
     );
     const [apiConfig, setApiConfig] = useState<APIConfig>(() => {
-        const defaultConfig: APIConfig = { 
-            openAIBaseUrl: '', 
-            openAIAPIKey: '', 
-            ollamaHost: '', 
+        const defaultConfig: APIConfig = {
+            openAIBaseUrl: '',
+            openAIAPIKey: '',
+            openAIModelId: '',
+            ollamaHost: '',
             googleAIAPIKey: '',
             huggingFaceDevice: DEFAULT_HUGGING_FACE_DEVICE,
         };
+
+        let initialConfig = { ...defaultConfig };
+
+        // 1. Load from localStorage, which is the primary source of truth for user settings.
         try {
             const stored = localStorage.getItem('apiConfig');
             if (stored) {
-                return { ...defaultConfig, ...JSON.parse(stored) };
+                initialConfig = { ...initialConfig, ...JSON.parse(stored) };
             }
-            return defaultConfig;
         } catch {
-            return defaultConfig;
+            // Fallback to default if parsing fails.
         }
+
+        // 2. If no Google key is set by the user (i.e., not in localStorage),
+        //    then fall back to the environment variable as a convenience.
+        //    This check happens only on initial load.
+        if (!initialConfig.googleAIAPIKey) {
+            try {
+                if (typeof process !== 'undefined' && process.env && process.env.GEMINI_API_KEY) {
+                    initialConfig.googleAIAPIKey = process.env.GEMINI_API_KEY;
+                }
+            } catch (e) {
+                // 'process' might not be defined in a pure browser context.
+            }
+        }
+        
+        return initialConfig;
     });
+    
+    // State to manage the currently displayed UI tool
+    const [activeUITool, setActiveUITool] = useState<LLMTool | null>(null);
 
     const selectedModel = useMemo(
         (): AIModel => AVAILABLE_MODELS.find(m => m.id === selectedModelId) || AVAILABLE_MODELS[0],
@@ -144,6 +166,7 @@ const App: React.FC = () => {
         setError(null);
         setInfo(null);
         setLastResponse(null);
+        setActiveUITool(null); // Close any active UI tool on new submission
 
         const directExecutionRegex = /^run\s+"([^"]+)"\s+with\s+(.*)$/s;
         const match = userInput.trim().match(directExecutionRegex);
@@ -158,7 +181,12 @@ const App: React.FC = () => {
                     throw new Error(`Tool with name "${toolName}" not found.`);
                 }
                 if (toolToExecute.category === 'UI Component') {
-                    throw new Error("UI Component tools cannot be run directly.");
+                    // "Executing" a UI component directly means activating it.
+                    setActiveUITool(toolToExecute);
+                    setInfo(`▶️ Activating tool: "${toolToExecute.name}"`);
+                    setUserInput('');
+                    setIsLoading(false);
+                    return;
                 }
 
                 const params = JSON.parse(paramsJson);
@@ -270,9 +298,17 @@ ${JSON.stringify(toolsForPrompt, ['name', 'description', 'category', 'version', 
                         updatedTools.push(completeTool);
                         
                         enrichedResult.tool = completeTool;
-                        enrichedResult.executionResult = { success: true, summary: "Tool created. It can now be used." };
-                        infoMessage = `✅ New tool "${completeTool.name}" created! Please submit your request again to use it.`;
-                        shouldClearInput = false; // Keep user input for resubmission
+
+                        if (completeTool.category === 'UI Component') {
+                            setActiveUITool(completeTool);
+                            infoMessage = `✅ New tool "${completeTool.name}" created and launched!`;
+                            shouldClearInput = true;
+                            enrichedResult.executionResult = { success: true, summary: "UI tool created and displayed." };
+                        } else {
+                            enrichedResult.executionResult = { success: true, summary: "Tool created. It can now be used." };
+                            infoMessage = `✅ New tool "${completeTool.name}" created! You can now use it.`;
+                            shouldClearInput = false; // Keep input for functional tools
+                        }
                         break;
                     }
                     case 'IMPROVE_EXISTING': {
@@ -304,9 +340,18 @@ ${JSON.stringify(toolsForPrompt, ['name', 'description', 'category', 'version', 
                         
                         const foundTool = findToolByName(aiResponse.selectedToolName);
                         if (!foundTool) throw new Error(`AI returned unknown tool name: ${aiResponse.selectedToolName}`);
-                        if (foundTool.category === 'UI Component') throw new Error("AI tried to execute a UI Component tool.");
+                        
                         enrichedResult.tool = foundTool;
-                        toolToExecute = foundTool;
+                        
+                        if (foundTool.category === 'UI Component') {
+                            // "Executing" a UI tool means displaying it.
+                            setActiveUITool(foundTool);
+                            infoMessage = `▶️ Activating tool: "${foundTool.name}"`;
+                            enrichedResult.executionResult = { success: true, summary: `Displayed UI tool '${foundTool.name}'.` };
+                        } else {
+                            // It's a functional tool, proceed with execution.
+                            toolToExecute = foundTool;
+                        }
                         break;
                     }
                     case 'CLARIFY': {
@@ -373,9 +418,11 @@ ${JSON.stringify(toolsForPrompt, ['name', 'description', 'category', 'version', 
             id: 'ui_tool_not_found', name: `UI Tool Not Found`, description: `A UI tool with the name '${name}' could not be found.`,
             category: 'UI Component', version: 1, parameters: [],
             implementationCode: `
-              <div className="p-4 bg-red-900/50 border-2 border-dashed border-red-500 rounded-lg text-red-300">
-                <p className="font-bold">UI Tool Missing: '${name}'</p>
-              </div>
+              return (
+                <div className="p-4 bg-red-900/50 border-2 border-dashed border-red-500 rounded-lg text-red-300">
+                  <p className="font-bold">UI Tool Missing: '${name}'</p>
+                </div>
+              );
             `
         } as LLMTool;
     };
@@ -408,11 +455,31 @@ ${JSON.stringify(toolsForPrompt, ['name', 'description', 'category', 'version', 
                       <UIToolRunner tool={getUITool('Hugging Face Configuration')} props={uiProps} />
                   )}
                   {showRemoteApiConfig && (
-                    <UIToolRunner tool={getUITool('API Endpoint Configuration')} props={{ ...uiProps, selectedModelProvider: selectedModel.provider }} />
+                    <UIToolRunner tool={getUITool('API Endpoint Configuration')} props={{ ...uiProps, selectedModelProvider: selectedModel.provider, selectedModelId: selectedModel.id }} />
                   )}
 
                   <UIToolRunner tool={getUITool('User Input Form')} props={uiProps} />
                 </div>
+
+                {activeUITool && (
+                    <div className="w-full max-w-3xl mx-auto mt-6">
+                        <div className="bg-gray-800/80 border border-indigo-500 rounded-xl shadow-lg">
+                            <div className="flex justify-between items-center p-3 border-b border-gray-700">
+                                <h3 className="text-lg font-bold text-indigo-300">Active Tool: {activeUITool.name}</h3>
+                                <button 
+                                    onClick={() => setActiveUITool(null)}
+                                    className="bg-gray-700 hover:bg-gray-600 text-white font-bold py-1 px-3 rounded-full text-lg leading-none"
+                                    aria-label="Close active tool"
+                                >
+                                    &times;
+                                </button>
+                            </div>
+                            <div className="p-4">
+                                <UIToolRunner tool={activeUITool} props={{}} />
+                            </div>
+                        </div>
+                    </div>
+                )}
                 
                 <UIToolRunner tool={getUITool('Status Messages Display')} props={uiProps} />
                 <UIToolRunner tool={getUITool('Debug Panel Toggle Switch')} props={uiProps} />

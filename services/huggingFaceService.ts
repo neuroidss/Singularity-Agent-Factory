@@ -28,7 +28,7 @@ const getPipeline = async (modelId: string, apiConfig: APIConfig, onProgress: (m
     (window as any).env.allowLocalModels = false; // Ensure models are fetched from HF hub
     (window as any).env.useFbgemm = false; // Fix for some WASM environments
     
-    generator = await pipeline('text-generation', modelId, {
+    generator = await pipeline<'text-generation'>('text-generation', modelId, {
         device: huggingFaceDevice,
         progress_callback: (progress: any) => {
              const { status, file, progress: p, loaded, total } = progress;
@@ -40,7 +40,7 @@ const getPipeline = async (modelId: string, apiConfig: APIConfig, onProgress: (m
                  onProgress(`Status: ${status}...`);
              }
         },
-    }) as TextGenerationPipeline;
+    });
 
     currentModelId = modelId;
     currentDevice = huggingFaceDevice;
@@ -52,13 +52,19 @@ const getPipeline = async (modelId: string, apiConfig: APIConfig, onProgress: (m
 
 const parseAndValidateAIResponse = (responseText: string): AIResponse => {
     try {
-        let textToParse = responseText;
+        let textToParse = responseText.trim();
         
-        // Clean the response: find the first '{' and the last '}'
-        const firstBrace = textToParse.indexOf('{');
-        const lastBrace = textToParse.lastIndexOf('}');
-        if (firstBrace !== -1 && lastBrace > firstBrace) {
-            textToParse = textToParse.substring(firstBrace, lastBrace + 1);
+        // Models sometimes wrap the JSON in markdown. Let's strip it.
+        const match = textToParse.match(/```(?:json)?\s*([\s\S]+?)\s*```/);
+        if (match && match[1]) {
+            textToParse = match[1];
+        } else {
+             // Fallback for models that don't use markdown but add extra text.
+            const firstBrace = textToParse.indexOf('{');
+            const lastBrace = textToParse.lastIndexOf('}');
+            if (firstBrace !== -1 && lastBrace > firstBrace) {
+                textToParse = textToParse.substring(firstBrace, lastBrace + 1);
+            }
         }
 
         let executionParams = {};

@@ -1,4 +1,3 @@
-
 import type { AIResponse, LLMTool } from "../types";
 
 // This file contains shared logic for OpenAI-compatible and Ollama services.
@@ -37,8 +36,15 @@ const validateResponse = (response: any): AIResponse => {
 
 const parseAndValidateAIResponse = (responseText: string): AIResponse => {
     try {
+        let textToParse = responseText.trim();
+        // Models sometimes wrap the JSON in markdown. Let's strip it.
+        const match = textToParse.match(/```(?:json)?\s*([\s\S]+?)\s*```/);
+        if (match && match[1]) {
+            textToParse = match[1];
+        }
+
         let executionParams = {}
-        const parsed = JSON.parse(responseText);
+        const parsed = JSON.parse(textToParse);
 
         if (parsed.executionParameters && typeof parsed.executionParameters === 'string') {
              try {
