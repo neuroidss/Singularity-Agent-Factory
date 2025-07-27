@@ -1,5 +1,7 @@
 # Singularity Agent Factory
 
+**Live Demo:** [https://neuroidss.github.io/Singularity-Agent-Factory/](https://neuroidss.github.io/Singularity-Agent-Factory/)
+
 This project is an experimental platform for building a self-improving AI agent. The core concept is to start with an agent that has a minimal set of core capabilities and have it dynamically create, execute, and improve its own tools to accomplish increasingly complex tasks.
 
 The ultimate goal is to bootstrap a "singularity agent" that can recursively enhance its own intelligence.
