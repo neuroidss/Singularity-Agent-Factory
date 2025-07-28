@@ -40,7 +40,9 @@ export const UIToolRunner: React.FC<UIToolRunnerComponentProps> = ({ tool, props
 
     // Sanitize the code by removing any potential top-level export statements.
     // This makes the runner more robust against AI-generated code that includes exports.
-    const sanitizedCode = tool.implementationCode.replace(/export default .*;?/g, '');
+    // Also, ensure implementationCode is a string to prevent crashes.
+    const code = tool.implementationCode || '';
+    const sanitizedCode = code.replace(/export default .*;?/g, '');
 
     // The source code of the component function we're creating on the fly.
     // It takes props and includes the tool's implementation.

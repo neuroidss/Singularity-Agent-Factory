@@ -66,6 +66,10 @@ export const selectTools = async (
     apiConfig: APIConfig,
     allTools: LLMTool[]
 ): Promise<{ names: string[], rawResponse: string }> => {
+    if (typeof systemInstruction !== 'string' || !systemInstruction.trim()) {
+        throw new Error("The system instruction for tool retrieval is missing or empty. The 'Tool Retriever Logic' tool may have been corrupted.");
+    }
+
     const lightweightTools = allTools.map(t => ({ name: t.name, description: t.description }));
     const toolsForPrompt = JSON.stringify(lightweightTools, null, 2);
     const fullSystemInstruction = `${systemInstruction}\n\nAVAILABLE TOOLS:\n${toolsForPrompt}`;
@@ -121,6 +125,9 @@ export const generateGoal = async (
     autonomousActionLimit: number,
     lastActionResult: string | null
 ): Promise<{ goal: string, rawResponse: string }> => {
+    if (typeof systemInstruction !== 'string' || !systemInstruction.trim()) {
+        throw new Error("The system instruction for goal generation is missing or empty. The 'Autonomous Goal Generator' tool may have been corrupted.");
+    }
     const lightweightTools = allTools.map(t => ({ name: t.name, description: t.description, version: t.version }));
     const toolsForPrompt = JSON.stringify(lightweightTools, null, 2);
 
@@ -170,6 +177,57 @@ export const generateGoal = async (
     }
 };
 
+export const verifyToolFunctionality = async (
+    systemInstruction: string,
+    modelId: string,
+    temperature: number,
+    apiConfig: APIConfig,
+): Promise<{ is_correct: boolean, reasoning: string, rawResponse: string }> => {
+    if (typeof systemInstruction !== 'string' || !systemInstruction.trim()) {
+        throw new Error("The system instruction for tool verification is missing or empty.");
+    }
+
+    const body = {
+        model: modelId,
+        messages: [
+            { role: 'system', content: systemInstruction },
+            { role: 'user', content: "Please verify the tool as instructed." },
+        ],
+        temperature,
+        response_format: { type: "json_object" },
+    };
+
+    try {
+        const response = await fetch(`${apiConfig.openAIBaseUrl}/chat/completions`, {
+            method: 'POST',
+            headers: getAPIHeaders(apiConfig),
+            body: JSON.stringify(body),
+        });
+
+        if (!response.ok) await handleAPIError(response);
+        
+        const jsonResponse = await response.json();
+        const rawResponse = jsonResponse.choices[0].message.content;
+        
+        if (!rawResponse) {
+            return { is_correct: false, reasoning: "AI returned an empty response.", rawResponse: "{}" };
+        }
+        
+        const parsed = JSON.parse(rawResponse);
+        return {
+            is_correct: parsed.is_correct || false,
+            reasoning: parsed.reasoning || "AI did not provide a reason.",
+            rawResponse: rawResponse
+        };
+
+    } catch (error) {
+        const finalMessage = error instanceof Error ? error.message : "An unknown error occurred during tool verification.";
+        const processingError = new Error(finalMessage) as any;
+        processingError.rawAIResponse = "Failed to get raw response from OpenAI-compatible API.";
+        throw processingError;
+    }
+};
+
 
 export const generateResponse = async (
     userInput: string,
@@ -181,6 +239,9 @@ export const generateResponse = async (
     relevantTools: LLMTool[],
     onProgress?: (message: string) => void,
 ): Promise<AIResponse> => {
+    if (typeof systemInstruction !== 'string' || !systemInstruction.trim()) {
+        throw new Error("The core system instruction is missing or empty. The 'Core Agent Logic' tool may have been corrupted.");
+    }
     const agentTools = buildOpenAITools(relevantTools);
     const toolNameMap = new Map(relevantTools.map(t => [sanitizeForFunctionName(t.name), t.name]));
 

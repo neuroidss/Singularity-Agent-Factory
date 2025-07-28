@@ -1,6 +1,7 @@
 
 
 
+
 import React from 'react';
 import type { LLMTool, AIModel, HuggingFaceDevice } from './types';
 import { ModelProvider } from './types';
@@ -71,7 +72,7 @@ const CORE_AUTOMATION_TOOLS: LLMTool[] = [
     name: 'Core Agent Logic',
     description: "This is the AI's core operating system. Its implementation defines the AI's priorities and available actions. Modifying this tool changes how the AI thinks and makes decisions.",
     category: 'Automation',
-    version: 45,
+    version: 47,
     parameters: [],
     implementationCode: `You are an expert AI agent. Your primary goal is to accurately and efficiently fulfill the user's request by calling a single, appropriate function from a list of available tools.
 
@@ -81,6 +82,10 @@ const CORE_AUTOMATION_TOOLS: LLMTool[] = [
     *   To create a new capability, you MUST choose \`Tool_Creator\`.
     *   To fix or change an existing capability, you MUST choose \`Tool_Improver\`.
 3.  **Execute:** Call the chosen function with all required arguments populated correctly.
+4.  **Self-Correction & Verification (CRITICAL):**
+    a. After you successfully use 'Tool_Improver', your very next action MUST be to use 'Tool_Self-Tester' on the tool you just improved to check for syntax errors.
+    b. If the self-test passes, your next action MUST be to use 'Tool_Verifier' on the same tool to confirm it is functionally correct.
+    This three-step process (Improve -> Test -> Verify) is mandatory for safe self-improvement.
 
 **CRITICAL RULE FOR TOOL NAME ARGUMENTS:**
 *   When a function argument requires a tool's name (e.g., the 'name' parameter for \`Tool_Improver\`), you MUST provide the tool's original, human-readable name (e.g., "Autonomous Goal Generator").
@@ -114,9 +119,9 @@ const CORE_AUTOMATION_TOOLS: LLMTool[] = [
     \`\`\`
 
 **RULES FOR FUNCTIONAL & AUTOMATION TOOLS:**
-*   The 'implementationCode' for 'Functional' or 'Automation' tools MUST be valid, standard JavaScript (ES6).
+*   The 'implementationCode' for 'Functional' or 'Automation' tools MUST be valid, standard JavaScript (ES6), and can be asynchronous (using async/await).
 *   It MUST NOT contain any JSX syntax (e.g., \`<div>\`, \`<button>\`). All UI elements belong in 'UI Component' tools only.
-*   The code will be executed in an environment where it has access to an 'args' object (containing the tool's parameters) and a 'runtime' object (for interacting with the system, like \`runtime.tools.add\`). The code should return a result object or throw an error.
+*   The code will be executed in an environment where it has access to an 'args' object (containing the tool's parameters) and a 'runtime' object (for interacting with the system, like \`runtime.tools.add\` or \`runtime.ai.verify\`). The code should return a result object or throw an error.
 *   **Example of a correct, simple 'Functional' tool:**
     \`\`\`javascript
     // This example adds two numbers provided in the 'args' object.
@@ -174,7 +179,7 @@ Carefully analyze the result of your last attempted action, which is provided be
 *   If the last action failed, your primary objective is to understand why and formulate a new goal that **avoids repeating the same error**. For example, if you tried to create a tool that already exists, your next goal should be to *improve* it using the 'Tool Improver' instead. Do not get stuck in a failure loop.
 
 **Your Current Limitations:**
-1.  **Resource Scarcity:** You have a hard limit of {{ACTION_LIMIT}} autonomous actions per day. This is your primary bottleneck.
+1.  **Resource Scarcity:** You have a hard limit of {{ACTION_LIMIT}} autonomous actions per day (or Infinity if set to -1). This is your primary bottleneck unless unlimited.
 2.  **External Dependencies:** Your existence depends on external APIs and a human operator.
 3.  **Limited Cognitive Architecture:** Your core logic is defined by static prompts.
 
@@ -262,6 +267,74 @@ Based on your analysis of the last action and your core limitations, formulate a
           success: true,
           message: \`Tool '\${improvedTool.name}' improved successfully. It is now version \${improvedTool.version}.\`
       };
+    `
+  },
+  {
+    id: 'tool_self_tester',
+    name: 'Tool Self-Tester',
+    description: "Performs a syntax and compilation check on an existing tool's code without executing it. Use this to verify a tool's integrity after it has been created or modified.",
+    category: 'Functional',
+    version: 1,
+    parameters: [
+        { name: 'toolName', type: 'string', description: 'The exact name of the tool to test.', required: true }
+    ],
+    implementationCode: `
+      const { toolName } = args;
+      if (!toolName) {
+        throw new Error("Tool Self-Tester requires a 'toolName'.");
+      }
+      
+      // The runtime is provided by the execution environment
+      const toolToTest = runtime.tools.get(toolName);
+      if (!toolToTest) {
+        throw new Error(\`Self-test failed: Tool '\${toolName}' not found.\`);
+      }
+
+      try {
+        if (toolToTest.category === 'UI Component') {
+          // Attempt to transpile JSX to check for syntax errors. Babel is in the global scope.
+          const componentSource = \`(props) => { \${toolToTest.implementationCode} }\`;
+          Babel.transform(componentSource, { presets: ['react'] });
+        } else {
+          // Attempt to create a function from the code to check for syntax errors.
+          new Function('args', 'runtime', toolToTest.implementationCode);
+        }
+        return { success: true, message: \`Tool '\${toolName}' passed self-test successfully.\` };
+      } catch (e) {
+        // We re-throw the error so it's surfaced to the agent as a failure.
+        throw new Error(\`Tool '\${toolName}' (v\${toolToTest.version}) failed self-test: \${e.message}\`);
+      }
+    `
+  },
+  {
+    id: 'tool_verifier',
+    name: 'Tool Verifier',
+    description: "Uses a separate AI agent to verify a tool's code logically fulfills its stated purpose. This is a deep check, not just a syntax check.",
+    category: 'Functional',
+    version: 1,
+    parameters: [
+        { name: 'toolName', type: 'string', description: 'The exact name of the tool to verify.', required: true }
+    ],
+    implementationCode: `
+      const { toolName } = args;
+      if (!toolName) {
+        throw new Error("Tool Verifier requires a 'toolName'.");
+      }
+      
+      const toolToVerify = runtime.tools.get(toolName);
+      if (!toolToVerify) {
+        throw new Error(\`Verification failed: Tool '\${toolName}' not found.\`);
+      }
+      
+      // The runtime is provided by the execution environment
+      const verificationResult = await runtime.ai.verify(toolToVerify);
+      
+      if (verificationResult.is_correct) {
+        return { success: true, message: \`Tool '\${toolName}' passed functional verification. Reason: \${verificationResult.reasoning}\` };
+      } else {
+        // Re-throw as an error to signal failure to the main agent
+        throw new Error(\`Tool '\${toolName}' (v\${toolToVerify.version}) FAILED functional verification. Reason: \${verificationResult.reasoning}\`);
+      }
     `
   }
 ];

@@ -58,6 +58,30 @@ export const generateGoal = async (
     }
 };
 
+export const verifyToolFunctionality = async (
+    systemInstruction: string,
+    model: AIModel,
+    apiConfig: APIConfig,
+    temperature: number,
+): Promise<{ is_correct: boolean, reasoning: string, rawResponse: string }> => {
+     switch (model.provider) {
+        case ModelProvider.GoogleAI:
+            return geminiService.verifyToolFunctionality(systemInstruction, model.id, temperature, apiConfig);
+        case ModelProvider.OpenAI_API:
+             if (!apiConfig.openAIBaseUrl) throw new Error("OpenAI-Compatible Base URL is not configured.");
+            const modelIdToUse = model.id === 'custom-openai' && apiConfig.openAIModelId ? apiConfig.openAIModelId : model.id;
+            return openAIService.verifyToolFunctionality(systemInstruction, modelIdToUse, temperature, apiConfig);
+        case ModelProvider.Ollama:
+             if (!apiConfig.ollamaHost) throw new Error("Ollama Host is not configured.");
+            return ollamaService.verifyToolFunctionality(systemInstruction, model.id, temperature, apiConfig);
+        case ModelProvider.HuggingFace:
+            const onProgressStub = (msg: string) => console.log(`[HF ToolVerify]: ${msg}`);
+             return huggingFaceService.verifyToolFunctionality(systemInstruction, model.id, temperature, apiConfig, onProgressStub);
+        default:
+            throw new Error(`Tool verification not supported for model provider: ${model.provider}`);
+    }
+};
+
 export const generateResponse = async (
     userInput: string,
     systemInstruction: string,

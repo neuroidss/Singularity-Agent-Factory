@@ -124,6 +124,9 @@ export const selectTools = async (
     allTools: LLMTool[],
     onProgress: (message: string) => void
 ): Promise<{ names: string[], rawResponse: string }> => {
+    if (typeof systemInstruction !== 'string' || !systemInstruction.trim()) {
+        throw new Error("The system instruction for tool retrieval is missing or empty. The 'Tool Retriever Logic' tool may have been corrupted.");
+    }
     let responseText = "";
     try {
         const pipe = await getPipeline(modelId, apiConfig, onProgress);
@@ -163,6 +166,9 @@ export const generateGoal = async (
     autonomousActionLimit: number,
     lastActionResult: string | null
 ): Promise<{ goal: string, rawResponse: string }> => {
+    if (typeof systemInstruction !== 'string' || !systemInstruction.trim()) {
+        throw new Error("The system instruction for goal generation is missing or empty. The 'Autonomous Goal Generator' tool may have been corrupted.");
+    }
     let responseText = "";
     try {
         const pipe = await getPipeline(modelId, apiConfig, onProgress);
@@ -194,6 +200,40 @@ export const generateGoal = async (
     }
 };
 
+export const verifyToolFunctionality = async (
+    systemInstruction: string,
+    modelId: string,
+    temperature: number,
+    apiConfig: APIConfig,
+    onProgress: (message: string) => void
+): Promise<{ is_correct: boolean, reasoning: string, rawResponse: string }> => {
+    if (typeof systemInstruction !== 'string' || !systemInstruction.trim()) {
+        throw new Error("The system instruction for tool verification is missing or empty.");
+    }
+    let responseText = "";
+    try {
+        const pipe = await getPipeline(modelId, apiConfig, onProgress);
+        responseText = await executePipe(pipe, systemInstruction, "Please verify the tool as instructed.", temperature);
+
+        if (!responseText) {
+            return { is_correct: false, reasoning: "AI returned an empty response.", rawResponse: "{}" };
+        }
+
+        const parsed = parseJsonResponse(responseText);
+        return {
+            is_correct: parsed.is_correct || false,
+            reasoning: parsed.reasoning || "AI did not provide a reason.",
+            rawResponse: responseText
+        };
+
+    } catch (error) {
+        const finalMessage = error instanceof Error ? error.message : "An unknown error occurred during tool verification.";
+        const processingError = new Error(finalMessage) as any;
+        processingError.rawAIResponse = responseText;
+        throw processingError;
+    }
+};
+
 export const generateResponse = async (
     userInput: string,
     systemInstruction: string,
@@ -204,6 +244,9 @@ export const generateResponse = async (
     relevantTools: LLMTool[],
     onProgress: (message: string) => void
 ): Promise<AIResponse> => {
+    if (typeof systemInstruction !== 'string' || !systemInstruction.trim()) {
+        throw new Error("The core system instruction is missing or empty. The 'Core Agent Logic' tool may have been corrupted.");
+    }
      let responseText = "";
      try {
         const pipe = await getPipeline(modelId, apiConfig, onProgress);

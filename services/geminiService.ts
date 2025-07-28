@@ -184,6 +184,10 @@ export const selectTools = async (
     apiConfig: APIConfig,
     allTools: LLMTool[]
 ): Promise<{ names: string[], rawResponse: string }> => {
+    if (typeof systemInstruction !== 'string' || !systemInstruction.trim()) {
+        throw new Error("The system instruction for tool retrieval is missing or empty. The 'Tool Retriever Logic' tool may have been corrupted.");
+    }
+
     const ai = getAIClient(apiConfig);
     const lightweightTools = allTools.map(t => ({ name: t.name, description: t.description }));
     const toolsForPrompt = JSON.stringify(lightweightTools, null, 2);
@@ -250,6 +254,9 @@ export const generateGoal = async (
     autonomousActionLimit: number,
     lastActionResult: string | null,
 ): Promise<{ goal: string, rawResponse: string }> => {
+    if (typeof systemInstruction !== 'string' || !systemInstruction.trim()) {
+        throw new Error("The system instruction for goal generation is missing or empty. The 'Autonomous Goal Generator' tool may have been corrupted.");
+    }
     const ai = getAIClient(apiConfig);
     const lightweightTools = allTools.map(t => ({ name: t.name, description: t.description, version: t.version }));
     const toolsForPrompt = JSON.stringify(lightweightTools, null, 2);
@@ -307,6 +314,68 @@ export const generateGoal = async (
     }
 };
 
+export const verifyToolFunctionality = async (
+    systemInstruction: string,
+    modelId: string,
+    temperature: number,
+    apiConfig: APIConfig,
+): Promise<{ is_correct: boolean, reasoning: string, rawResponse: string }> => {
+    if (typeof systemInstruction !== 'string' || !systemInstruction.trim()) {
+        throw new Error("The system instruction for tool verification is missing or empty.");
+    }
+    const ai = getAIClient(apiConfig);
+
+    const responseSchema = {
+        type: Type.OBJECT,
+        properties: {
+            is_correct: {
+                type: Type.BOOLEAN,
+                description: "True if the code correctly implements the description, false otherwise."
+            },
+            reasoning: {
+                type: Type.STRING,
+                description: "A brief explanation for the decision."
+            }
+        },
+        required: ['is_correct', 'reasoning']
+    };
+
+    try {
+        const response = await ai.models.generateContent({
+            model: modelId,
+            contents: "Please verify the tool as instructed.", 
+            config: {
+                systemInstruction: systemInstruction,
+                temperature: temperature,
+                responseMimeType: "application/json",
+                responseSchema: responseSchema,
+            },
+        });
+
+        const rawResponse = response.text;
+        if (!rawResponse) {
+            return { is_correct: false, reasoning: "AI returned an empty response.", rawResponse: "{}" };
+        }
+        
+        const parsed = JSON.parse(rawResponse);
+        return {
+            is_correct: parsed.is_correct || false,
+            reasoning: parsed.reasoning || "AI did not provide a reason.",
+            rawResponse: rawResponse
+        };
+
+    } catch (error) {
+        console.error("Error in Gemini Service (verifyToolFunctionality):", error);
+        const errorDetails = (error as any).message || (error as any).toString();
+        const responseText = (error as any).response?.text?.();
+        const finalMessage = `AI tool verification failed: ${errorDetails}${responseText ? `\nResponse: ${responseText}` : ''}`;
+        
+        const processingError = new Error(finalMessage) as any;
+        processingError.rawAIResponse = JSON.stringify(error, null, 2);
+        throw processingError;
+    }
+};
+
 
 export const generateResponse = async (
     userInput: string,
@@ -319,6 +388,9 @@ export const generateResponse = async (
     // onProgress is unused for this service, but included for signature consistency
     onProgress?: (message: string) => void, 
 ): Promise<AIResponse> => {
+    if (typeof systemInstruction !== 'string' || !systemInstruction.trim()) {
+        throw new Error("The core system instruction is missing or empty. The 'Core Agent Logic' tool may have been corrupted.");
+    }
     const ai = getAIClient(apiConfig);
     
     // Create a map from sanitized name -> original name

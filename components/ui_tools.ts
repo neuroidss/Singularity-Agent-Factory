@@ -122,26 +122,105 @@ export const PREDEFINED_UI_TOOLS: LLMTool[] = [
         // This is imported from types.ts, but we need it available in the scope of the dynamic component
         const OperatingMode = { Command: 'COMMAND', Assist: 'ASSIST', Autonomous: 'AUTONOMOUS' };
         
-        const percentage = autonomousActionLimit > 0 ? (autonomousActionCount / autonomousActionLimit) * 100 : 0;
-        const isDepleted = autonomousActionCount >= autonomousActionLimit;
+        const isUnlimited = autonomousActionLimit === -1;
+        const percentage = !isUnlimited && autonomousActionLimit > 0 ? (autonomousActionCount / autonomousActionLimit) * 100 : 0;
+        const isDepleted = !isUnlimited && autonomousActionCount >= autonomousActionLimit;
 
         return (
           <div className="bg-slate-800/50 border border-slate-700/80 rounded-lg p-4 h-full flex flex-col">
             <h3 className="text-md font-semibold text-slate-200 mb-2">Autonomous Actions Today</h3>
             <div className="flex items-center gap-4">
-                <p className={\`text-2xl font-bold \${isDepleted ? 'text-red-500' : 'text-white'}\`}>
-                    {autonomousActionCount}
-                </p>
-                <p className="text-2xl font-light text-slate-400">/</p>
-                <p className="text-2xl text-slate-400">{autonomousActionLimit}</p>
+                 {isUnlimited ? (
+                    <p className="text-2xl font-bold text-green-400">Unlimited</p>
+                 ) : (
+                    <>
+                        <p className={\`text-2xl font-bold \${isDepleted ? 'text-red-500' : 'text-white'}\`}>
+                            {autonomousActionCount}
+                        </p>
+                        <p className="text-2xl font-light text-slate-400">/</p>
+                        <p className="text-2xl text-slate-400">{autonomousActionLimit}</p>
+                    </>
+                 )}
             </div>
             <div className="w-full bg-gray-700 rounded-full h-2.5 mt-3">
               <div 
-                className={\`h-2.5 rounded-full \${isDepleted ? 'bg-red-600' : 'bg-green-500'}\`}
-                style={{ width: \`\${Math.min(percentage, 100)}%\` }}
+                className={\`h-2.5 rounded-full \${isUnlimited ? 'bg-green-500' : (isDepleted ? 'bg-red-600' : 'bg-green-500')}\`}
+                style={{ width: \`\${isUnlimited ? 100 : Math.min(percentage, 100)}%\` }}
               ></div>
             </div>
-            <p className="text-xs text-slate-500 mt-1">Resets daily. Remaining: {Math.max(0, autonomousActionLimit - autonomousActionCount)}</p>
+             <p className="text-xs text-slate-500 mt-1">
+                {isUnlimited ? 'Running without limits.' : \`Resets daily. Remaining: \${Math.max(0, autonomousActionLimit - autonomousActionCount)}\`}
+            </p>
+          </div>
+        );
+      `
+    },
+    {
+      id: 'autonomous_action_limiter',
+      name: 'Autonomous Action Limiter',
+      description: "Configures the daily action limit for the autonomous agent.",
+      category: 'UI Component',
+      version: 2,
+      parameters: [
+        { name: 'autonomousActionLimit', type: 'number', description: 'The current daily limit.', required: true },
+        { name: 'setAutonomousActionLimit', type: 'string', description: 'Function to update the daily limit.', required: true },
+      ],
+      implementationCode: `
+        const isInfinite = autonomousActionLimit === -1;
+
+        const handleLimitChange = (e) => {
+          const value = parseInt(e.target.value, 10);
+          if (!isNaN(value) && value >= 0 && value <= 500) {
+            setAutonomousActionLimit(value);
+          }
+        };
+        
+        const handleInputChange = (e) => {
+             const value = parseInt(e.target.value, 10);
+             if (!isNaN(value)) {
+                setAutonomousActionLimit(value);
+             } else if (e.target.value === '') {
+                 setAutonomousActionLimit(0);
+             }
+        }
+
+        const toggleInfinite = () => {
+          setAutonomousActionLimit(isInfinite ? 20 : -1);
+        };
+
+        return (
+          <div className="bg-slate-800/50 border border-slate-700/80 rounded-lg p-4 h-full flex flex-col">
+            <h3 className="text-md font-semibold text-slate-200 mb-2">Daily Action Limit</h3>
+            <div className="flex items-center gap-4 flex-grow">
+              {isInfinite ? (
+                <p className="text-2xl font-bold text-green-400">Unlimited</p>
+              ) : (
+                <input 
+                  type="number"
+                  value={String(autonomousActionLimit)}
+                  onChange={handleInputChange}
+                  className="w-24 text-2xl font-bold bg-transparent text-white focus:outline-none focus:ring-0 p-0"
+                />
+              )}
+            </div>
+            {!isInfinite && (
+              <input
+                type="range"
+                min="0"
+                max="100"
+                step="1"
+                value={autonomousActionLimit}
+                onChange={handleLimitChange}
+                className="w-full h-2 bg-gray-700 rounded-lg appearance-none cursor-pointer mt-2"
+              />
+            )}
+            <div className="mt-3">
+              <label className="flex items-center text-xs text-gray-400 gap-2 cursor-pointer">
+                <input type="checkbox" checked={isInfinite} onChange={toggleInfinite} className="form-checkbox h-4 w-4 rounded bg-gray-700 border-gray-600 text-indigo-600 focus:ring-indigo-500" />
+                Enable Unlimited Actions
+              </label>
+            </div>
+            <p className="text-xs text-slate-500 mt-1">Set to -1 for unlimited. Saved automatically.</p>
           </div>
         );
       `
