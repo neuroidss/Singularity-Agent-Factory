@@ -1,51 +1,36 @@
-import { ModelProvider, type AIModel, type APIConfig, type AIResponse, type LLMTool, type MissionPlanningInfo } from '../types';
+import { ModelProvider, type AIModel, type APIConfig, type AIResponse, type LLMTool } from '../types';
 import * as geminiService from './geminiService';
 import * as openAIService from './openAIService';
 import * as ollamaService from './ollamaService';
 import * as huggingFaceService from './huggingFaceService';
 
 
-const validateMissionPlan = (parsed: any): MissionPlanningInfo['response'] => {
-    const { mission, toolNames } = parsed;
-    if (typeof mission !== 'string') {
-        throw new Error("AI response for mission planning was malformed. Expected a 'mission' string.");
-    }
-    if (!toolNames || !Array.isArray(toolNames) || !toolNames.every(name => typeof name === 'string')) {
-        throw new Error("AI response for mission planning was malformed. Expected a 'toolNames' array of strings.");
-    }
-    return { mission, toolNames };
-};
-
-export const planMissionAndSelectTools = async (
+export const selectTools = async (
     userInput: string,
     systemInstruction: string,
     model: AIModel,
     apiConfig: APIConfig,
     temperature: number,
+    allTools: LLMTool[],
     onProgress: (message: string) => void,
-): Promise<MissionPlanningInfo['response']> => {
-    switch (model.provider) {
+): Promise<{ names: string[], rawResponse: string }> => {
+     switch (model.provider) {
         case ModelProvider.GoogleAI:
-            return geminiService.planMissionAndSelectTools(userInput, systemInstruction, model.id, temperature, apiConfig);
-        case ModelProvider.OpenAI_API: {
-            if (!apiConfig.openAIBaseUrl) throw new Error("OpenAI-Compatible Base URL is not configured. Please set it below the model selector.");
+            return geminiService.selectTools(userInput, systemInstruction, model.id, temperature, apiConfig, allTools);
+        case ModelProvider.OpenAI_API:
+             if (!apiConfig.openAIBaseUrl) throw new Error("OpenAI-Compatible Base URL is not configured. Please set it below the model selector.");
             const modelIdToUse = model.id === 'custom-openai' && apiConfig.openAIModelId ? apiConfig.openAIModelId : model.id;
-            const openAIResult = await openAIService.planMissionAndSelectTools(userInput, systemInstruction, modelIdToUse, apiConfig, temperature);
-            return validateMissionPlan(openAIResult);
-        }
-        case ModelProvider.Ollama: {
-            if (!apiConfig.ollamaHost) throw new Error("Ollama Host is not configured. Please set it below the model selector.");
-            const ollamaResult = await ollamaService.planMissionAndSelectTools(userInput, systemInstruction, model.id, apiConfig, temperature);
-            return validateMissionPlan(ollamaResult);
-        }
-        case ModelProvider.HuggingFace: {
-            const hfResult = await huggingFaceService.planMissionAndSelectTools(userInput, systemInstruction, model.id, apiConfig, temperature, onProgress);
-            return validateMissionPlan(hfResult);
-        }
+            return openAIService.selectTools(userInput, systemInstruction, modelIdToUse, temperature, apiConfig, allTools);
+        case ModelProvider.Ollama:
+             if (!apiConfig.ollamaHost) throw new Error("Ollama Host is not configured. Please set it below the model selector.");
+            return ollamaService.selectTools(userInput, systemInstruction, model.id, temperature, apiConfig, allTools);
+        case ModelProvider.HuggingFace:
+             return huggingFaceService.selectTools(userInput, systemInstruction, model.id, temperature, apiConfig, allTools, onProgress);
         default:
-            throw new Error(`Unsupported model provider: ${model.provider}`);
+            throw new Error(`Tool selection not supported for model provider: ${model.provider}`);
     }
-};
+}
+
 
 export const generateResponse = async (
     userInput: string,

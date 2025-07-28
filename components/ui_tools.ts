@@ -448,7 +448,7 @@ export const PREDEFINED_UI_TOOLS: LLMTool[] = [
     name: 'Debug Information Panel',
     description: 'Renders the debug panel with detailed AI interaction logs.',
     category: 'UI Component',
-    version: 9,
+    version: 11,
     parameters: [
       { name: 'debugInfo', type: 'string', description: 'The debug info object', required: false },
     ],
@@ -463,6 +463,11 @@ export const PREDEFINED_UI_TOOLS: LLMTool[] = [
       const CollapsibleSection = ({ title, number, children, isPending, defaultOpen = false }) => {
         const [isOpen, setIsOpen] = React.useState(defaultOpen);
         const Icon = isOpen ? '▼' : '►';
+        
+        // When new data comes in, we want to auto-open the section.
+        React.useEffect(() => {
+            setIsOpen(defaultOpen);
+        }, [defaultOpen]);
         
         return (
           <div className="border border-yellow-300/20 rounded-lg">
@@ -502,67 +507,77 @@ export const PREDEFINED_UI_TOOLS: LLMTool[] = [
         </div>
       );
 
+      if (!debugInfo) {
+          return (
+             <div className="w-full max-w-7xl mx-auto mt-6 bg-gray-800/60 border-2 border-dashed border-yellow-600/50 rounded-xl p-6">
+                <h3 className="text-2xl font-bold text-center mb-6 text-yellow-400">Agent Debug View</h3>
+                <p className="text-yellow-300 text-center">No debug information available. Submit a request to see the details here.</p>
+             </div>
+          )
+      }
+
+      const { userInput, modelId, temperature, toolSelectionCall, agentExecutionCall } = debugInfo;
+
       return (
         <div className="w-full max-w-7xl mx-auto mt-6 bg-gray-800/60 border-2 border-dashed border-yellow-600/50 rounded-xl p-6">
             <h3 className="text-2xl font-bold text-center mb-6 text-yellow-400">Agent Debug View</h3>
-            { !debugInfo ? (
-              <p className="text-yellow-300 text-center">No debug information available. Submit a request to see the details here.</p>
-            ) : (
-              <div className="space-y-4">
-                <CollapsibleSection number="1" title="Initial Input & Config" defaultOpen={true}>
-                    <div className="space-y-4">
-                        <ValueDisplay title="User Input:" content={debugInfo.userInput} />
-                        <div className="grid grid-cols-2 gap-4">
-                            <ValueDisplay title="Model:" content={debugInfo.modelId} />
-                            <ValueDisplay title="Temperature:" content={debugInfo.temperature} />
-                        </div>
+            <div className="space-y-4">
+                <div className="space-y-2">
+                    <ValueDisplay title="User Input:" content={userInput} />
+                    <div className="grid grid-cols-2 gap-4">
+                        <ValueDisplay title="Model:" content={modelId} />
+                        <ValueDisplay title="Temperature:" content={temperature} />
                     </div>
-                </CollapsibleSection>
-                
-                <CollapsibleSection number="2" title="AI Call: Mission Planning & Tool Selection" isPending={!debugInfo.missionPlanning} defaultOpen={true}>
-                    {debugInfo.missionPlanning ? (
-                        'error' in debugInfo.missionPlanning ? (
-                            <ErrorDisplay error={debugInfo.missionPlanning.error} />
-                        ) : (
-                            <div className="space-y-4">
-                                <ValueDisplay title="System Instruction:" content={debugInfo.missionPlanning.systemInstruction} />
-                                <ValueDisplay title="AI Response (Mission & Tools):" content={JSON.stringify(debugInfo.missionPlanning.response, null, 2)} />
-                            </div>
-                        )
+                </div>
+
+                <CollapsibleSection number="1" title="Tool Retrieval (RAG)" isPending={!toolSelectionCall?.rawResponse} defaultOpen={true}>
+                    {toolSelectionCall ? (
+                        <div className="space-y-4">
+                             <details className="bg-gray-900/40 rounded-lg" open>
+                                <summary className="cursor-pointer p-2 font-semibold text-gray-300">Inputs to Retriever</summary>
+                                <div className="p-4 border-t border-gray-700 space-y-4">
+                                    <ValueDisplay title="System Instruction:" content={toolSelectionCall.systemInstruction} />
+                                    <ValueDisplay title="All Available Tools:" content={JSON.stringify(toolSelectionCall.availableTools, null, 2)} />
+                                </div>
+                            </details>
+                            <details className="bg-gray-900/40 rounded-lg" open>
+                                <summary className="cursor-pointer p-2 font-semibold text-gray-300">Outputs & Result</summary>
+                                <div className="p-4 border-t border-gray-700 space-y-4">
+                                     <ValueDisplay title="Raw Response from AI:" content={toolSelectionCall.rawResponse} />
+                                     <ValueDisplay title="Selected Tool Names:" content={JSON.stringify(toolSelectionCall.selectedToolNames, null, 2)} />
+                                </div>
+                            </details>
+                            {toolSelectionCall.error && (
+                                <ErrorDisplay title="Retrieval Error" error={toolSelectionCall.error} />
+                            )}
+                        </div>
                     ) : ( <p className="text-yellow-400/80">Pending...</p> )}
                 </CollapsibleSection>
-
-                <CollapsibleSection number="3" title="AI Call: Final Agent Execution" isPending={!debugInfo.finalAgentCall} defaultOpen={true}>
-                   {debugInfo.finalAgentCall ? (
-                        'error' in debugInfo.finalAgentCall ? (
-                            <ErrorDisplay error={debugInfo.finalAgentCall.error} />
-                        ) : (
-                            <div className="space-y-4">
-                                <details className="bg-gray-900/40 rounded-lg" open>
-                                    <summary className="cursor-pointer p-2 font-semibold text-gray-300">Inputs</summary>
-                                    <div className="p-4 border-t border-gray-700 space-y-4">
-                                        <ValueDisplay title="System Instruction:" content={debugInfo.finalAgentCall.systemInstruction} />
-                                        <ValueDisplay title="User Prompt (from Mission Plan):" content={debugInfo.finalAgentCall.userPrompt} />
-                                        <ValueDisplay title="Tools Provided to Agent:" content={JSON.stringify(debugInfo.finalAgentCall.toolsProvided.map(t => ({ name: t.name, description: t.description })), null, 2)} />
-                                    </div>
-                                </details>
-                                <details className="bg-gray-900/40 rounded-lg" open>
-                                    <summary className="cursor-pointer p-2 font-semibold text-gray-300">Outputs</summary>
-                                    <div className="p-4 border-t border-gray-700 space-y-4">
-                                       <ValueDisplay title="Raw Response from AI:" content={debugInfo.finalAgentCall.rawResponse} />
-                                       <ValueDisplay title="Processed Result (Final App State):" content={JSON.stringify(debugInfo.finalAgentCall.processedResponse, null, 2)} />
-                                    </div>
-                                </details>
-                            </div>
-                        )
-                    ) : ( <p className="text-yellow-400/80">Waiting for previous step...</p> )}
+                
+                <CollapsibleSection number="2" title="Agent Execution" isPending={toolSelectionCall && !agentExecutionCall} defaultOpen={!!toolSelectionCall}>
+                    {agentExecutionCall ? (
+                        <div className="space-y-4">
+                            <details className="bg-gray-900/40 rounded-lg" open>
+                                <summary className="cursor-pointer p-2 font-semibold text-gray-300">Inputs to Agent</summary>
+                                <div className="p-4 border-t border-gray-700 space-y-4">
+                                    <ValueDisplay title="System Instruction:" content={agentExecutionCall.systemInstruction} />
+                                    <ValueDisplay title="Relevant Tools Provided:" content={JSON.stringify(agentExecutionCall.toolsProvided.map(t => ({ name: t.name, description: t.description })), null, 2)} />
+                                </div>
+                            </details>
+                            <details className="bg-gray-900/40 rounded-lg" open>
+                                <summary className="cursor-pointer p-2 font-semibold text-gray-300">Outputs & Result</summary>
+                                <div className="p-4 border-t border-gray-700 space-y-4">
+                                   <ValueDisplay title="Raw Response from AI:" content={agentExecutionCall.rawResponse} />
+                                   <ValueDisplay title="Processed Result (Final App State):" content={JSON.stringify(agentExecutionCall.processedResponse, null, 2)} />
+                                </div>
+                            </details>
+                            {agentExecutionCall.error && (
+                                <ErrorDisplay title="Execution Error" error={agentExecutionCall.error} />
+                            )}
+                        </div>
+                    ) : ( <p className="text-yellow-400/80">{toolSelectionCall ? 'Pending...' : 'Waiting for Tool Retrieval to complete.'}</p> )}
                 </CollapsibleSection>
-
-                {debugInfo.processError && (
-                    <ErrorDisplay title="Overall Process Error" error={debugInfo.processError} />
-                )}
-              </div>
-            )}
+            </div>
         </div>
       );
     `

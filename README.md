@@ -21,23 +21,22 @@ To ensure this cycle of self-improvement is never broken, the agent's core logic
 
 ## How It Works: The Agent Lifecycle
 
-The agent's "thought process" for every user request follows a Retrieval-Augmented Generation (RAG) pattern.
+To handle a potentially massive library of tools efficiently, the agent's "thought process" for every user request follows a two-step Retrieval-Augmented Generation (RAG) pattern. This prevents the agent from being overwhelmed by irrelevant information.
 
 ```
 User Input -> [1. Tool Retriever (RAG)] -> [2. Core Agent (LLM)] -> [3. Action (Execute/Create/Improve)]
 ```
 
-1.  **Tool Retriever (RAG):** The user's request is first sent to a "Tool Retriever" model. Its job is to analyze the request and select a small, relevant set of tools from the main tool library. This is crucial—the agent doesn't get overwhelmed with every tool at once, only the ones it needs for the task at hand. Critically, it always includes the foundational meta-tools (`Core Agent Logic`, `Tool Creator`, `Tool Improver`) for any request that requires an action.
-2.  **Core Agent (LLM):** The user's request, along with the *code and descriptions of the retrieved tools*, is then sent to the main agent. The agent uses this context to decide which tool to call and generates a JSON object describing its plan.
+1.  **Tool Retriever (RAG):** The user's request is first sent to a specialized "Tool Retriever" AI. Its only job is to analyze the request and select a small, relevant set of tools from the main tool library. It is explicitly instructed to only choose from the provided list and not to invent tools. This logic is defined in the `Tool Retriever Logic` tool.
+2.  **Core Agent (LLM):** The user's request, along with the *code and descriptions of the retrieved tools*, is then sent to the main agent (defined in `Core Agent Logic`). Critically, the foundational meta-tools (`Tool Creator`, `Tool Improver`) are always included in this set, ensuring the agent can always act. With this focused context, the agent decides which tool to call and generates a JSON object describing its plan.
 3.  **Action:** The application parses the agent's JSON plan and executes it. This might involve running a tool's code, adding a new tool via `Tool Creator`, or updating an existing one via `Tool Improver`.
 
 ## Key Components
 
-### The Tools
-
 Everything the agent can do is defined as a "tool". Even its core abilities are just tools that can be viewed and, theoretically, improved by the agent itself.
 
--   `Core Agent Logic`: This tool contains the fundamental system prompt for the main agent. It defines the agent's core personality and decision-making process.
+-   `Tool Retriever Logic`: The system prompt for the first AI call (the RAG step). It instructs the AI on how to select relevant tools.
+-   `Core Agent Logic`: The system prompt for the second AI call (the execution step). It defines the agent's core personality and decision-making process.
 -   `Tool Creator`: This "meta-tool" allows the agent to create entirely new tools.
 -   `Tool Improver`: This "meta-tool" allows the agent to modify and enhance existing tools, which is the key to recursive self-improvement.
 -   **Functional & UI Tools:** All other tools that the agent creates or starts with, from a simple `Calculator` to the components that render the application's UI.
@@ -49,17 +48,17 @@ This is the most important concept to test.
 1.  **Creation:** Give the agent a simple task it can't do:
     > `calculate 2+2`
 
-    The agent should recognize it lacks a calculator and call the `Tool Creator` to generate a new `Calculator` tool.
+    The `Tool Retriever` should find no relevant tools. The `Core Agent` will then receive the request with only its core tools and decide it needs to create a new capability. It will call the `Tool Creator` to generate a `Calculator` tool.
 
 2.  **Execution:** After the calculator is created, submit the same prompt again:
     > `calculate 2+2`
 
-    This time, the agent should find the `Calculator` tool and call it to provide the correct answer.
+    This time, the `Tool Retriever` should identify the `Calculator` tool as relevant. The `Core Agent` will receive the `Calculator` tool and call it to provide the correct answer.
 
 3.  **Improvement:** Now, ask for an enhancement that the current tool cannot handle:
     > `add a square root function to the calculator`
 
-    The agent should identify the `Calculator` tool and call the `Tool Improver`, providing the new `implementationCode` to add the new functionality and increase its version number.
+    The `Tool Retriever` should select the `Calculator` tool. The `Core Agent` should identify that the `Calculator` tool needs to be modified and call the `Tool Improver`, providing the new `implementationCode` to add the new functionality and increase its version number.
 
 ### Guiding Complex Creation (The "Snake Game" Test)
 

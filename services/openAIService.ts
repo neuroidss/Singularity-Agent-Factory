@@ -58,42 +58,60 @@ const handleAPIError = async (response: Response) => {
 
 // --- Service Implementations ---
 
-export const planMissionAndSelectTools = async (
+export const selectTools = async (
     userInput: string,
     systemInstruction: string,
     modelId: string,
-    apiConfig: APIConfig,
     temperature: number,
-): Promise<any> => {
+    apiConfig: APIConfig,
+    allTools: LLMTool[]
+): Promise<{ names: string[], rawResponse: string }> => {
+    const lightweightTools = allTools.map(t => ({ name: t.name, description: t.description }));
+    const toolsForPrompt = JSON.stringify(lightweightTools, null, 2);
+    const fullSystemInstruction = `${systemInstruction}\n\nAVAILABLE TOOLS:\n${toolsForPrompt}`;
 
     const body = {
         model: modelId,
         messages: [
-            { role: 'system', content: systemInstruction },
-            { role: 'user', content: userInput }
+            { role: 'system', content: fullSystemInstruction },
+            { role: 'user', content: userInput },
         ],
         temperature,
-        response_format: { type: 'json_object' },
+        response_format: { type: "json_object" },
     };
 
-    const response = await fetch(`${apiConfig.openAIBaseUrl}/chat/completions`, {
-        method: 'POST',
-        headers: getAPIHeaders(apiConfig),
-        body: JSON.stringify(body)
-    });
+    try {
+        const response = await fetch(`${apiConfig.openAIBaseUrl}/chat/completions`, {
+            method: 'POST',
+            headers: getAPIHeaders(apiConfig),
+            body: JSON.stringify(body),
+        });
 
-    if (!response.ok) {
-        await handleAPIError(response);
-    }
-    
-    const json = await response.json();
-    const content = json.choices?.[0]?.message?.content;
-    if (!content) {
-        throw new Error("AI response for mission planning was empty or malformed.");
-    }
+        if (!response.ok) await handleAPIError(response);
+        
+        const jsonResponse = await response.json();
+        const rawResponse = jsonResponse.choices[0].message.content;
+        
+        if (!rawResponse) {
+             return { names: [], rawResponse: "{}" };
+        }
+        
+        const parsed = JSON.parse(rawResponse);
+        const names = parsed.tool_names || [];
+        
+        const allToolNames = new Set(allTools.map(t => t.name));
+        const validNames = names.filter((name: string) => allToolNames.has(name));
+        
+        return { names: validNames, rawResponse };
 
-    return JSON.parse(content);
+    } catch (error) {
+        const finalMessage = error instanceof Error ? error.message : "An unknown error occurred during tool selection.";
+        const processingError = new Error(finalMessage) as any;
+        processingError.rawAIResponse = "Failed to get raw response from OpenAI-compatible API.";
+        throw processingError;
+    }
 };
+
 
 export const generateResponse = async (
     userInput: string,

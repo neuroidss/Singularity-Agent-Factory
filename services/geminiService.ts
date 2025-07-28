@@ -1,5 +1,5 @@
 import { GoogleGenAI, Type, FunctionDeclaration, GenerateContentResponse } from "@google/genai";
-import type { AIResponse, LLMTool, APIConfig, ToolParameter, MissionPlanningInfo } from "../types";
+import type { AIResponse, LLMTool, APIConfig, ToolParameter } from "../types";
 
 const getAIClient = (apiConfig: APIConfig): GoogleGenAI => {
     // Prioritize the key from the UI configuration.
@@ -108,62 +108,6 @@ const buildGeminiTools = (tools: LLMTool[]): { functionDeclarations: FunctionDec
     return { functionDeclarations };
 };
 
-
-export const planMissionAndSelectTools = async (
-    userInput: string,
-    systemInstruction: string,
-    modelId: string,
-    temperature: number,
-    apiConfig: APIConfig,
-): Promise<MissionPlanningInfo['response']> => {
-    const ai = getAIClient(apiConfig);
-     const missionPlannerSchema = {
-        type: Type.OBJECT,
-        properties: {
-            mission: { 
-                type: Type.STRING,
-                description: "The translated, actionable mission for the AI agent, in English."
-            },
-            toolNames: {
-                type: Type.ARRAY,
-                description: "An array of tool name strings that are most relevant to the mission.",
-                items: {
-                    type: Type.STRING
-                }
-            }
-        },
-        required: ["mission", "toolNames"],
-    };
-    
-    try {
-        const response = await ai.models.generateContent({
-            model: modelId,
-            contents: userInput,
-            config: {
-                systemInstruction: systemInstruction,
-                responseMimeType: "application/json",
-                responseSchema: missionPlannerSchema,
-                temperature: temperature,
-            },
-        });
-
-        const jsonText = response.text.trim();
-        if (!jsonText) {
-            throw new Error("Mission planning model returned an empty response.");
-        }
-        const parsed = JSON.parse(jsonText);
-        
-        return {
-            mission: parsed.mission,
-            toolNames: parsed.toolNames,
-        };
-
-    } catch (error) {
-        console.error("Error during mission planning:", error);
-        throw new Error(`Failed to plan mission and select tools: ${error instanceof Error ? error.message : String(error)}`);
-    }
-}
-
 const parseNativeToolCall = (response: GenerateContentResponse, toolNameMap: Map<string, string>): AIResponse => {
     // Standard path: Look for a functionCall part
     const functionCallPart = response.candidates?.[0]?.content?.parts?.find(part => 'functionCall' in part);
@@ -232,6 +176,71 @@ const parseNativeToolCall = (response: GenerateContentResponse, toolNameMap: Map
     return { toolCall: null };
 };
 
+export const selectTools = async (
+    userInput: string,
+    systemInstruction: string,
+    modelId: string,
+    temperature: number,
+    apiConfig: APIConfig,
+    allTools: LLMTool[]
+): Promise<{ names: string[], rawResponse: string }> => {
+    const ai = getAIClient(apiConfig);
+    const lightweightTools = allTools.map(t => ({ name: t.name, description: t.description }));
+    const toolsForPrompt = JSON.stringify(lightweightTools, null, 2);
+
+    const fullSystemInstruction = `${systemInstruction}\n\nAVAILABLE TOOLS:\n${toolsForPrompt}`;
+
+    const responseSchema = {
+        type: Type.OBJECT,
+        properties: {
+            tool_names: {
+                type: Type.ARRAY,
+                items: {
+                    type: Type.STRING,
+                    description: "The exact name of a relevant tool."
+                }
+            }
+        },
+        required: ['tool_names']
+    };
+
+    try {
+        const response = await ai.models.generateContent({
+            model: modelId,
+            contents: userInput,
+            config: {
+                systemInstruction: fullSystemInstruction,
+                temperature: temperature,
+                responseMimeType: "application/json",
+                responseSchema: responseSchema,
+            },
+        });
+
+        const rawResponse = response.text;
+        if (!rawResponse) {
+             return { names: [], rawResponse: "{}" };
+        }
+        
+        const parsed = JSON.parse(rawResponse);
+        const names = parsed.tool_names || [];
+        
+        const allToolNames = new Set(allTools.map(t => t.name));
+        const validNames = names.filter((name: string) => allToolNames.has(name));
+        
+        return { names: validNames, rawResponse };
+
+    } catch (error) {
+        console.error("Error in Gemini Service (selectTools):", error);
+        const errorDetails = (error as any).message || (error as any).toString();
+        const responseText = (error as any).response?.text?.();
+        const finalMessage = `AI tool selection failed: ${errorDetails}${responseText ? `\nResponse: ${responseText}` : ''}`;
+        
+        const processingError = new Error(finalMessage) as any;
+        processingError.rawAIResponse = JSON.stringify(error, null, 2);
+        throw processingError;
+    }
+};
+
 
 export const generateResponse = async (
     userInput: string,
@@ -262,7 +271,7 @@ export const generateResponse = async (
             config: {
                 systemInstruction: systemInstruction,
                 temperature: temperature,
-                tools: [{ functionDeclarations }],
+                tools: functionDeclarations.length > 0 ? [{ functionDeclarations }] : undefined,
             },
         });
         

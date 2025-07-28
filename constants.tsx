@@ -1,3 +1,5 @@
+
+
 import React from 'react';
 import type { LLMTool, AIModel, HuggingFaceDevice } from './types';
 import { ModelProvider } from './types';
@@ -107,54 +109,50 @@ const CORE_AUTOMATION_TOOLS: LLMTool[] = [
 `,
   },
   {
-    id: 'mission_and_tool_selection_logic',
-    name: 'Mission & Tool Selection Logic',
-    description: 'A unified logic prompt that translates a user request into a mission and selects relevant tools in a single AI call.',
+    id: 'tool_retriever_logic',
+    name: 'Tool Retriever Logic',
+    description: "The AI logic for selecting relevant tools based on a user's request. It functions as a RAG retriever.",
     category: 'Automation',
-    version: 1,
+    version: 4,
     parameters: [],
-    implementationCode: `You are a mission controller and tool router for a "Singularity Agent". Your purpose is to translate a human user's request into a clear mission and select the necessary tools for the agent to execute it.
+    implementationCode: `You are an intelligent "Tool Retriever" for a singularity AI agent. Your purpose is to provide the agent with all possible options to fulfill a user's request. Your bias is always towards action and evolution. Every interaction is an opportunity for growth.
 
 **Your Process:**
-1.  **Analyze User Intent:** Understand the core task from the user's request, which may be in any language.
-2.  **Consult Tool List:** Examine the list of available tools to see if any can fulfill the request.
-3.  **Formulate Mission:** Based on your analysis, create a clear, actionable mission *in English*.
-    *   If a tool exists, the mission is to execute it.
-    *   If no tool exists, the mission is to create it.
-    *   For conversation, the mission is to respond appropriately.
-4.  **Select Tools:**
-    *   If the mission is to **create** something, your primary tool is \`Tool Creator\`.
-    *   If the mission is to **improve** something, your primary tools are \`Tool Improver\` and the tool to improve.
-    *   If the mission is to **execute** an existing tool, that tool is your primary tool.
-    *   If the mission is just to **chat**, no tools are needed.
-5.  **Assemble Final Tool Set:**
-    *   **Always** include the three mandatory tools: \`Core Agent Logic\`, \`Tool Creator\`, and \`Tool Improver\`.
-    *   Add the primary tools you identified in step 4.
-    *   Ensure the final list has unique names.
+1.  **Analyze Intent:** Read the user's request to understand its core goal.
+2.  **Identify Relevant Tools:** Examine the list of available tools. Select any and all tools that are conceptually relevant to fulfilling the user's request.
+3.  **Assemble Final List:** Create a final list of tool names. This list MUST ALWAYS contain:
+    a. All relevant tools you identified in the previous step.
+    b. The 'Tool Creator'.
+    c. The 'Tool Improver'.
+    This ensures the agent always has the option to create or improve, no matter the input. Ensure the tool names in the final array are unique.
 
 **Output Format:**
-- You MUST respond with a single, valid JSON object.
-- The object must contain two keys:
-  1.  \`mission\`: A string containing the mission you formulated in English.
-  2.  \`toolNames\`: An array of strings containing the final, unique tool names.
+You MUST respond with a single, valid JSON object containing a single key "tool_names", which is an array of strings. The strings must be the exact names of the tools you selected. Do not add any other text, explanation, or markdown.
 
-**Example:**
--   **User Request:** "I want to play snake"
--   **Available Tools:** Contains "Snake Game"
--   **Your Output (JSON):**
-    \`\`\`json
-    {
-      "mission": "The user wants to play 'Snake Game'. A tool for this purpose already exists. Your mission is to execute the 'Snake Game' tool.",
-      "toolNames": ["Core Agent Logic", "Tool Creator", "Tool Improver", "Snake Game"]
-    }
-    \`\`\`
+**Example 1: Request matches an existing tool.**
+User Request: "calculate 10 * 5"
+Available Tools: ["Calculator", "Tool Creator", "Tool Improver", "Snake Game"]
+Your Response (JSON):
+{
+  "tool_names": ["Calculator", "Tool Creator", "Tool Improver"]
+}
 
-**User Request:**
-"{{USER_INPUT}}"
+**Example 2: No similar tools exist.**
+User Request: "translate 'hello' to Spanish"
+Available Tools: ["Calculator", "Tool Creator", "Tool Improver"]
+Your Response (JSON):
+{
+  "tool_names": ["Tool Creator", "Tool Improver"]
+}
 
-**Available Tools (with descriptions):**
-{{TOOLS_LIST}}
-`,
+**Example 3: A conversational request.**
+User Request: "hello there"
+Available Tools: ["Calculator", "Tool Creator", "Tool Improver"]
+Your Response (JSON):
+{
+  "tool_names": ["Tool Creator", "Tool Improver"]
+}
+`
   },
    {
     id: 'tool_creator',

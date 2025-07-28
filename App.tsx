@@ -1,7 +1,7 @@
 import React, { useState, useCallback, useMemo, useEffect } from 'react';
 import * as aiService from './services/aiService';
 import { PREDEFINED_TOOLS, AVAILABLE_MODELS, DEFAULT_HUGGING_FACE_DEVICE } from './constants';
-import type { LLMTool, EnrichedAIResponse, DebugInfo, AIResponse, APIConfig, AIModel, NewToolPayload, AIToolCall, FinalAgentCallInfo, MissionPlanningInfo } from './types';
+import type { LLMTool, EnrichedAIResponse, DebugInfo, AIResponse, APIConfig, AIModel, NewToolPayload, AIToolCall, ToolSelectionCallInfo, AgentExecutionCallInfo } from './types';
 import { UIToolRunner } from './components/UIToolRunner';
 import { ModelProvider } from './types';
 
@@ -271,68 +271,65 @@ const App: React.FC = () => {
             setLastDebugInfo(debugInfoForRun);
             if (!showDebug) setShowDebug(true);
 
+            let selectionError: string | null = null;
+            let executionError: string | null = null;
+            
             try {
-                // Step 1: Plan Mission & Select Tools in a single call
-                setInfo("🎯 Planning mission and selecting tools...");
-                const plannerLogicTool = findToolByName('Mission & Tool Selection Logic');
-                if (!plannerLogicTool) throw new Error("Critical error: 'Mission & Tool Selection Logic' tool not found.");
+                // --- STEP 1: Tool Retrieval ---
+                setInfo("🧠 Retrieving relevant tools...");
+                const retrieverLogicTool = findToolByName('Tool Retriever Logic');
+                if (!retrieverLogicTool) throw new Error("Critical error: 'Tool Retriever Logic' tool not found.");
                 
-                const toolsForSelection = tools.map(t => ({id: t.id, name: t.name, description: t.description}));
-                const plannerSystemInstruction = plannerLogicTool.implementationCode
-                    .replace('{{USER_INPUT}}', userInput)
-                    .replace('{{TOOLS_LIST}}', JSON.stringify(toolsForSelection.map(t => ({name: t.name, description: t.description})), null, 2));
-
-                const missionPlan = await aiService.planMissionAndSelectTools(
-                    userInput,
-                    plannerSystemInstruction,
-                    selectedModel,
-                    apiConfig,
-                    temperature,
-                    setInfo
-                );
-                const { mission: reframedPrompt, toolNames } = missionPlan;
-
-                const missionPlanningInfo: MissionPlanningInfo = {
-                    systemInstruction: plannerSystemInstruction,
-                    response: missionPlan,
+                const selectionSystemInstruction = retrieverLogicTool.implementationCode;
+                const allToolsForPrompt = tools.map(t => ({ name: t.name, description: t.description }));
+                
+                const toolSelectionCall: ToolSelectionCallInfo = {
+                    systemInstruction: selectionSystemInstruction,
+                    userPrompt: userInput,
+                    availableTools: allToolsForPrompt,
+                    rawResponse: '⏳ Pending...',
                 };
-                debugInfoForRun = { ...debugInfoForRun, missionPlanning: missionPlanningInfo };
+                debugInfoForRun = { ...debugInfoForRun, toolSelectionCall };
                 setLastDebugInfo(debugInfoForRun);
 
+                const { names: selectedToolNames, rawResponse: selectionRawResponse } = await aiService.selectTools(
+                    userInput, selectionSystemInstruction, selectedModel, apiConfig, temperature, tools, setInfo
+                );
                 
-                // Step 2: Prepare and execute the main agent call with the *reframed mission*.
+                setLastDebugInfo(prev => ({
+                    ...prev,
+                    toolSelectionCall: { ...prev!.toolSelectionCall!, rawResponse: selectionRawResponse, selectedToolNames }
+                }));
+
+                // --- STEP 2: Agent Execution ---
                 setInfo("🧠 Preparing agent with selected tools...");
-                
-                const uniqueToolNames = [...new Set(toolNames)];
-                const existingToolsMap = new Map(tools.map(t => [t.name, t]));
-                const relevantTools = uniqueToolNames
-                    .map(name => existingToolsMap.get(name))
-                    .filter((tool): tool is LLMTool => tool !== undefined);
-                
                 const coreLogicTool = findToolByName('Core Agent Logic');
                 if (!coreLogicTool) throw new Error("Critical error: 'Core Agent Logic' tool not found.");
-                const systemInstruction = coreLogicTool.implementationCode;
-
-                const toolsForPrompt = relevantTools.filter(t => t.name !== 'Core Agent Logic' && t.name !== 'Mission & Tool Selection Logic');
                 
-                const finalAgentCallInfo: FinalAgentCallInfo = {
-                    systemInstruction,
-                    userPrompt: reframedPrompt,
-                    toolsProvided: toolsForPrompt,
-                    rawResponse: '⏳ Waiting for stream...',
+                const mandatoryToolNames = ['Core Agent Logic', 'Tool Creator', 'Tool Improver'];
+                const relevantToolNames = new Set([...selectedToolNames, ...mandatoryToolNames]);
+                const relevantTools = Array.from(relevantToolNames).map(name => findToolByName(name)).filter((t): t is LLMTool => !!t);
+                
+                const agentSystemInstruction = coreLogicTool.implementationCode;
+                const agentTools = relevantTools.filter(t => t.name !== 'Core Agent Logic' && t.name !== 'Tool Retriever Logic');
+
+                const agentExecutionCall: AgentExecutionCallInfo = {
+                    systemInstruction: agentSystemInstruction,
+                    userPrompt: userInput,
+                    toolsProvided: agentTools,
+                    rawResponse: '⏳ Pending...',
                     processedResponse: null,
                 };
-                debugInfoForRun = { ...debugInfoForRun, finalAgentCall: finalAgentCallInfo };
-                setLastDebugInfo(debugInfoForRun);
+                 setLastDebugInfo(prev => ({ ...prev!, agentExecutionCall }));
 
                 const handleRawResponseChunk = (rawResponse: string) => {
                     setLastDebugInfo(prev => {
-                        if (!prev || !prev.finalAgentCall || 'error' in prev.finalAgentCall) return prev;
-                        return { ...prev, finalAgentCall: { ...prev.finalAgentCall, rawResponse } };
+                        if (!prev || !prev.agentExecutionCall) return prev;
+                        return { ...prev, agentExecutionCall: { ...prev.agentExecutionCall, rawResponse } };
                     });
                 };
-
-                const aiResponse: AIResponse = await aiService.generateResponse(reframedPrompt, systemInstruction, selectedModel, apiConfig, temperature, handleRawResponseChunk, setInfo, toolsForPrompt);
+                
+                const aiResponse: AIResponse = await aiService.generateResponse(userInput, agentSystemInstruction, selectedModel, apiConfig, temperature, handleRawResponseChunk, setInfo, agentTools);
                 
                 let enrichedResult: EnrichedAIResponse = { ...aiResponse };
                 let infoMessage: string | null = null;
@@ -340,69 +337,60 @@ const App: React.FC = () => {
                 if(!aiResponse.toolCall) {
                     infoMessage = `The AI did not select a tool to execute. Please try rephrasing your request.`;
                     setInfo(infoMessage);
-                    setUserInput('');
-                    setIsLoading(false);
-                    setLastResponse(enrichedResult);
-                    setLastDebugInfo(prev => {
-                        if (!prev || !prev.finalAgentCall || 'error' in prev.finalAgentCall) return prev;
-                        return { ...prev, finalAgentCall: { ...prev.finalAgentCall, processedResponse: enrichedResult } };
-                    });
-                    return;
-                }
-                
-                const toolToExecute = findToolByName(aiResponse.toolCall.name);
-                if (!toolToExecute) throw new Error(`AI returned unknown tool name: ${aiResponse.toolCall.name}`);
-                
-                enrichedResult.tool = toolToExecute;
-                
-                if (toolToExecute.category === 'UI Component') {
-                    setActiveUITool(toolToExecute);
-                    infoMessage = `▶️ Activating tool: "${toolToExecute.name}"`;
-                    enrichedResult.executionResult = { success: true, summary: `Displayed UI tool '${toolToExecute.name}'.` };
                 } else {
-                     if (!aiResponse.toolCall.arguments) {
-                         enrichedResult.executionError = "Execution failed: AI did not provide any arguments for the tool call.";
-                     } else {
-                        try {
-                            const result = runToolImplementation(toolToExecute.implementationCode, aiResponse.toolCall.arguments, runtimeApi);
-                            enrichedResult.executionResult = result;
-                            if (result?.message) {
-                                infoMessage = `✅ ${result.message}`;
-                            } else {
-                                infoMessage = `✅ Tool "${toolToExecute.name}" executed.`;
+                    const toolToExecute = findToolByName(aiResponse.toolCall.name);
+                    if (!toolToExecute) throw new Error(`AI returned unknown tool name: ${aiResponse.toolCall.name}`);
+                    
+                    enrichedResult.tool = toolToExecute;
+                    
+                    if (toolToExecute.category === 'UI Component') {
+                        setActiveUITool(toolToExecute);
+                        infoMessage = `▶️ Activating tool: "${toolToExecute.name}"`;
+                        enrichedResult.executionResult = { success: true, summary: `Displayed UI tool '${toolToExecute.name}'.` };
+                    } else {
+                        if (!aiResponse.toolCall.arguments) {
+                            enrichedResult.executionError = "Execution failed: AI did not provide any arguments for the tool call.";
+                        } else {
+                            try {
+                                const result = runToolImplementation(toolToExecute.implementationCode, aiResponse.toolCall.arguments, runtimeApi);
+                                enrichedResult.executionResult = result;
+                                if (result?.message) {
+                                    infoMessage = `✅ ${result.message}`;
+                                } else {
+                                    infoMessage = `✅ Tool "${toolToExecute.name}" executed.`;
+                                }
+                            } catch (execError) {
+                                enrichedResult.executionError = execError instanceof Error ? execError.message : String(execError);
+                                executionError = enrichedResult.executionError;
                             }
-                        } catch (execError) {
-                            enrichedResult.executionError = execError instanceof Error ? execError.message : String(execError);
                         }
-                     }
+                    }
                 }
                 
                 if(infoMessage) setInfo(infoMessage);
                 setLastResponse(enrichedResult);
                 setLastDebugInfo(prev => {
-                    if (!prev || !prev.finalAgentCall || 'error' in prev.finalAgentCall) return prev;
-                    return { ...prev, finalAgentCall: { ...prev.finalAgentCall, processedResponse: enrichedResult } };
+                    if (!prev || !prev.agentExecutionCall) return prev;
+                    return { ...prev, agentExecutionCall: { ...prev.agentExecutionCall, processedResponse: enrichedResult } };
                 });
                 setUserInput('');
 
             } catch (err) {
-                const errorMessage = err instanceof Error ? err.message : "An unexpected error occurred.";
-                setError(errorMessage);
-                
-                const rawAIResponse = (err as any).rawAIResponse;
-                
-                setLastDebugInfo(prev => {
-                    const newDebug = { ...prev, processError: errorMessage };
-                    if (prev?.finalAgentCall && !('error' in prev.finalAgentCall)) {
-                        newDebug.finalAgentCall = {
-                            ...prev.finalAgentCall,
-                            rawResponse: rawAIResponse || prev.finalAgentCall.rawResponse,
-                            processedResponse: { toolCall: null, executionError: errorMessage }
-                        };
+                 const errorMessage = err instanceof Error ? err.message : "An unexpected error occurred.";
+                 setError(errorMessage);
+                 const rawAIResponse = (err as any).rawAIResponse;
+
+                 setLastDebugInfo(prev => {
+                    const newDebug = { ...prev! };
+                    if (newDebug.agentExecutionCall) { // Error happened during execution
+                         newDebug.agentExecutionCall.error = errorMessage;
+                         newDebug.agentExecutionCall.rawResponse = rawAIResponse || newDebug.agentExecutionCall.rawResponse;
+                    } else if (newDebug.toolSelectionCall) { // Error happened during selection
+                         newDebug.toolSelectionCall.error = errorMessage;
+                         newDebug.toolSelectionCall.rawResponse = rawAIResponse || newDebug.toolSelectionCall.rawResponse;
                     }
                     return newDebug;
-                });
-
+                 });
             } finally {
                 setIsLoading(false);
             }

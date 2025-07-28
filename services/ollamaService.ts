@@ -69,36 +69,51 @@ const sanitizeForFunctionName = (name: string): string => {
 
 
 // --- Service Implementations ---
-export const planMissionAndSelectTools = async (
+export const selectTools = async (
     userInput: string,
     systemInstruction: string,
     modelId: string,
-    apiConfig: APIConfig,
     temperature: number,
-): Promise<any> => {
+    apiConfig: APIConfig,
+    allTools: LLMTool[]
+): Promise<{ names: string[], rawResponse: string }> => {
+    const lightweightTools = allTools.map(t => ({ name: t.name, description: t.description }));
+    const toolsForPrompt = JSON.stringify(lightweightTools, null, 2);
+    const fullSystemInstruction = `${systemInstruction}\n\nAVAILABLE TOOLS:\n${toolsForPrompt}`;
 
-    const body = {
-        model: modelId,
-        system: systemInstruction,
-        prompt: userInput,
-        stream: false,
-        format: 'json',
-        options: { temperature }
-    };
-
-    const response = await fetch(`${apiConfig.ollamaHost}/api/generate`, {
-        method: 'POST',
-        headers: API_HEADERS,
-        body: JSON.stringify(body)
-    });
-
-    if (!response.ok) await handleAPIError(response);
+    const body = createAPIBody(modelId, fullSystemInstruction, userInput, temperature, 'json');
+    let responseText = "";
     
-    const json = await response.json();
-    if (!json.response) {
-        throw new Error("AI response for mission planning was empty or malformed.");
+    try {
+        const response = await fetch(`${apiConfig.ollamaHost}/api/generate`, {
+            method: 'POST',
+            headers: API_HEADERS,
+            body: JSON.stringify(body),
+        });
+
+        if (!response.ok) await handleAPIError(response);
+        
+        const jsonResponse = await response.json();
+        responseText = jsonResponse.response || "{}";
+
+        if (!responseText) {
+             return { names: [], rawResponse: "{}" };
+        }
+        
+        const parsed = JSON.parse(responseText);
+        const names = parsed.tool_names || [];
+        
+        const allToolNames = new Set(allTools.map(t => t.name));
+        const validNames = names.filter((name: string) => allToolNames.has(name));
+        
+        return { names: validNames, rawResponse: responseText };
+
+    } catch (error) {
+         const finalMessage = error instanceof Error ? error.message : "An unknown error occurred during tool selection.";
+         const processingError = new Error(finalMessage) as any;
+         processingError.rawAIResponse = responseText;
+         throw processingError;
     }
-    return JSON.parse(json.response);
 };
 
 export const generateResponse = async (
@@ -117,6 +132,23 @@ export const generateResponse = async (
         description: t.description,
         parameters: t.parameters,
     }));
+    
+    if (relevantTools.length === 0) {
+        // If no tools are relevant, we can't use the tool call prompt.
+        // We will just send the base system instruction and see if the model can generate a text response.
+        const body = createAPIBody(modelId, systemInstruction, userInput, temperature);
+        const response = await fetch(`${apiConfig.ollamaHost}/api/generate`, {
+            method: 'POST',
+            headers: API_HEADERS,
+            body: JSON.stringify(body),
+        });
+         if (!response.ok) await handleAPIError(response);
+         const jsonResponse = await response.json();
+         const responseText = jsonResponse.response || "";
+         onRawResponseChunk(JSON.stringify({ text_response: responseText }, null, 2));
+         // This model can't call tools, so we return null.
+         return { toolCall: null };
+    }
     
     const toolDefinitions = JSON.stringify(toolsForPrompt, ['name', 'description', 'parameters'], 2);
     // Combine the main agent logic with the standardized tool-calling instructions.

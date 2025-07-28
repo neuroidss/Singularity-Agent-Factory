@@ -74,25 +74,21 @@ const executePipe = async (pipe: TextGenerationPipeline, system: string, user: s
     return assistantResponse;
 }
 
-
-// --- Response Parsing ---
-const parseToolCallResponse = (responseText: string, toolNameMap: Map<string, string>): AIResponse => {
+const parseJsonResponse = (responseText: string): any => {
     let jsonText = responseText.trim();
-
-    // Models can sometimes wrap their JSON in markdown, so we extract it.
     const markdownMatch = jsonText.match(/```(?:json)?\s*({[\s\S]+?})\s*```/);
     if (markdownMatch && markdownMatch[1]) {
         jsonText = markdownMatch[1];
     }
+    return JSON.parse(jsonText);
+}
 
-    if (!jsonText) {
-        return { toolCall: null };
-    }
-    
+
+// --- Response Parsing ---
+const parseToolCallResponse = (responseText: string, toolNameMap: Map<string, string>): AIResponse => {
     try {
-        const parsed = JSON.parse(jsonText);
+        const parsed = parseJsonResponse(responseText);
 
-        // Handle the case of {} for no tool
         if (!parsed.name || typeof parsed.arguments === 'undefined') {
             return { toolCall: null };
         }
@@ -119,33 +115,44 @@ const parseToolCallResponse = (responseText: string, toolNameMap: Map<string, st
 };
 
 // --- Service Implementations ---
-export const planMissionAndSelectTools = async (
+export const selectTools = async (
     userInput: string,
     systemInstruction: string,
     modelId: string,
-    apiConfig: APIConfig,
     temperature: number,
-    onProgress: (message: string) => void,
-): Promise<any> => {
+    apiConfig: APIConfig,
+    allTools: LLMTool[],
+    onProgress: (message: string) => void
+): Promise<{ names: string[], rawResponse: string }> => {
+    let responseText = "";
     try {
         const pipe = await getPipeline(modelId, apiConfig, onProgress);
-        
-        // This system prompt already asks for JSON, so we just pass it through.
-        const responseText = await executePipe(pipe, systemInstruction, userInput, temperature);
-        
-        let textToParse = responseText.trim();
-        const jsonMatch = textToParse.match(/```(?:json)?\s*({[\s\S]+?})\s*```/);
-        if (jsonMatch && jsonMatch[1]) {
-            textToParse = jsonMatch[1];
+        const lightweightTools = allTools.map(t => ({ name: t.name, description: t.description }));
+        const toolsForPrompt = JSON.stringify(lightweightTools, null, 2);
+        const fullSystemInstruction = `${systemInstruction}\n\nAVAILABLE TOOLS:\n${toolsForPrompt}`;
+
+        responseText = await executePipe(pipe, fullSystemInstruction, userInput, temperature);
+
+        if (!responseText) {
+            return { names: [], rawResponse: "{}" };
         }
 
-        return JSON.parse(textToParse);
+        const parsed = parseJsonResponse(responseText);
+        const names = parsed.tool_names || [];
+        
+        const allToolNames = new Set(allTools.map(t => t.name));
+        const validNames = names.filter((name: string) => allToolNames.has(name));
+        
+        return { names: validNames, rawResponse: responseText };
 
     } catch (error) {
-        console.error("Error during mission planning with Hugging Face:", error);
-        throw new Error(`Failed to plan mission: ${error instanceof Error ? error.message : String(error)}`);
+        const finalMessage = error instanceof Error ? error.message : "An unknown error occurred during tool selection.";
+        const processingError = new Error(finalMessage) as any;
+        processingError.rawAIResponse = responseText;
+        throw processingError;
     }
 };
+
 
 export const generateResponse = async (
     userInput: string,
@@ -161,6 +168,12 @@ export const generateResponse = async (
      try {
         const pipe = await getPipeline(modelId, apiConfig, onProgress);
         
+        if (relevantTools.length === 0) {
+            responseText = await executePipe(pipe, systemInstruction, userInput, temperature);
+            onRawResponseChunk(JSON.stringify({ text_response: responseText }, null, 2));
+            return { toolCall: null };
+        }
+
         const toolNameMap = new Map(relevantTools.map(t => [sanitizeForFunctionName(t.name), t.name]));
         const toolsForPrompt = relevantTools.map(t => ({
             name: sanitizeForFunctionName(t.name),

@@ -42,34 +42,32 @@ export interface ServiceOutput {
   data: AIResponse;
 }
 
-// NEW DebugInfo structure for multi-stage debugging
-export interface MissionPlanningInfo {
+// Debug info for the first AI call (Tool Selection)
+export interface ToolSelectionCallInfo {
     systemInstruction: string;
-    response: {
-        mission: string;
-        toolNames: string[];
-    }
+    userPrompt: string;
+    availableTools: { name: string; description: string; }[];
+    rawResponse: string;
+    selectedToolNames?: string[];
+    error?: string;
 }
 
-export interface FinalAgentCallInfo {
+// Debug info for the second AI call (Agent Execution)
+export interface AgentExecutionCallInfo {
     systemInstruction: string;
     userPrompt: string;
     toolsProvided: LLMTool[];
     rawResponse: string;
     processedResponse: EnrichedAIResponse | null;
+    error?: string;
 }
 
 export interface DebugInfo {
     userInput: string;
     modelId: string;
     temperature: number;
-    
-    // Each step can be null until it completes, or contain an error.
-    missionPlanning?: MissionPlanningInfo | { error: string };
-    finalAgentCall?: FinalAgentCallInfo | { error: string };
-
-    // This will be the overall error if one occurs outside a specific step
-    processError?: string; 
+    toolSelectionCall?: ToolSelectionCallInfo;
+    agentExecutionCall?: AgentExecutionCallInfo;
 }
 
 
