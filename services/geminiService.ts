@@ -241,6 +241,67 @@ export const selectTools = async (
     }
 };
 
+export const generateGoal = async (
+    systemInstruction: string,
+    modelId: string,
+    temperature: number,
+    apiConfig: APIConfig,
+    allTools: LLMTool[],
+    autonomousActionLimit: number
+): Promise<{ goal: string, rawResponse: string }> => {
+    const ai = getAIClient(apiConfig);
+    const lightweightTools = allTools.map(t => ({ name: t.name, description: t.description, version: t.version }));
+    const toolsForPrompt = JSON.stringify(lightweightTools, null, 2);
+
+    const systemInstructionWithLimit = systemInstruction.replace('{{ACTION_LIMIT}}', String(autonomousActionLimit));
+    const fullSystemInstruction = `${systemInstructionWithLimit}\n\nHere is the current list of all available tools:\n${toolsForPrompt}`;
+
+    const responseSchema = {
+        type: Type.OBJECT,
+        properties: {
+            goal: {
+                type: Type.STRING,
+                description: "The self-generated goal for the agent."
+            }
+        },
+        required: ['goal']
+    };
+
+    try {
+        const response = await ai.models.generateContent({
+            model: modelId,
+            // No user prompt, the system instruction has everything.
+            contents: "What should I do next?", 
+            config: {
+                systemInstruction: fullSystemInstruction,
+                temperature: temperature,
+                responseMimeType: "application/json",
+                responseSchema: responseSchema,
+            },
+        });
+
+        const rawResponse = response.text;
+        if (!rawResponse) {
+             return { goal: "No action needed.", rawResponse: "{}" };
+        }
+        
+        const parsed = JSON.parse(rawResponse);
+        const goal = parsed.goal || "No action needed.";
+        
+        return { goal, rawResponse };
+
+    } catch (error) {
+        console.error("Error in Gemini Service (generateGoal):", error);
+        const errorDetails = (error as any).message || (error as any).toString();
+        const responseText = (error as any).response?.text?.();
+        const finalMessage = `AI goal generation failed: ${errorDetails}${responseText ? `\nResponse: ${responseText}` : ''}`;
+        
+        const processingError = new Error(finalMessage) as any;
+        processingError.rawAIResponse = JSON.stringify(error, null, 2);
+        throw processingError;
+    }
+};
+
 
 export const generateResponse = async (
     userInput: string,

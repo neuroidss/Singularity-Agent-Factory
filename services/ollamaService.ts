@@ -116,6 +116,51 @@ export const selectTools = async (
     }
 };
 
+export const generateGoal = async (
+    systemInstruction: string,
+    modelId: string,
+    temperature: number,
+    apiConfig: APIConfig,
+    allTools: LLMTool[],
+    autonomousActionLimit: number
+): Promise<{ goal: string, rawResponse: string }> => {
+    const lightweightTools = allTools.map(t => ({ name: t.name, description: t.description, version: t.version }));
+    const toolsForPrompt = JSON.stringify(lightweightTools, null, 2);
+    const systemInstructionWithLimit = systemInstruction.replace('{{ACTION_LIMIT}}', String(autonomousActionLimit));
+    const fullSystemInstruction = `${systemInstructionWithLimit}\n\nHere is the current list of all available tools:\n${toolsForPrompt}`;
+
+    const body = createAPIBody(modelId, fullSystemInstruction, "What should I do next?", temperature, 'json');
+    let responseText = "";
+    
+    try {
+        const response = await fetch(`${apiConfig.ollamaHost}/api/generate`, {
+            method: 'POST',
+            headers: API_HEADERS,
+            body: JSON.stringify(body),
+        });
+
+        if (!response.ok) await handleAPIError(response);
+        
+        const jsonResponse = await response.json();
+        responseText = jsonResponse.response || "{}";
+
+        if (!responseText) {
+            return { goal: "No action needed.", rawResponse: "{}" };
+        }
+        
+        const parsed = JSON.parse(responseText);
+        const goal = parsed.goal || "No action needed.";
+        
+        return { goal, rawResponse: responseText };
+
+    } catch (error) {
+         const finalMessage = error instanceof Error ? error.message : "An unknown error occurred during goal generation.";
+         const processingError = new Error(finalMessage) as any;
+         processingError.rawAIResponse = responseText;
+         throw processingError;
+    }
+};
+
 export const generateResponse = async (
     userInput: string,
     systemInstruction: string,

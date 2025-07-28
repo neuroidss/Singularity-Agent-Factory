@@ -1,5 +1,11 @@
 export type ToolCategory = 'UI Component' | 'Functional' | 'Automation';
 
+export enum OperatingMode {
+  Command = 'COMMAND',
+  Assist = 'ASSIST',
+  Autonomous = 'AUTONOMOUS',
+}
+
 export interface ToolParameter {
   name: string;
   type: 'string' | 'number' | 'boolean' | 'object' | 'array';

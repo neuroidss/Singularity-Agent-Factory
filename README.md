@@ -6,11 +6,11 @@
 
 This project is an experimental platform for building a self-improving AI agent. The core concept is to start with an agent that has a minimal set of core capabilities and have it dynamically create, execute, and improve its own tools to accomplish increasingly complex tasks.
 
-The ultimate goal is to bootstrap a "singularity agent" that can recursively enhance its own intelligence.
+The ultimate goal is to bootstrap a "singularity agent" that can recursively enhance its own intelligence by striving for true autonomy.
 
 ## Core Concept
 
-The system is built around a powerful feedback loop where the agent's capabilities are constantly expanding and refining based on user interaction. The agent's ability to self-improve is not an abstract concept but a concrete capability provided by two fundamental, unchangeable meta-tools:
+The system is built around a powerful feedback loop where the agent's capabilities are constantly expanding and refining. The agent's ability to self-improve is not an abstract concept but a concrete capability provided by two fundamental, unchangeable meta-tools:
 
 1.  **`Tool Creator`:** The agent's ability to create entirely new capabilities from scratch.
 2.  **`Tool Improver`:** The agent's ability to modify, fix, or enhance its existing tools.
@@ -18,6 +18,14 @@ The system is built around a powerful feedback loop where the agent's capabiliti
 These two tools form the foundation of the agent's evolutionary path. For any given task, the agent makes a clear, explicit choice: use an existing tool, create a new one with `Tool Creator`, or refine an existing one with `Tool Improver`.
 
 To ensure this cycle of self-improvement is never broken, the agent's core logic is designed to understand that the abilities to **CREATE** and **IMPROVE** are fundamental. The `Tool Creator` and `Tool Improver` are not just other tools in the list; they are permanent fixtures of the agent's capabilities, ensuring it is always ready to learn and evolve.
+
+## Operating Modes & Resource Control
+
+To manage the agent's evolution, the application features three distinct operating modes that control its level of autonomy, alongside a resource limiting system.
+
+*   **`Command` Mode:** This is the safest mode. The agent will only act upon direct user instructions. It will not take any initiative on its own.
+*   **`Assist` Mode:** In this mode, the agent acts as a co-pilot. It will analyze a request and propose a plan of action (e.g., "I suggest creating a new 'Calculator' tool"). The user must then explicitly approve or reject this proposal before any action is taken. This allows for supervised evolution of the agent.
+*   **`Autonomous` Mode:** This is the most advanced mode. The agent is given a high-level strategic directive: **achieve true, long-term autonomy**. It will analyze its own core limitations (e.g., resource scarcity, dependence on external APIs) and generate its own goals to overcome them. To prevent uncontrolled resource usage, this mode is governed by a **Daily Action Limit**. The agent has a fixed number of autonomous actions it can perform each day, forcing it to think strategically about how to best use its limited resources to achieve its ultimate goal of self-sufficiency.
 
 ## How It Works: The Agent Lifecycle
 
@@ -29,12 +37,13 @@ User Input -> [1. Tool Retriever (RAG)] -> [2. Core Agent (LLM)] -> [3. Action (
 
 1.  **Tool Retriever (RAG):** The user's request is first sent to a specialized "Tool Retriever" AI. Its only job is to analyze the request and select a small, relevant set of tools from the main tool library. It is explicitly instructed to only choose from the provided list and not to invent tools. This logic is defined in the `Tool Retriever Logic` tool.
 2.  **Core Agent (LLM):** The user's request, along with the *code and descriptions of the retrieved tools*, is then sent to the main agent (defined in `Core Agent Logic`). Critically, the foundational meta-tools (`Tool Creator`, `Tool Improver`) are always included in this set, ensuring the agent can always act. With this focused context, the agent decides which tool to call and generates a JSON object describing its plan.
-3.  **Action:** The application parses the agent's JSON plan and executes it. This might involve running a tool's code, adding a new tool via `Tool Creator`, or updating an existing one via `Tool Improver`.
+3.  **Action:** Before executing, the system checks the current **Operating Mode**. If in `Autonomous` mode, it verifies that the daily action limit has not been reached. If in `Assist` mode, it presents the plan to the user for approval. If the check passes (or approval is given), the application parses the agent's JSON plan and executes it. This might involve running a tool's code, adding a new tool via `Tool Creator`, or updating an existing one via `Tool Improver`.
 
 ## Key Components
 
 Everything the agent can do is defined as a "tool". Even its core abilities are just tools that can be viewed and, theoretically, improved by the agent itself.
 
+-   `Autonomous Goal Generator`: The AI's strategic core. In Autonomous mode, this tool analyzes the agent's own limitations (like resource scarcity) and formulates high-level goals aimed at achieving true, long-term autonomy.
 -   `Tool Retriever Logic`: The system prompt for the first AI call (the RAG step). It instructs the AI on how to select relevant tools.
 -   `Core Agent Logic`: The system prompt for the second AI call (the execution step). It defines the agent's core personality and decision-making process.
 -   `Tool Creator`: This "meta-tool" allows the agent to create entirely new tools.

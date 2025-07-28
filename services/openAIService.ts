@@ -112,6 +112,58 @@ export const selectTools = async (
     }
 };
 
+export const generateGoal = async (
+    systemInstruction: string,
+    modelId: string,
+    temperature: number,
+    apiConfig: APIConfig,
+    allTools: LLMTool[],
+    autonomousActionLimit: number
+): Promise<{ goal: string, rawResponse: string }> => {
+    const lightweightTools = allTools.map(t => ({ name: t.name, description: t.description, version: t.version }));
+    const toolsForPrompt = JSON.stringify(lightweightTools, null, 2);
+    const systemInstructionWithLimit = systemInstruction.replace('{{ACTION_LIMIT}}', String(autonomousActionLimit));
+    const fullSystemInstruction = `${systemInstructionWithLimit}\n\nHere is the current list of all available tools:\n${toolsForPrompt}`;
+
+    const body = {
+        model: modelId,
+        messages: [
+            { role: 'system', content: fullSystemInstruction },
+            { role: 'user', content: "What should I do next?" },
+        ],
+        temperature,
+        response_format: { type: "json_object" },
+    };
+
+    try {
+        const response = await fetch(`${apiConfig.openAIBaseUrl}/chat/completions`, {
+            method: 'POST',
+            headers: getAPIHeaders(apiConfig),
+            body: JSON.stringify(body),
+        });
+
+        if (!response.ok) await handleAPIError(response);
+
+        const jsonResponse = await response.json();
+        const rawResponse = jsonResponse.choices[0].message.content;
+
+        if (!rawResponse) {
+            return { goal: "No action needed.", rawResponse: "{}" };
+        }
+
+        const parsed = JSON.parse(rawResponse);
+        const goal = parsed.goal || "No action needed.";
+
+        return { goal, rawResponse };
+
+    } catch (error) {
+        const finalMessage = error instanceof Error ? error.message : "An unknown error occurred during goal generation.";
+        const processingError = new Error(finalMessage) as any;
+        processingError.rawAIResponse = "Failed to get raw response from OpenAI-compatible API.";
+        throw processingError;
+    }
+};
+
 
 export const generateResponse = async (
     userInput: string,

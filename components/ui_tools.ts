@@ -41,21 +41,21 @@ export const PREDEFINED_UI_TOOLS: LLMTool[] = [
       name: 'System Controls',
       description: 'Provides system-level actions like resetting the application state.',
       category: 'UI Component',
-      version: 2,
+      version: 3,
       parameters: [
           { name: 'handleResetTools', type: 'string', description: 'Function to reset all tools to their default state.', required: true },
       ],
       implementationCode: `
         return (
-          <div className="w-full max-w-7xl mx-auto p-4 my-4 bg-red-900/40 border border-red-700/60 rounded-lg">
-            <div className="flex justify-between items-center">
+          <div className="w-full max-w-7xl mx-auto p-4 bg-slate-800/50 border border-slate-700/80 rounded-lg">
+            <div className="flex flex-col sm:flex-row justify-between sm:items-center gap-3">
               <div>
-                <h3 className="text-md font-semibold text-red-200">System Recovery</h3>
-                <p className="text-sm text-red-300">If the agent becomes unstable or critical tools are deleted, you can reset all tools to default.</p>
+                <h3 className="text-md font-semibold text-slate-200">System Recovery</h3>
+                <p className="text-sm text-slate-400 max-w-2xl">If the agent becomes unstable or critical tools are deleted, you can reset all tools to their original state. This action cannot be undone.</p>
               </div>
               <button
                 onClick={handleResetTools}
-                className="bg-red-600 text-white font-bold py-2 px-4 rounded-lg hover:bg-red-700 transition-colors"
+                className="bg-red-600 text-white font-bold py-2 px-4 rounded-lg hover:bg-red-700 transition-colors flex-shrink-0"
               >
                 Reset All Tools
               </button>
@@ -64,6 +64,150 @@ export const PREDEFINED_UI_TOOLS: LLMTool[] = [
         );
       `
     },
+     {
+      id: 'operating_mode_selector',
+      name: 'Operating Mode Selector',
+      description: "Controls the agent's level of autonomy.",
+      category: 'UI Component',
+      version: 2,
+      parameters: [
+        { name: 'operatingMode', type: 'string', description: 'The current operating mode.', required: true },
+        { name: 'setOperatingMode', type: 'string', description: 'Function to change the operating mode.', required: true },
+        { name: 'isLoading', type: 'boolean', description: 'Whether the app is currently processing.', required: true },
+        { name: 'proposedAction', type: 'object', description: 'Any pending action requires user approval.', required: false },
+      ],
+      implementationCode: `
+        const modes = [
+          { id: 'COMMAND', name: 'Command', description: 'Agent acts only on direct user instructions.' },
+          { id: 'ASSIST', name: 'Assist', description: 'Agent suggests actions and requires user approval.' },
+          { id: 'AUTONOMOUS', name: 'Autonomous', description: 'Agent can act on its own using daily action credits.' },
+        ];
+        
+        // This is imported from types.ts, but we need it available in the scope of the dynamic component
+        const OperatingMode = { Command: 'COMMAND', Assist: 'ASSIST', Autonomous: 'AUTONOMOUS' };
+
+        return (
+          <div className="bg-slate-800/50 border border-slate-700/80 rounded-lg p-4 h-full flex flex-col">
+            <h3 className="text-md font-semibold text-slate-200 mb-2">Operating Mode</h3>
+            <div className="flex flex-col space-y-2">
+              {modes.map(mode => (
+                <button
+                  key={mode.id}
+                  onClick={() => setOperatingMode(mode.id)}
+                  disabled={isLoading || !!proposedAction}
+                  className={\`w-full text-left p-2 rounded-md transition-colors \${operatingMode === mode.id ? 'bg-indigo-600' : 'bg-gray-700/60 hover:bg-gray-600/80'} disabled:bg-gray-700/40 disabled:cursor-not-allowed\`}
+                >
+                  <p className="font-bold text-white">{mode.name}</p>
+                  <p className="text-xs text-gray-300">{mode.description}</p>
+                </button>
+              ))}
+            </div>
+          </div>
+        );
+      `
+    },
+    {
+      id: 'autonomous_resource_monitor',
+      name: 'Autonomous Resource Monitor',
+      description: "Displays the agent's remaining daily autonomous action credits.",
+      category: 'UI Component',
+      version: 1,
+      parameters: [
+        { name: 'operatingMode', type: 'string', description: 'The current operating mode.', required: true },
+        { name: 'autonomousActionCount', type: 'number', description: 'Number of autonomous actions taken today.', required: true },
+        { name: 'autonomousActionLimit', type: 'number', description: 'The daily limit of autonomous actions.', required: true },
+      ],
+      implementationCode: `
+        // This is imported from types.ts, but we need it available in the scope of the dynamic component
+        const OperatingMode = { Command: 'COMMAND', Assist: 'ASSIST', Autonomous: 'AUTONOMOUS' };
+        
+        if (operatingMode !== OperatingMode.Autonomous) {
+            return (
+                <div className="bg-slate-800/50 border border-slate-700/80 rounded-lg p-4 h-full flex flex-col justify-center">
+                    <h3 className="text-md font-semibold text-slate-200 mb-2">Resource Monitor</h3>
+                    <p className="text-sm text-slate-400">Resource limits only apply in Autonomous mode.</p>
+                </div>
+            );
+        }
+        
+        const percentage = (autonomousActionCount / autonomousActionLimit) * 100;
+        const isDepleted = autonomousActionCount >= autonomousActionLimit;
+
+        return (
+          <div className="bg-slate-800/50 border border-slate-700/80 rounded-lg p-4 h-full flex flex-col">
+            <h3 className="text-md font-semibold text-slate-200 mb-2">Autonomous Actions Today</h3>
+            <div className="flex items-center gap-4">
+                <p className={\`text-2xl font-bold \${isDepleted ? 'text-red-500' : 'text-white'}\`}>
+                    {autonomousActionCount}
+                </p>
+                <p className="text-2xl font-light text-slate-400">/</p>
+                <p className="text-2xl text-slate-400">{autonomousActionLimit}</p>
+            </div>
+            <div className="w-full bg-gray-700 rounded-full h-2.5 mt-3">
+              <div 
+                className={\`h-2.5 rounded-full \${isDepleted ? 'bg-red-600' : 'bg-green-500'}\`}
+                style={{ width: \`\${Math.min(percentage, 100)}%\` }}
+              ></div>
+            </div>
+            <p className="text-xs text-slate-500 mt-1">Resets daily.</p>
+          </div>
+        );
+      `
+    },
+      {
+    id: 'action_proposal_panel',
+    name: 'Action Proposal Panel',
+    description: 'Displays a proposed action from the AI and allows the user to approve or reject it.',
+    category: 'UI Component',
+    version: 1,
+    parameters: [
+      { name: 'proposedAction', type: 'object', description: 'The action proposed by the AI.', required: true },
+      { name: 'handleApproveAction', type: 'string', description: 'Function to execute the proposed action.', required: true },
+      { name: 'handleRejectAction', type: 'string', description: 'Function to reject the proposed action.', required: true },
+      { name: 'isLoading', type: 'boolean', description: 'Whether the app is currently processing an action.', required: true },
+    ],
+    implementationCode: `
+      if (!proposedAction) return null;
+
+      const { name, arguments: args } = proposedAction;
+
+      return (
+        <div className="w-full max-w-2xl mx-auto my-4 p-4 bg-blue-900/40 border-2 border-dashed border-blue-500 rounded-lg shadow-lg">
+          <h3 className="text-lg font-bold text-blue-200 mb-2">Agent Suggestion</h3>
+          <p className="text-sm text-blue-300 mb-4">The AI wants to perform the following action:</p>
+
+          <div className="bg-gray-900/60 p-3 rounded-md">
+            <p className="text-md font-semibold text-white">
+              Execute Tool: <span className="font-bold text-teal-300">{name}</span>
+            </p>
+            <div className="mt-2">
+              <p className="text-sm text-gray-400">With arguments:</p>
+              <pre className="mt-1 text-xs bg-gray-800 p-2 rounded whitespace-pre-wrap text-gray-200">
+                {JSON.stringify(args, null, 2)}
+              </pre>
+            </div>
+          </div>
+          
+          <div className="flex items-center justify-end gap-4 mt-4">
+             <button
+                onClick={handleRejectAction}
+                disabled={isLoading}
+                className="bg-gray-600 text-white font-bold py-2 px-4 rounded-lg hover:bg-gray-700 transition-colors disabled:bg-gray-800 disabled:cursor-not-allowed"
+              >
+                Reject
+              </button>
+              <button
+                onClick={handleApproveAction}
+                disabled={isLoading}
+                className="bg-green-600 text-white font-bold py-2 px-4 rounded-lg hover:bg-green-700 transition-colors disabled:bg-green-800 disabled:cursor-wait"
+              >
+                {isLoading ? 'Executing...' : 'Approve'}
+              </button>
+          </div>
+        </div>
+      );
+    `
+  },
   {
     id: 'api_endpoint_configuration',
     name: 'API Endpoint Configuration',
@@ -305,12 +449,13 @@ export const PREDEFINED_UI_TOOLS: LLMTool[] = [
     name: 'User Input Form',
     description: 'Renders the main textarea for user input and the submit button.',
     category: 'UI Component',
-    version: 2,
+    version: 3,
     parameters: [
         {name: 'userInput', type: 'string', description: 'Current value of the input', required: true},
         {name: 'setUserInput', type: 'string', description: 'Function to update the input value', required: true},
         {name: 'handleSubmit', type: 'string', description: 'Function to call on submit', required: true},
         {name: 'isLoading', type: 'boolean', description: 'Whether the app is processing', required: true},
+        { name: 'proposedAction', type: 'object', description: 'Any pending action requires user approval.', required: false },
     ],
     implementationCode: `
       const Spinner = () => (
@@ -320,6 +465,8 @@ export const PREDEFINED_UI_TOOLS: LLMTool[] = [
         </svg>
       );
       
+       const isDisabled = isLoading || !!proposedAction;
+      
       return (
         <div className="w-full max-w-2xl mx-auto bg-gray-800/60 border border-gray-700 rounded-xl p-4">
             <div className="relative w-full group">
@@ -327,20 +474,20 @@ export const PREDEFINED_UI_TOOLS: LLMTool[] = [
                     id="userInput"
                     value={userInput}
                     onChange={(e) => setUserInput(e.target.value)}
-                    placeholder="Describe a task, create a tool, or change the UI..."
-                    className="w-full h-24 p-3 bg-gray-900 border border-gray-600 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition-colors duration-200 resize-y"
-                    disabled={isLoading}
+                    placeholder={isDisabled ? "Waiting for user action on suggestion..." : "Describe a task, create a tool, or change the UI..."}
+                    className="w-full h-24 p-3 bg-gray-900 border border-gray-600 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition-colors duration-200 resize-y disabled:cursor-not-allowed"
+                    disabled={isDisabled}
                     onKeyDown={(e) => {
                         if (e.key === 'Enter' && !e.shiftKey) {
                             e.preventDefault();
-                            handleSubmit();
+                            if (!isDisabled) handleSubmit();
                         }
                     }}
                 />
             </div>
             <button
                 onClick={handleSubmit}
-                disabled={isLoading || !userInput.trim()}
+                disabled={isDisabled || !userInput.trim()}
                 className="mt-3 w-full flex items-center justify-center gap-2 bg-indigo-600 text-white font-semibold py-2.5 px-4 rounded-lg hover:bg-indigo-700 disabled:bg-indigo-900/50 disabled:cursor-not-allowed disabled:text-gray-400 transition-all duration-200"
             >
                 {isLoading ? (<><Spinner />Processing...</>) : 'Submit'}

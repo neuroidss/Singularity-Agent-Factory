@@ -1,9 +1,9 @@
-import React, { useState, useCallback, useMemo, useEffect } from 'react';
+import React, { useState, useCallback, useMemo, useEffect, useRef } from 'react';
 import * as aiService from './services/aiService';
 import { PREDEFINED_TOOLS, AVAILABLE_MODELS, DEFAULT_HUGGING_FACE_DEVICE } from './constants';
 import type { LLMTool, EnrichedAIResponse, DebugInfo, AIResponse, APIConfig, AIModel, NewToolPayload, AIToolCall, ToolSelectionCallInfo, AgentExecutionCallInfo } from './types';
 import { UIToolRunner } from './components/UIToolRunner';
-import { ModelProvider } from './types';
+import { ModelProvider, OperatingMode } from './types';
 import { loadStateFromStorage, saveStateToStorage } from './versioning';
 
 const generateMachineReadableId = (name: string, existingTools: LLMTool[]): string => {
@@ -63,6 +63,25 @@ const App: React.FC = () => {
     const [temperature, setTemperature] = useState<number>(
       () => parseFloat(localStorage.getItem('modelTemperature') || '0.0')
     );
+    // New state for operating mode and resource limits
+    const [operatingMode, setOperatingMode] = useState<OperatingMode>(
+      () => (localStorage.getItem('operatingMode') as OperatingMode) || OperatingMode.Command
+    );
+    const [autonomousActionLimit] = useState<number>(20); // Daily limit for autonomous actions
+    const [autonomousActionCount, setAutonomousActionCount] = useState<number>(
+        () => parseInt(localStorage.getItem('autonomousActionCount') || '0', 10)
+    );
+    const [lastActionDate, setLastActionDate] = useState<string>(
+        () => localStorage.getItem('lastActionDate') || ''
+    );
+     // State for Assist mode
+    const [proposedAction, setProposedAction] = useState<AIToolCall | null>(null);
+    
+    // State for autonomous loop
+    const [isAutonomousLoopRunning, setIsAutonomousLoopRunning] = useState<boolean>(false);
+    const [autonomousStatus, setAutonomousStatus] = useState<string | null>(null);
+    const autonomousIntervalRef = useRef<number | null>(null);
+
     const [apiConfig, setApiConfig] = useState<APIConfig>(() => {
         const defaultConfig: APIConfig = {
             openAIBaseUrl: '',
@@ -126,6 +145,17 @@ const App: React.FC = () => {
      useEffect(() => {
         localStorage.setItem('apiConfig', JSON.stringify(apiConfig));
     }, [apiConfig]);
+
+    // Persistence for new settings
+    useEffect(() => {
+        localStorage.setItem('operatingMode', operatingMode);
+    }, [operatingMode]);
+    useEffect(() => {
+        localStorage.setItem('autonomousActionCount', String(autonomousActionCount));
+    }, [autonomousActionCount]);
+    useEffect(() => {
+        localStorage.setItem('lastActionDate', lastActionDate);
+    }, [lastActionDate]);
 
     const findToolByName = useCallback((toolName: string): LLMTool | undefined => {
         return tools.find(t => t.name === toolName);
@@ -217,55 +247,225 @@ const App: React.FC = () => {
         }
     }, []);
 
+    const executeAction = useCallback(async (toolCall: AIToolCall) => {
+        if (!toolCall) return;
+
+        let enrichedResult: EnrichedAIResponse = { toolCall };
+        let infoMessage: string | null = null;
+        let executionError: string | null = null;
+
+        const toolToExecute = findToolByName(toolCall.name);
+        if (!toolToExecute) {
+            throw new Error(`AI returned unknown tool name: ${toolCall.name}`);
+        }
+
+        enrichedResult.tool = toolToExecute;
+
+        if (toolToExecute.category === 'UI Component') {
+            setActiveUITool(toolToExecute);
+            infoMessage = `▶️ Activating tool: "${toolToExecute.name}"`;
+            enrichedResult.executionResult = { success: true, summary: `Displayed UI tool '${toolToExecute.name}'.` };
+        } else {
+            if (!toolCall.arguments) {
+                enrichedResult.executionError = "Execution failed: AI did not provide any arguments for the tool call.";
+            } else {
+                try {
+                    const result = runToolImplementation(toolToExecute.implementationCode, toolCall.arguments, runtimeApi);
+                    enrichedResult.executionResult = result;
+                    if (result?.message) {
+                        infoMessage = `✅ ${result.message}`;
+                    } else {
+                        infoMessage = `✅ Tool "${toolToExecute.name}" executed.`;
+                    }
+                } catch (execError) {
+                    enrichedResult.executionError = execError instanceof Error ? execError.message : String(execError);
+                    executionError = enrichedResult.executionError;
+                }
+            }
+        }
+        
+        if(infoMessage) setInfo(infoMessage);
+        if(executionError) setError(executionError);
+
+        setLastResponse(enrichedResult);
+        setLastDebugInfo(prev => {
+            if (!prev || !prev.agentExecutionCall) return prev;
+            return { ...prev, agentExecutionCall: { ...prev.agentExecutionCall, processedResponse: enrichedResult } };
+        });
+
+    }, [findToolByName, runtimeApi]);
+
+    const handleApproveAction = useCallback(async () => {
+        if (!proposedAction) return;
+
+        setIsLoading(true);
+        setError(null);
+        setLastResponse(null);
+        setInfo(`⚙️ Executing approved action...`);
+        
+        const actionToExecute = { ...proposedAction };
+        setProposedAction(null); // Clear proposal immediately
+
+        try {
+            await executeAction(actionToExecute);
+        } catch (err) {
+            const errorMessage = err instanceof Error ? err.message : "An unexpected error occurred during execution.";
+            setError(errorMessage);
+        } finally {
+            setIsLoading(false);
+        }
+    }, [proposedAction, executeAction]);
+
+    const handleRejectAction = useCallback(() => {
+        setInfo("Suggestion rejected. Please provide a new prompt.");
+        setProposedAction(null);
+        setError(null);
+        setLastResponse(null);
+    }, []);
+
+    const processRequest = useCallback(async (prompt: string, isAutonomous: boolean = false) => {
+        setIsLoading(true);
+        setError(null);
+        setInfo(null);
+        setLastResponse(null);
+        if (!isAutonomous) {
+            setActiveUITool(null);
+            setProposedAction(null);
+        }
+
+        // AI-driven path
+        let debugInfoForRun: DebugInfo = {
+            userInput: prompt,
+            modelId: selectedModel.id,
+            temperature,
+        };
+        setLastDebugInfo(debugInfoForRun);
+        if (!showDebug) setShowDebug(true);
+
+        try {
+            // Increment autonomous action counter if applicable
+            if (isAutonomous) {
+                setAutonomousActionCount(prev => prev + 1);
+            }
+
+            // --- STEP 1: Tool Retrieval ---
+            setInfo("🧠 Retrieving relevant tools...");
+            const retrieverLogicTool = findToolByName('Tool Retriever Logic');
+            if (!retrieverLogicTool) throw new Error("Critical error: 'Tool Retriever Logic' tool not found.");
+            
+            const selectionSystemInstruction = retrieverLogicTool.implementationCode;
+            const allToolsForPrompt = tools.map(t => ({ name: t.name, description: t.description }));
+            
+            const toolSelectionCall: ToolSelectionCallInfo = {
+                systemInstruction: selectionSystemInstruction,
+                userPrompt: prompt,
+                availableTools: allToolsForPrompt,
+                rawResponse: '⏳ Pending...',
+            };
+            debugInfoForRun = { ...debugInfoForRun, toolSelectionCall };
+            setLastDebugInfo(debugInfoForRun);
+
+            const { names: selectedToolNames, rawResponse: selectionRawResponse } = await aiService.selectTools(
+                prompt, selectionSystemInstruction, selectedModel, apiConfig, temperature, tools, setInfo
+            );
+            
+            setLastDebugInfo(prev => ({
+                ...prev,
+                toolSelectionCall: { ...prev!.toolSelectionCall!, rawResponse: selectionRawResponse, selectedToolNames }
+            }));
+
+            // --- STEP 2: Agent Execution ---
+            setInfo("🧠 Preparing agent with selected tools...");
+            const coreLogicTool = findToolByName('Core Agent Logic');
+            if (!coreLogicTool) throw new Error("Critical error: 'Core Agent Logic' tool not found.");
+            
+            const mandatoryToolNames = ['Core Agent Logic', 'Tool Creator', 'Tool Improver'];
+            const relevantToolNames = new Set([...selectedToolNames, ...mandatoryToolNames]);
+            const relevantTools = Array.from(relevantToolNames).map(name => findToolByName(name)).filter((t): t is LLMTool => !!t);
+            
+            const agentSystemInstruction = coreLogicTool.implementationCode;
+            const agentTools = relevantTools.filter(t => t.name !== 'Core Agent Logic' && t.name !== 'Tool Retriever Logic');
+
+            const agentExecutionCall: AgentExecutionCallInfo = {
+                systemInstruction: agentSystemInstruction,
+                userPrompt: prompt,
+                toolsProvided: agentTools,
+                rawResponse: '⏳ Pending...',
+                processedResponse: null,
+            };
+            setLastDebugInfo(prev => ({ ...prev!, agentExecutionCall }));
+
+            const handleRawResponseChunk = (rawResponse: string) => {
+                setLastDebugInfo(prev => {
+                    if (!prev || !prev.agentExecutionCall) return prev;
+                    return { ...prev, agentExecutionCall: { ...prev.agentExecutionCall, rawResponse } };
+                });
+            };
+            
+            const aiResponse: AIResponse = await aiService.generateResponse(prompt, agentSystemInstruction, selectedModel, apiConfig, temperature, handleRawResponseChunk, setInfo, agentTools);
+            
+            if (!isAutonomous) {
+                setUserInput(''); // Clear input only for user-submitted prompts
+            }
+
+            if(!aiResponse.toolCall) {
+                const noToolMessage = "The AI did not select a tool to execute. Please try rephrasing your request.";
+                setInfo(noToolMessage);
+                if (isAutonomous) setAutonomousStatus(noToolMessage);
+            } else if (operatingMode === OperatingMode.Assist && !isAutonomous) {
+                // --- Assist Mode: Propose and wait (only for user actions) ---
+                setProposedAction(aiResponse.toolCall);
+                setInfo("The agent has a suggestion. Please review and approve or reject it.");
+                const proposalResponse: EnrichedAIResponse = { ...aiResponse, executionResult: { status: "AWAITING_USER_APPROVAL" } };
+                setLastDebugInfo(prev => {
+                    if (!prev || !prev.agentExecutionCall) return prev;
+                    return { ...prev, agentExecutionCall: { ...prev.agentExecutionCall, processedResponse: proposalResponse } };
+                });
+
+            } else {
+                // --- Command/Autonomous Mode: Execute immediately ---
+                if (isAutonomous) setAutonomousStatus(`Executing: ${aiResponse.toolCall.name}`);
+                await executeAction(aiResponse.toolCall);
+            }
+
+        } catch (err) {
+            const errorMessage = err instanceof Error ? err.message : "An unexpected error occurred.";
+            setError(errorMessage);
+            if(isAutonomous) setAutonomousStatus(`Error: ${errorMessage}`);
+            const rawAIResponse = (err as any).rawAIResponse;
+
+            setLastDebugInfo(prev => {
+                const newDebug = { ...prev! };
+                if (newDebug.agentExecutionCall) { // Error happened during execution
+                    newDebug.agentExecutionCall.error = errorMessage;
+                    newDebug.agentExecutionCall.rawResponse = rawAIResponse || newDebug.agentExecutionCall.rawResponse;
+                } else if (newDebug.toolSelectionCall) { // Error happened during selection
+                    newDebug.toolSelectionCall.error = errorMessage;
+                    newDebug.toolSelectionCall.rawResponse = rawAIResponse || newDebug.toolSelectionCall.rawResponse;
+                }
+                return newDebug;
+            });
+        } finally {
+            setIsLoading(false);
+        }
+    }, [tools, findToolByName, showDebug, selectedModel, apiConfig, temperature, runtimeApi, operatingMode, executeAction]);
+
     const handleSubmit = useCallback(async () => {
         if (!userInput.trim()) {
             setError("Please enter a task or describe a tool to create.");
             return;
         }
-        setIsLoading(true);
-        setError(null);
-        setInfo(null);
-        setLastResponse(null);
-        setActiveUITool(null); 
 
         const directExecutionRegex = /^run\s+"([^"]+)"\s+with\s+(.*)$/s;
         const match = userInput.trim().match(directExecutionRegex);
 
         if (match) {
-            // Direct execution path (bypassing AI)
+            setIsLoading(true);
             try {
                 const [, toolName, paramsJson] = match;
-                const toolToExecute = findToolByName(toolName);
-
-                if (!toolToExecute) {
-                    throw new Error(`Tool with name "${toolName}" not found.`);
-                }
-                if (toolToExecute.category === 'UI Component') {
-                    setActiveUITool(toolToExecute);
-                    setInfo(`▶️ Activating tool: "${toolToExecute.name}"`);
-                    setUserInput('');
-                    setIsLoading(false);
-                    return;
-                }
-
-                const params = JSON.parse(paramsJson);
-                const toolCall: AIToolCall = { name: toolToExecute.name, arguments: params };
-
-                let enrichedResult: EnrichedAIResponse = {
-                    toolCall: toolCall,
-                    tool: toolToExecute,
-                };
-
-                try {
-                    const result = runToolImplementation(toolToExecute.implementationCode, params, runtimeApi);
-                    enrichedResult.executionResult = result;
-                } catch (execError) {
-                    enrichedResult.executionError = execError instanceof Error ? execError.message : String(execError);
-                }
-
+                const toolCall: AIToolCall = { name: toolName, arguments: JSON.parse(paramsJson) };
+                await executeAction(toolCall);
                 setInfo(`⚡️ Direct Execution`);
-                setLastResponse(enrichedResult);
-                // No debug info for direct execution
                 setLastDebugInfo(null);
                 setUserInput('');
             } catch (err) {
@@ -274,140 +474,83 @@ const App: React.FC = () => {
                 setIsLoading(false);
             }
         } else {
-            // AI-driven path
-            let debugInfoForRun: DebugInfo = {
-                userInput,
-                modelId: selectedModel.id,
-                temperature,
-            };
-            setLastDebugInfo(debugInfoForRun);
-            if (!showDebug) setShowDebug(true);
+            await processRequest(userInput, false);
+        }
+    }, [userInput, processRequest, executeAction]);
+    
+    const runAutonomousCycle = useCallback(async () => {
+        // Daily reset and limit check
+        const today = new Date().toDateString();
+        let currentCount = autonomousActionCount;
+        if (lastActionDate !== today) {
+            console.log("New day detected, resetting autonomous action counter.");
+            currentCount = 0;
+            setAutonomousActionCount(0);
+            setLastActionDate(today);
+        }
 
-            let selectionError: string | null = null;
-            let executionError: string | null = null;
+        if (currentCount >= autonomousActionLimit) {
+            setAutonomousStatus(`Daily limit of ${autonomousActionLimit} reached. Stopping loop.`);
+            setIsAutonomousLoopRunning(false);
+            return;
+        }
+
+        try {
+            setAutonomousStatus("Deciding next action...");
+            const goalGenTool = findToolByName('Autonomous Goal Generator');
+            if (!goalGenTool) throw new Error("Critical error: 'Autonomous Goal Generator' tool not found.");
             
-            try {
-                // --- STEP 1: Tool Retrieval ---
-                setInfo("🧠 Retrieving relevant tools...");
-                const retrieverLogicTool = findToolByName('Tool Retriever Logic');
-                if (!retrieverLogicTool) throw new Error("Critical error: 'Tool Retriever Logic' tool not found.");
-                
-                const selectionSystemInstruction = retrieverLogicTool.implementationCode;
-                const allToolsForPrompt = tools.map(t => ({ name: t.name, description: t.description }));
-                
-                const toolSelectionCall: ToolSelectionCallInfo = {
-                    systemInstruction: selectionSystemInstruction,
-                    userPrompt: userInput,
-                    availableTools: allToolsForPrompt,
-                    rawResponse: '⏳ Pending...',
-                };
-                debugInfoForRun = { ...debugInfoForRun, toolSelectionCall };
-                setLastDebugInfo(debugInfoForRun);
+            const { goal, rawResponse } = await aiService.generateGoal(
+                goalGenTool.implementationCode, selectedModel, apiConfig, temperature, tools, autonomousActionLimit
+            );
+            
+            if (goal && goal !== "No action needed.") {
+                setAutonomousStatus(`New Goal: ${goal}`);
+                // Give user a moment to see the goal before processing
+                await new Promise(resolve => setTimeout(resolve, 2000));
+                await processRequest(goal, true);
+            } else {
+                setAutonomousStatus("No improvements found. Will check again soon.");
+            }
 
-                const { names: selectedToolNames, rawResponse: selectionRawResponse } = await aiService.selectTools(
-                    userInput, selectionSystemInstruction, selectedModel, apiConfig, temperature, tools, setInfo
-                );
-                
-                setLastDebugInfo(prev => ({
-                    ...prev,
-                    toolSelectionCall: { ...prev!.toolSelectionCall!, rawResponse: selectionRawResponse, selectedToolNames }
-                }));
-
-                // --- STEP 2: Agent Execution ---
-                setInfo("🧠 Preparing agent with selected tools...");
-                const coreLogicTool = findToolByName('Core Agent Logic');
-                if (!coreLogicTool) throw new Error("Critical error: 'Core Agent Logic' tool not found.");
-                
-                const mandatoryToolNames = ['Core Agent Logic', 'Tool Creator', 'Tool Improver'];
-                const relevantToolNames = new Set([...selectedToolNames, ...mandatoryToolNames]);
-                const relevantTools = Array.from(relevantToolNames).map(name => findToolByName(name)).filter((t): t is LLMTool => !!t);
-                
-                const agentSystemInstruction = coreLogicTool.implementationCode;
-                const agentTools = relevantTools.filter(t => t.name !== 'Core Agent Logic' && t.name !== 'Tool Retriever Logic');
-
-                const agentExecutionCall: AgentExecutionCallInfo = {
-                    systemInstruction: agentSystemInstruction,
-                    userPrompt: userInput,
-                    toolsProvided: agentTools,
-                    rawResponse: '⏳ Pending...',
-                    processedResponse: null,
-                };
-                 setLastDebugInfo(prev => ({ ...prev!, agentExecutionCall }));
-
-                const handleRawResponseChunk = (rawResponse: string) => {
-                    setLastDebugInfo(prev => {
-                        if (!prev || !prev.agentExecutionCall) return prev;
-                        return { ...prev, agentExecutionCall: { ...prev.agentExecutionCall, rawResponse } };
-                    });
-                };
-                
-                const aiResponse: AIResponse = await aiService.generateResponse(userInput, agentSystemInstruction, selectedModel, apiConfig, temperature, handleRawResponseChunk, setInfo, agentTools);
-                
-                let enrichedResult: EnrichedAIResponse = { ...aiResponse };
-                let infoMessage: string | null = null;
-                
-                if(!aiResponse.toolCall) {
-                    infoMessage = `The AI did not select a tool to execute. Please try rephrasing your request.`;
-                    setInfo(infoMessage);
-                } else {
-                    const toolToExecute = findToolByName(aiResponse.toolCall.name);
-                    if (!toolToExecute) throw new Error(`AI returned unknown tool name: ${aiResponse.toolCall.name}`);
-                    
-                    enrichedResult.tool = toolToExecute;
-                    
-                    if (toolToExecute.category === 'UI Component') {
-                        setActiveUITool(toolToExecute);
-                        infoMessage = `▶️ Activating tool: "${toolToExecute.name}"`;
-                        enrichedResult.executionResult = { success: true, summary: `Displayed UI tool '${toolToExecute.name}'.` };
-                    } else {
-                        if (!aiResponse.toolCall.arguments) {
-                            enrichedResult.executionError = "Execution failed: AI did not provide any arguments for the tool call.";
-                        } else {
-                            try {
-                                const result = runToolImplementation(toolToExecute.implementationCode, aiResponse.toolCall.arguments, runtimeApi);
-                                enrichedResult.executionResult = result;
-                                if (result?.message) {
-                                    infoMessage = `✅ ${result.message}`;
-                                } else {
-                                    infoMessage = `✅ Tool "${toolToExecute.name}" executed.`;
-                                }
-                            } catch (execError) {
-                                enrichedResult.executionError = execError instanceof Error ? execError.message : String(execError);
-                                executionError = enrichedResult.executionError;
-                            }
-                        }
-                    }
-                }
-                
-                if(infoMessage) setInfo(infoMessage);
-                setLastResponse(enrichedResult);
-                setLastDebugInfo(prev => {
-                    if (!prev || !prev.agentExecutionCall) return prev;
-                    return { ...prev, agentExecutionCall: { ...prev.agentExecutionCall, processedResponse: enrichedResult } };
-                });
-                setUserInput('');
-
-            } catch (err) {
-                 const errorMessage = err instanceof Error ? err.message : "An unexpected error occurred.";
-                 setError(errorMessage);
-                 const rawAIResponse = (err as any).rawAIResponse;
-
-                 setLastDebugInfo(prev => {
-                    const newDebug = { ...prev! };
-                    if (newDebug.agentExecutionCall) { // Error happened during execution
-                         newDebug.agentExecutionCall.error = errorMessage;
-                         newDebug.agentExecutionCall.rawResponse = rawAIResponse || newDebug.agentExecutionCall.rawResponse;
-                    } else if (newDebug.toolSelectionCall) { // Error happened during selection
-                         newDebug.toolSelectionCall.error = errorMessage;
-                         newDebug.toolSelectionCall.rawResponse = rawAIResponse || newDebug.toolSelectionCall.rawResponse;
-                    }
-                    return newDebug;
-                 });
-            } finally {
-                setIsLoading(false);
+        } catch (err) {
+            const errorMessage = err instanceof Error ? err.message : "An unexpected error occurred in autonomous cycle.";
+            setError(errorMessage);
+            setAutonomousStatus(`Error in autonomous cycle: ${errorMessage}`);
+        } finally {
+            // Schedule the next run if the loop is still active
+            if (autonomousIntervalRef.current !== -1) { // Check if loop hasn't been stopped
+                 autonomousIntervalRef.current = window.setTimeout(runAutonomousCycle, 15000);
             }
         }
-    }, [userInput, tools, findToolByName, showDebug, selectedModel, apiConfig, temperature, runtimeApi]);
+    }, [autonomousActionCount, autonomousActionLimit, lastActionDate, tools, selectedModel, apiConfig, temperature, findToolByName, processRequest]);
+
+    useEffect(() => {
+        if (isAutonomousLoopRunning && operatingMode === OperatingMode.Autonomous) {
+            autonomousIntervalRef.current = 1; // Mark as running
+            runAutonomousCycle();
+        }
+
+        return () => {
+            if (autonomousIntervalRef.current) {
+                clearTimeout(autonomousIntervalRef.current);
+                autonomousIntervalRef.current = -1; // Mark as stopped
+            }
+        };
+    }, [isAutonomousLoopRunning, operatingMode, runAutonomousCycle]);
+
+    const handleToggleAutonomousLoop = () => {
+        if(operatingMode !== OperatingMode.Autonomous) {
+            setError("Autonomous loop can only be started in Autonomous mode.");
+            return;
+        }
+        setIsAutonomousLoopRunning(prev => !prev);
+        if(isAutonomousLoopRunning) {
+            setAutonomousStatus("Autonomous loop stopped by user.");
+        } else {
+            setAutonomousStatus("Starting autonomous loop...");
+        }
+    };
 
     const getUITool = (name: string) => {
         const tool = tools.find(t => t.name === name);
@@ -434,6 +577,10 @@ const App: React.FC = () => {
         UIToolRunner,
         apiConfig, setApiConfig,
         handleResetTools,
+        operatingMode, setOperatingMode,
+        autonomousActionCount, autonomousActionLimit,
+        proposedAction, handleApproveAction, handleRejectAction,
+        isAutonomousLoopRunning, handleToggleAutonomousLoop, autonomousStatus,
     };
 
     const isHuggingFaceModel = selectedModel.provider === ModelProvider.HuggingFace;
@@ -446,6 +593,10 @@ const App: React.FC = () => {
             <main className="flex-grow flex flex-col gap-8">
                 <UIToolRunner tool={getUITool('Security Warning Banner')} props={uiProps} />
                 <UIToolRunner tool={getUITool('System Controls')} props={uiProps} />
+                <div className="w-full max-w-7xl mx-auto grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <UIToolRunner tool={getUITool('Operating Mode Selector')} props={uiProps} />
+                  <UIToolRunner tool={getUITool('Autonomous Resource Monitor')} props={uiProps} />
+                </div>
                 
                 <div className="flex flex-col gap-4">
                   <UIToolRunner tool={getUITool('AI Model Selector')} props={uiProps} />
@@ -460,6 +611,10 @@ const App: React.FC = () => {
 
                   <UIToolRunner tool={getUITool('User Input Form')} props={uiProps} />
                 </div>
+
+                {proposedAction && (
+                    <UIToolRunner tool={getUITool('Action Proposal Panel')} props={uiProps} />
+                )}
 
                 {activeUITool && (
                     <div className="w-full max-w-3xl mx-auto mt-6">
