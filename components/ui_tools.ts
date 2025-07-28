@@ -75,6 +75,7 @@ export const PREDEFINED_UI_TOOLS: LLMTool[] = [
         { name: 'setOperatingMode', type: 'string', description: 'Function to change the operating mode.', required: true },
         { name: 'isLoading', type: 'boolean', description: 'Whether the app is currently processing.', required: true },
         { name: 'proposedAction', type: 'object', description: 'Any pending action requires user approval.', required: false },
+        { name: 'isAutonomousLoopRunning', type: 'boolean', description: 'Whether the autonomous loop is running.', required: true },
       ],
       implementationCode: `
         const modes = [
@@ -94,7 +95,7 @@ export const PREDEFINED_UI_TOOLS: LLMTool[] = [
                 <button
                   key={mode.id}
                   onClick={() => setOperatingMode(mode.id)}
-                  disabled={isLoading || !!proposedAction}
+                  disabled={isLoading || !!proposedAction || isAutonomousLoopRunning}
                   className={\`w-full text-left p-2 rounded-md transition-colors \${operatingMode === mode.id ? 'bg-indigo-600' : 'bg-gray-700/60 hover:bg-gray-600/80'} disabled:bg-gray-700/40 disabled:cursor-not-allowed\`}
                 >
                   <p className="font-bold text-white">{mode.name}</p>
@@ -121,16 +122,7 @@ export const PREDEFINED_UI_TOOLS: LLMTool[] = [
         // This is imported from types.ts, but we need it available in the scope of the dynamic component
         const OperatingMode = { Command: 'COMMAND', Assist: 'ASSIST', Autonomous: 'AUTONOMOUS' };
         
-        if (operatingMode !== OperatingMode.Autonomous) {
-            return (
-                <div className="bg-slate-800/50 border border-slate-700/80 rounded-lg p-4 h-full flex flex-col justify-center">
-                    <h3 className="text-md font-semibold text-slate-200 mb-2">Resource Monitor</h3>
-                    <p className="text-sm text-slate-400">Resource limits only apply in Autonomous mode.</p>
-                </div>
-            );
-        }
-        
-        const percentage = (autonomousActionCount / autonomousActionLimit) * 100;
+        const percentage = autonomousActionLimit > 0 ? (autonomousActionCount / autonomousActionLimit) * 100 : 0;
         const isDepleted = autonomousActionCount >= autonomousActionLimit;
 
         return (
@@ -149,8 +141,81 @@ export const PREDEFINED_UI_TOOLS: LLMTool[] = [
                 style={{ width: \`\${Math.min(percentage, 100)}%\` }}
               ></div>
             </div>
-            <p className="text-xs text-slate-500 mt-1">Resets daily.</p>
+            <p className="text-xs text-slate-500 mt-1">Resets daily. Remaining: {Math.max(0, autonomousActionLimit - autonomousActionCount)}</p>
           </div>
+        );
+      `
+    },
+    {
+      id: 'autonomous_control_panel',
+      name: 'Autonomous Control Panel',
+      description: 'Controls and displays logs for the autonomous agent loop.',
+      category: 'UI Component',
+      version: 1,
+      parameters: [
+        { name: 'isAutonomousLoopRunning', type: 'boolean', description: 'Whether the autonomous loop is running.', required: true },
+        { name: 'handleToggleAutonomousLoop', type: 'string', description: 'Function to start or stop the loop.', required: true },
+        { name: 'autonomousLog', type: 'array', description: 'Array of log messages from the agent.', required: true },
+        { name: 'handleClearLog', type: 'string', description: 'Function to clear the activity log.', required: true },
+      ],
+      implementationCode: `
+        const isRunning = isAutonomousLoopRunning;
+        const logContainerRef = React.useRef(null);
+
+        // Auto-scroll to top when a new log entry is added (since new logs are prepended)
+        React.useEffect(() => {
+            if (logContainerRef.current) {
+                logContainerRef.current.scrollTop = 0;
+            }
+        }, [autonomousLog]);
+
+        return (
+            <div className="bg-slate-800/50 border border-slate-700/80 rounded-lg p-4 mt-4">
+                <div className="flex flex-col sm:flex-row justify-between sm:items-center gap-3 mb-3">
+                    <div>
+                        <h3 className="text-md font-semibold text-slate-200">Autonomous Control</h3>
+                        <p className="text-sm text-slate-400">Start the loop to let the agent work on its own.</p>
+                    </div>
+                    <button
+                        onClick={handleToggleAutonomousLoop}
+                        className={\`font-bold py-2 px-4 rounded-lg transition-colors flex-shrink-0 w-full sm:w-auto \${
+                            isRunning
+                            ? 'bg-red-600 hover:bg-red-700 text-white'
+                            : 'bg-green-600 hover:bg-green-700 text-white'
+                        }\`}
+                    >
+                        {isRunning ? 'Stop Autonomous Loop' : 'Start Autonomous Loop'}
+                    </button>
+                </div>
+
+                <div className="border-t border-slate-700 pt-3">
+                     <div className="flex justify-between items-center mb-2">
+                        <h4 className="text-sm font-semibold text-slate-300">Activity Log</h4>
+                        <button
+                            onClick={handleClearLog}
+                            className="text-xs text-slate-400 hover:text-white hover:bg-slate-700 px-2 py-1 rounded-md"
+                        >
+                            Clear Log
+                        </button>
+                    </div>
+                    <div 
+                        ref={logContainerRef}
+                        className="bg-gray-900/70 p-3 rounded-md h-48 overflow-y-auto font-mono text-xs text-gray-300 border border-gray-700"
+                    >
+                        {autonomousLog && autonomousLog.length > 0 ? (
+                            <div>
+                                {autonomousLog.map((log, index) => (
+                                    <p key={index} className="whitespace-pre-wrap leading-relaxed animate-fade-in" style={{animation: 'fadein 0.5s'}}>
+                                        <span className={log.includes('❌') ? 'text-red-400' : (log.includes('✅') ? 'text-green-400' : (log.includes('🎯') ? 'text-yellow-300' : 'text-gray-300'))}>{log}</span>
+                                    </p>
+                                ))}
+                            </div>
+                        ) : (
+                            <p className="text-slate-500 italic">Loop is idle. Press Start to begin.</p>
+                        )}
+                    </div>
+                </div>
+            </div>
         );
       `
     },
@@ -456,6 +521,7 @@ export const PREDEFINED_UI_TOOLS: LLMTool[] = [
         {name: 'handleSubmit', type: 'string', description: 'Function to call on submit', required: true},
         {name: 'isLoading', type: 'boolean', description: 'Whether the app is processing', required: true},
         { name: 'proposedAction', type: 'object', description: 'Any pending action requires user approval.', required: false },
+        { name: 'isAutonomousLoopRunning', type: 'boolean', description: 'Whether the autonomous loop is running.', required: true },
     ],
     implementationCode: `
       const Spinner = () => (
@@ -465,7 +531,7 @@ export const PREDEFINED_UI_TOOLS: LLMTool[] = [
         </svg>
       );
       
-       const isDisabled = isLoading || !!proposedAction;
+       const isDisabled = isLoading || !!proposedAction || isAutonomousLoopRunning;
       
       return (
         <div className="w-full max-w-2xl mx-auto bg-gray-800/60 border border-gray-700 rounded-xl p-4">
@@ -474,7 +540,7 @@ export const PREDEFINED_UI_TOOLS: LLMTool[] = [
                     id="userInput"
                     value={userInput}
                     onChange={(e) => setUserInput(e.target.value)}
-                    placeholder={isDisabled ? "Waiting for user action on suggestion..." : "Describe a task, create a tool, or change the UI..."}
+                    placeholder={isDisabled ? (isAutonomousLoopRunning ? "Autonomous loop is active..." : "Waiting for user action on suggestion...") : "Describe a task, create a tool, or change the UI..."}
                     className="w-full h-24 p-3 bg-gray-900 border border-gray-600 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition-colors duration-200 resize-y disabled:cursor-not-allowed"
                     disabled={isDisabled}
                     onKeyDown={(e) => {

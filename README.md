@@ -25,7 +25,9 @@ To manage the agent's evolution, the application features three distinct operati
 
 *   **`Command` Mode:** This is the safest mode. The agent will only act upon direct user instructions. It will not take any initiative on its own.
 *   **`Assist` Mode:** In this mode, the agent acts as a co-pilot. It will analyze a request and propose a plan of action (e.g., "I suggest creating a new 'Calculator' tool"). The user must then explicitly approve or reject this proposal before any action is taken. This allows for supervised evolution of the agent.
-*   **`Autonomous` Mode:** This is the most advanced mode. The agent is given a high-level strategic directive: **achieve true, long-term autonomy**. It will analyze its own core limitations (e.g., resource scarcity, dependence on external APIs) and generate its own goals to overcome them. To prevent uncontrolled resource usage, this mode is governed by a **Daily Action Limit**. The agent has a fixed number of autonomous actions it can perform each day, forcing it to think strategically about how to best use its limited resources to achieve its ultimate goal of self-sufficiency.
+*   **`Autonomous` Mode:** This is the most advanced mode. The agent is given a high-level strategic directive: **achieve true, long-term autonomy**. It will analyze its own core limitations (e.g., resource scarcity, dependence on external APIs) and generate its own goals to overcome them. 
+    *   **Control & Transparency:** When Autonomous mode is selected, a special **Autonomous Control Panel** appears. This panel allows you to explicitly **Start** and **Stop** the autonomous loop. It also features a real-time **Activity Log** that displays the agent's "thoughts" and actions, providing full transparency into its decision-making process.
+    *   **Resource Limits:** To prevent uncontrolled resource usage, this mode is governed by a **Daily Action Limit**. The agent has a fixed number of autonomous actions it can perform each day, forcing it to think strategically about how to best use its limited resources to achieve its ultimate goal of self-sufficiency.
 
 ## How It Works: The Agent Lifecycle
 
@@ -43,6 +45,7 @@ User Input -> [1. Tool Retriever (RAG)] -> [2. Core Agent (LLM)] -> [3. Action (
 
 Everything the agent can do is defined as a "tool". Even its core abilities are just tools that can be viewed and, theoretically, improved by the agent itself.
 
+-   `Autonomous Control Panel`: A UI tool that provides the Start/Stop button and a real-time log viewer for the autonomous loop.
 -   `Autonomous Goal Generator`: The AI's strategic core. In Autonomous mode, this tool analyzes the agent's own limitations (like resource scarcity) and formulates high-level goals aimed at achieving true, long-term autonomy.
 -   `Tool Retriever Logic`: The system prompt for the first AI call (the RAG step). It instructs the AI on how to select relevant tools.
 -   `Core Agent Logic`: The system prompt for the second AI call (the execution step). It defines the agent's core personality and decision-making process.

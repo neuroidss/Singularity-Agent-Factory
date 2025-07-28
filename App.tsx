@@ -79,7 +79,7 @@ const App: React.FC = () => {
     
     // State for autonomous loop
     const [isAutonomousLoopRunning, setIsAutonomousLoopRunning] = useState<boolean>(false);
-    const [autonomousStatus, setAutonomousStatus] = useState<string | null>(null);
+    const [autonomousLog, setAutonomousLog] = useState<string[]>([]);
     const autonomousIntervalRef = useRef<number | null>(null);
 
     const [apiConfig, setApiConfig] = useState<APIConfig>(() => {
@@ -156,6 +156,15 @@ const App: React.FC = () => {
     useEffect(() => {
         localStorage.setItem('lastActionDate', lastActionDate);
     }, [lastActionDate]);
+
+    const logToAutonomousPanel = useCallback((message: string) => {
+        const timestamp = new Date().toLocaleTimeString();
+        setAutonomousLog(prev => [`[${timestamp}] ${message}`, ...prev].slice(0, 100));
+    }, []);
+
+    const handleClearLog = useCallback(() => {
+        setAutonomousLog([]);
+    }, []);
 
     const findToolByName = useCallback((toolName: string): LLMTool | undefined => {
         return tools.find(t => t.name === toolName);
@@ -293,6 +302,8 @@ const App: React.FC = () => {
             return { ...prev, agentExecutionCall: { ...prev.agentExecutionCall, processedResponse: enrichedResult } };
         });
 
+        return enrichedResult;
+
     }, [findToolByName, runtimeApi]);
 
     const handleApproveAction = useCallback(async () => {
@@ -411,7 +422,7 @@ const App: React.FC = () => {
             if(!aiResponse.toolCall) {
                 const noToolMessage = "The AI did not select a tool to execute. Please try rephrasing your request.";
                 setInfo(noToolMessage);
-                if (isAutonomous) setAutonomousStatus(noToolMessage);
+                if (isAutonomous) logToAutonomousPanel(`⚠️ ${noToolMessage}`);
             } else if (operatingMode === OperatingMode.Assist && !isAutonomous) {
                 // --- Assist Mode: Propose and wait (only for user actions) ---
                 setProposedAction(aiResponse.toolCall);
@@ -424,14 +435,21 @@ const App: React.FC = () => {
 
             } else {
                 // --- Command/Autonomous Mode: Execute immediately ---
-                if (isAutonomous) setAutonomousStatus(`Executing: ${aiResponse.toolCall.name}`);
-                await executeAction(aiResponse.toolCall);
+                if (isAutonomous) logToAutonomousPanel(`⚙️ Executing: ${aiResponse.toolCall.name}...`);
+                const executionResult = await executeAction(aiResponse.toolCall);
+                 if (isAutonomous) {
+                    if (executionResult?.executionError) {
+                        logToAutonomousPanel(`❌ Execution Failed: ${executionResult.executionError}`);
+                    } else {
+                        logToAutonomousPanel(`✅ Execution Succeeded. Result: ${JSON.stringify(executionResult?.executionResult?.message || executionResult?.executionResult || 'OK')}`);
+                    }
+                }
             }
 
         } catch (err) {
             const errorMessage = err instanceof Error ? err.message : "An unexpected error occurred.";
             setError(errorMessage);
-            if(isAutonomous) setAutonomousStatus(`Error: ${errorMessage}`);
+            if(isAutonomous) logToAutonomousPanel(`❌ Error: ${errorMessage}`);
             const rawAIResponse = (err as any).rawAIResponse;
 
             setLastDebugInfo(prev => {
@@ -448,7 +466,7 @@ const App: React.FC = () => {
         } finally {
             setIsLoading(false);
         }
-    }, [tools, findToolByName, showDebug, selectedModel, apiConfig, temperature, runtimeApi, operatingMode, executeAction]);
+    }, [tools, findToolByName, showDebug, selectedModel, apiConfig, temperature, runtimeApi, operatingMode, executeAction, logToAutonomousPanel]);
 
     const handleSubmit = useCallback(async () => {
         if (!userInput.trim()) {
@@ -479,51 +497,53 @@ const App: React.FC = () => {
     }, [userInput, processRequest, executeAction]);
     
     const runAutonomousCycle = useCallback(async () => {
+        logToAutonomousPanel("🌀 Starting new cycle...");
         // Daily reset and limit check
         const today = new Date().toDateString();
         let currentCount = autonomousActionCount;
         if (lastActionDate !== today) {
-            console.log("New day detected, resetting autonomous action counter.");
+            logToAutonomousPanel("☀️ New day detected, resetting autonomous action counter.");
             currentCount = 0;
             setAutonomousActionCount(0);
             setLastActionDate(today);
         }
 
         if (currentCount >= autonomousActionLimit) {
-            setAutonomousStatus(`Daily limit of ${autonomousActionLimit} reached. Stopping loop.`);
+            logToAutonomousPanel(`🛑 Daily limit of ${autonomousActionLimit} actions reached. Stopping loop.`);
             setIsAutonomousLoopRunning(false);
             return;
         }
 
         try {
-            setAutonomousStatus("Deciding next action...");
+            logToAutonomousPanel("🤔 Deciding next action...");
             const goalGenTool = findToolByName('Autonomous Goal Generator');
             if (!goalGenTool) throw new Error("Critical error: 'Autonomous Goal Generator' tool not found.");
             
             const { goal, rawResponse } = await aiService.generateGoal(
-                goalGenTool.implementationCode, selectedModel, apiConfig, temperature, tools, autonomousActionLimit
+                goalGenTool.implementationCode, selectedModel, apiConfig, temperature, tools, (autonomousActionLimit - currentCount)
             );
             
             if (goal && goal !== "No action needed.") {
-                setAutonomousStatus(`New Goal: ${goal}`);
+                logToAutonomousPanel(`🎯 New Goal: ${goal}`);
                 // Give user a moment to see the goal before processing
-                await new Promise(resolve => setTimeout(resolve, 2000));
+                await new Promise(resolve => setTimeout(resolve, 1000));
                 await processRequest(goal, true);
             } else {
-                setAutonomousStatus("No improvements found. Will check again soon.");
+                logToAutonomousPanel("🧘 No improvements found. Agent is idle.");
             }
 
         } catch (err) {
             const errorMessage = err instanceof Error ? err.message : "An unexpected error occurred in autonomous cycle.";
             setError(errorMessage);
-            setAutonomousStatus(`Error in autonomous cycle: ${errorMessage}`);
+            logToAutonomousPanel(`❌ Error in autonomous cycle: ${errorMessage}`);
         } finally {
             // Schedule the next run if the loop is still active
             if (autonomousIntervalRef.current !== -1) { // Check if loop hasn't been stopped
+                 logToAutonomousPanel("⏸️ Cycle finished. Pausing for 15 seconds...");
                  autonomousIntervalRef.current = window.setTimeout(runAutonomousCycle, 15000);
             }
         }
-    }, [autonomousActionCount, autonomousActionLimit, lastActionDate, tools, selectedModel, apiConfig, temperature, findToolByName, processRequest]);
+    }, [autonomousActionCount, autonomousActionLimit, lastActionDate, tools, selectedModel, apiConfig, temperature, findToolByName, processRequest, logToAutonomousPanel]);
 
     useEffect(() => {
         if (isAutonomousLoopRunning && operatingMode === OperatingMode.Autonomous) {
@@ -544,12 +564,15 @@ const App: React.FC = () => {
             setError("Autonomous loop can only be started in Autonomous mode.");
             return;
         }
-        setIsAutonomousLoopRunning(prev => !prev);
-        if(isAutonomousLoopRunning) {
-            setAutonomousStatus("Autonomous loop stopped by user.");
-        } else {
-            setAutonomousStatus("Starting autonomous loop...");
-        }
+        
+        setIsAutonomousLoopRunning(prev => {
+            if (!prev) {
+                logToAutonomousPanel("▶️ Starting autonomous loop...");
+            } else {
+                logToAutonomousPanel("⏹️ Autonomous loop stopped by user.");
+            }
+            return !prev;
+        });
     };
 
     const getUITool = (name: string) => {
@@ -580,7 +603,7 @@ const App: React.FC = () => {
         operatingMode, setOperatingMode,
         autonomousActionCount, autonomousActionLimit,
         proposedAction, handleApproveAction, handleRejectAction,
-        isAutonomousLoopRunning, handleToggleAutonomousLoop, autonomousStatus,
+        isAutonomousLoopRunning, handleToggleAutonomousLoop, autonomousLog, handleClearLog,
     };
 
     const isHuggingFaceModel = selectedModel.provider === ModelProvider.HuggingFace;
@@ -598,7 +621,13 @@ const App: React.FC = () => {
                   <UIToolRunner tool={getUITool('Autonomous Resource Monitor')} props={uiProps} />
                 </div>
                 
-                <div className="flex flex-col gap-4">
+                {operatingMode === OperatingMode.Autonomous && (
+                    <div className="w-full max-w-7xl mx-auto">
+                        <UIToolRunner tool={getUITool('Autonomous Control Panel')} props={uiProps} />
+                    </div>
+                )}
+
+                <div className="flex flex-col gap-4 mt-8">
                   <UIToolRunner tool={getUITool('AI Model Selector')} props={uiProps} />
                   <UIToolRunner tool={getUITool('Model Parameters Configuration')} props={uiProps} />
                   
