@@ -14,6 +14,19 @@ const sanitizeForFunctionName = (name: string): string => {
   return name.replace(/[^a-zA-Z0-9_]/g, '_');
 };
 
+const generateDetailedError = (error: unknown, modelId: string, rawResponse?: string): Error => {
+    let finalMessage: string;
+    if (error instanceof TypeError && error.message.includes('Failed to fetch')) { // More robust check
+        finalMessage = `Network Error: Could not download model files for ${modelId}. Please check your internet connection. Ad-blockers or browser security settings can sometimes interfere with model downloads.`;
+    } else {
+        finalMessage = `HuggingFace model error (${modelId}): ${error instanceof Error ? error.message : "An unknown error occurred"}`;
+    }
+    const processingError = new Error(finalMessage) as any;
+    processingError.rawAIResponse = rawResponse || "Failed to get raw response due to a model or network error.";
+    return processingError;
+};
+
+
 // --- Pipeline & Execution ---
 const getPipeline = async (modelId: string, apiConfig: APIConfig, onProgress: (message: string) => void): Promise<TextGenerationPipeline> => {
     const { huggingFaceDevice } = apiConfig;
@@ -149,10 +162,7 @@ export const selectTools = async (
         return { names: validNames, rawResponse: responseText };
 
     } catch (error) {
-        const finalMessage = error instanceof Error ? error.message : "An unknown error occurred during tool selection.";
-        const processingError = new Error(finalMessage) as any;
-        processingError.rawAIResponse = responseText;
-        throw processingError;
+        throw generateDetailedError(error, modelId, responseText);
     }
 };
 
@@ -193,10 +203,7 @@ export const generateGoal = async (
         return { goal, rawResponse: responseText };
 
     } catch (error) {
-        const finalMessage = error instanceof Error ? error.message : "An unknown error occurred during goal generation.";
-        const processingError = new Error(finalMessage) as any;
-        processingError.rawAIResponse = responseText;
-        throw processingError;
+        throw generateDetailedError(error, modelId, responseText);
     }
 };
 
@@ -227,10 +234,7 @@ export const verifyToolFunctionality = async (
         };
 
     } catch (error) {
-        const finalMessage = error instanceof Error ? error.message : "An unknown error occurred during tool verification.";
-        const processingError = new Error(finalMessage) as any;
-        processingError.rawAIResponse = responseText;
-        throw processingError;
+        throw generateDetailedError(error, modelId, responseText);
     }
 };
 
@@ -274,9 +278,6 @@ export const generateResponse = async (
         return parseToolCallResponse(responseText, toolNameMap);
 
      } catch (error) {
-         const finalMessage = error instanceof Error ? error.message : "An unknown error occurred during AI processing.";
-         const processingError = new Error(finalMessage) as any;
-         processingError.rawAIResponse = responseText;
-         throw processingError;
+         throw generateDetailedError(error, modelId, responseText);
     }
 };

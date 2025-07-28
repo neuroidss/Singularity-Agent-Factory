@@ -56,6 +56,18 @@ const handleAPIError = async (response: Response) => {
     throw new Error(`[API Error ${response.status}]: ${errorBody || response.statusText}`);
 };
 
+const generateDetailedError = (error: unknown, url: string): Error => {
+    let finalMessage: string;
+    if (error instanceof TypeError && error.message === 'Failed to fetch') {
+        finalMessage = `Network Error: Could not connect to the API at ${url}. Please ensure the server is running, the Base URL is correct, and there are no network issues (like firewalls or CORS policies) blocking the connection.`;
+    } else {
+        finalMessage = error instanceof Error ? error.message : "An unknown error occurred during API communication.";
+    }
+    const processingError = new Error(finalMessage) as any;
+    processingError.rawAIResponse = "Failed to get raw response due to a network or parsing error.";
+    return processingError;
+}
+
 // --- Service Implementations ---
 
 export const selectTools = async (
@@ -109,10 +121,7 @@ export const selectTools = async (
         return { names: validNames, rawResponse };
 
     } catch (error) {
-        const finalMessage = error instanceof Error ? error.message : "An unknown error occurred during tool selection.";
-        const processingError = new Error(finalMessage) as any;
-        processingError.rawAIResponse = "Failed to get raw response from OpenAI-compatible API.";
-        throw processingError;
+        throw generateDetailedError(error, apiConfig.openAIBaseUrl);
     }
 };
 
@@ -170,10 +179,7 @@ export const generateGoal = async (
         return { goal, rawResponse };
 
     } catch (error) {
-        const finalMessage = error instanceof Error ? error.message : "An unknown error occurred during goal generation.";
-        const processingError = new Error(finalMessage) as any;
-        processingError.rawAIResponse = "Failed to get raw response from OpenAI-compatible API.";
-        throw processingError;
+        throw generateDetailedError(error, apiConfig.openAIBaseUrl);
     }
 };
 
@@ -221,10 +227,7 @@ export const verifyToolFunctionality = async (
         };
 
     } catch (error) {
-        const finalMessage = error instanceof Error ? error.message : "An unknown error occurred during tool verification.";
-        const processingError = new Error(finalMessage) as any;
-        processingError.rawAIResponse = "Failed to get raw response from OpenAI-compatible API.";
-        throw processingError;
+        throw generateDetailedError(error, apiConfig.openAIBaseUrl);
     }
 };
 
@@ -345,9 +348,6 @@ export const generateResponse = async (
         };
 
     } catch (error) {
-        const finalMessage = error instanceof Error ? error.message : "An unknown error occurred.";
-        const processingError = new Error(finalMessage) as any;
-        processingError.rawAIResponse = JSON.stringify({ tool_calls: accumulatedToolCalls }, null, 2);
-        throw processingError;
+        throw generateDetailedError(error, apiConfig.openAIBaseUrl);
     }
 };

@@ -5,6 +5,7 @@ import type { LLMTool, EnrichedAIResponse, DebugInfo, AIResponse, APIConfig, AIM
 import { UIToolRunner } from './components/UIToolRunner';
 import { ModelProvider, OperatingMode, ToolRetrievalStrategy } from './types';
 import { loadStateFromStorage, saveStateToStorage } from './versioning';
+import { retrieveToolsByEmbeddings } from './services/embeddingService';
 
 const generateMachineReadableId = (name: string, existingTools: LLMTool[]): string => {
   let baseId = name
@@ -92,6 +93,9 @@ const App: React.FC = () => {
     const [currentUserTask, setCurrentUserTask] = useState<string>('');
     const taskHistoryRef = useRef<EnrichedAIResponse[]>([]);
     const taskIsRunningRef = useRef(isTaskLoopRunning);
+
+    // State for embedding-based tool retrieval
+    const [toolEmbeddingsCache, setToolEmbeddingsCache] = useState<Map<string, number[]>>(new Map());
 
 
     const [apiConfig, setApiConfig] = useState<APIConfig>(() => {
@@ -403,28 +407,6 @@ The JSON object must have this exact format:
         setLastResponse(null);
     }, []);
 
-    const retrieveToolsByKeywordSearch = (prompt: string, allTools: LLMTool[]): LLMTool[] => {
-        const keywords = prompt.toLowerCase().split(/\s+/).filter(k => k.length > 2);
-        const uniqueTools = new Set<LLMTool>();
-    
-        const mandatoryTools = ['Tool Creator', 'Tool Improver'];
-        mandatoryTools.forEach(name => {
-            const tool = findToolByName(name);
-            if (tool) uniqueTools.add(tool);
-        });
-
-        if (keywords.length === 0) return Array.from(uniqueTools);
-
-        allTools.forEach(tool => {
-            const toolContent = `${tool.name.toLowerCase()} ${tool.description.toLowerCase()}`;
-            if (keywords.some(keyword => toolContent.includes(keyword))) {
-                uniqueTools.add(tool);
-            }
-        });
-        
-        return Array.from(uniqueTools);
-    };
-
     const processRequest = useCallback(async (prompt: string, isAutonomous: boolean = false): Promise<EnrichedAIResponse | null> => {
         setIsLoading(true);
         setError(null);
@@ -473,8 +455,14 @@ The JSON object must have this exact format:
                     break;
                 }
                 case ToolRetrievalStrategy.Embedding: {
-                    setInfo("🧠 Retrieving relevant tools via keyword search...");
-                    const foundTools = retrieveToolsByKeywordSearch(prompt, tools);
+                    setInfo("🧠 Retrieving relevant tools via embedding search...");
+                    const foundTools = await retrieveToolsByEmbeddings(
+                        prompt, 
+                        tools, 
+                        toolEmbeddingsCache,
+                        setToolEmbeddingsCache,
+                        setInfo
+                    );
                     selectedToolNames = foundTools.map(t => t.name);
                     toolSelectionDebug = { ...toolSelectionDebug, availableTools: tools.map(t => ({name: t.name, description: t.description})), selectedToolNames };
                     break;
@@ -584,7 +572,7 @@ The JSON object must have this exact format:
                 setIsLoading(false);
             }
         }
-    }, [tools, findToolByName, showDebug, selectedModel, apiConfig, temperature, runtimeApi, operatingMode, executeAction, logToAutonomousPanel, toolRetrievalStrategy]);
+    }, [tools, findToolByName, showDebug, selectedModel, apiConfig, temperature, runtimeApi, operatingMode, executeAction, logToAutonomousPanel, toolRetrievalStrategy, toolEmbeddingsCache]);
 
     const handleStopTask = useCallback(() => {
         setIsTaskLoopRunning(false);

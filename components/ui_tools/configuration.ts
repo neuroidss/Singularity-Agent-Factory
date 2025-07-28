@@ -205,7 +205,7 @@ export const configurationTools: LLMTool[] = [
     name: 'Tool Retrieval Strategy Selector',
     description: 'Allows the user to select the strategy for how the agent retrieves relevant tools.',
     category: 'UI Component',
-    version: 1,
+    version: 2,
     parameters: [
       { name: 'toolRetrievalStrategy', type: 'string', description: 'The current strategy being used.', required: true },
       { name: 'setToolRetrievalStrategy', type: 'string', description: 'Function to update the strategy.', required: true },
@@ -221,7 +221,7 @@ export const configurationTools: LLMTool[] = [
       
       const strategies = [
         { id: ToolRetrievalStrategy.LLM, name: 'LLM Filter', description: 'AI filters tools. Balanced but costs 1 extra API call.' },
-        { id: ToolRetrievalStrategy.Embedding, name: 'Embedding Filter', description: 'Fast keyword search. Efficient but less nuanced.' },
+        { id: ToolRetrievalStrategy.Embedding, name: 'Embedding Filter', description: 'Semantic search via embeddings. Finds tools by meaning.' },
         { id: ToolRetrievalStrategy.Direct, name: 'Direct', description: 'All tools are sent to AI. Fastest but uses large context.' },
       ];
 

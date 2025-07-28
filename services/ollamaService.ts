@@ -28,6 +28,18 @@ const handleAPIError = async (response: Response) => {
     throw new Error(`[Ollama Error ${response.status}]: ${errorBody || response.statusText}`);
 };
 
+const generateDetailedError = (error: unknown, host: string, rawResponse?: string): Error => {
+    let finalMessage: string;
+    if (error instanceof TypeError && error.message === 'Failed to fetch') {
+        finalMessage = `Network Error: Could not connect to the Ollama server at ${host}. Please ensure the server is running, the host URL is correct, and there are no network issues (like firewalls or CORS policies) blocking the connection.`;
+    } else {
+        finalMessage = error instanceof Error ? error.message : "An unknown error occurred during Ollama communication.";
+    }
+    const processingError = new Error(finalMessage) as any;
+    processingError.rawAIResponse = rawResponse || "Failed to get raw response due to a network or parsing error.";
+    return processingError;
+}
+
 const parseToolCallResponse = (responseText: string, toolNameMap: Map<string, string>): AIResponse => {
     const trimmedResponse = responseText.trim();
     if (!trimmedResponse) {
@@ -112,10 +124,7 @@ export const selectTools = async (
         return { names: validNames, rawResponse: responseText };
 
     } catch (error) {
-         const finalMessage = error instanceof Error ? error.message : "An unknown error occurred during tool selection.";
-         const processingError = new Error(finalMessage) as any;
-         processingError.rawAIResponse = responseText;
-         throw processingError;
+         throw generateDetailedError(error, apiConfig.ollamaHost, responseText);
     }
 };
 
@@ -166,10 +175,7 @@ export const generateGoal = async (
         return { goal, rawResponse: responseText };
 
     } catch (error) {
-         const finalMessage = error instanceof Error ? error.message : "An unknown error occurred during goal generation.";
-         const processingError = new Error(finalMessage) as any;
-         processingError.rawAIResponse = responseText;
-         throw processingError;
+         throw generateDetailedError(error, apiConfig.ollamaHost, responseText);
     }
 };
 
@@ -210,10 +216,7 @@ export const verifyToolFunctionality = async (
         };
 
     } catch (error) {
-         const finalMessage = error instanceof Error ? error.message : "An unknown error occurred during tool verification.";
-         const processingError = new Error(finalMessage) as any;
-         processingError.rawAIResponse = responseText;
-         throw processingError;
+         throw generateDetailedError(error, apiConfig.ollamaHost, responseText);
     }
 };
 
@@ -279,9 +282,6 @@ export const generateResponse = async (
         return parseToolCallResponse(responseText, toolNameMap);
 
     } catch (error) {
-         const finalMessage = error instanceof Error ? error.message : "An unknown error occurred during AI processing.";
-         const processingError = new Error(finalMessage) as any;
-         processingError.rawAIResponse = responseText;
-         throw processingError;
+         throw generateDetailedError(error, apiConfig.ollamaHost, responseText);
     }
 };
