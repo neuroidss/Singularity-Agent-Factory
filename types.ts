@@ -17,9 +17,11 @@ export interface LLMTool {
   // For 'UI Component' tools, this is a string of JSX.
   // For other tools, it's the body of a function.
   implementationCode: string;
+  createdAt?: string;
+  updatedAt?: string;
 }
 
-export type NewToolPayload = Omit<LLMTool, 'id' | 'version'>;
+export type NewToolPayload = Omit<LLMTool, 'id' | 'version' | 'createdAt' | 'updatedAt'>;
 
 export interface AIToolCall {
     name: string;

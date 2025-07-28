@@ -587,7 +587,7 @@ export const PREDEFINED_UI_TOOLS: LLMTool[] = [
     name: 'Tool List Display',
     description: 'Renders the grid of all available tools.',
     category: 'UI Component',
-    version: 4,
+    version: 5,
     parameters: [
       { name: 'tools', type: 'string', description: 'Array of all available tools', required: true },
       { name: 'UIToolRunner', type: 'string', description: 'The UI tool runner component itself, for recursion', required: true },
@@ -606,7 +606,7 @@ export const PREDEFINED_UI_TOOLS: LLMTool[] = [
                   id: 'tool_card',
                   name: 'Tool Card',
                   category: 'UI Component',
-                  version: 2,
+                  version: 3,
                   parameters: [],
                   implementationCode: \`
                     const [showDetails, setShowDetails] = React.useState(false);
@@ -624,32 +624,66 @@ export const PREDEFINED_UI_TOOLS: LLMTool[] = [
                       });
                       return JSON.stringify(example, null, 2);
                     };
+
+                    const Tooltip = ({ text, children }) => {
+                        const [visible, setVisible] = React.useState(false);
+                        return (
+                            <div className="relative" onMouseEnter={() => setVisible(true)} onMouseLeave={() => setVisible(false)}>
+                                {children}
+                                {visible && (
+                                    <div className="absolute bottom-full mb-2 left-1/2 -translate-x-1/2 w-max bg-gray-900 text-white text-xs rounded py-1 px-2 z-10 shadow-lg border border-gray-600">
+                                        {text}
+                                    </div>
+                                )}
+                            </div>
+                        )
+                    };
                     
                     return (
-                      <div className="bg-gray-800 border border-gray-700 rounded-lg p-3 flex flex-col gap-2 text-sm">
+                      <div className="bg-gray-800 border border-gray-700 rounded-lg p-3 flex flex-col gap-2 text-sm h-full">
+                        <div className="flex justify-between items-start">
+                            <h3 className="font-bold text-white truncate pr-2">{tool.name}</h3>
+                            <span className="flex-shrink-0 bg-gray-700 text-gray-300 text-xs font-semibold px-2 py-0.5 rounded-full">
+                                v{tool.version}
+                            </span>
+                        </div>
                         <div>
-                          <h3 className="font-bold text-white truncate">{tool.name}</h3>
-                          <p className="text-xs text-gray-400">ID: {sanitizedName}</p>
-                          <p className="text-xs text-indigo-400">{tool.category} - v{tool.version}</p>
+                          <p className="text-xs text-indigo-400">{tool.category}</p>
                         </div>
                         <p className="text-gray-300 text-xs flex-grow min-h-[30px]">{tool.description}</p>
                         
                         <div className="mt-auto pt-2 border-t border-gray-700/50">
-                          <button
-                            onClick={() => setShowDetails(!showDetails)}
-                            className="w-full text-left text-xs font-semibold text-cyan-300 hover:text-cyan-200"
-                          >
-                            {showDetails ? '[-] Hide Details' : '[+] Show Details'}
-                          </button>
+                          <div className="flex justify-between items-center">
+                            <button
+                              onClick={() => setShowDetails(!showDetails)}
+                              className="text-left text-xs font-semibold text-cyan-300 hover:text-cyan-200"
+                            >
+                              {showDetails ? '[-] Hide Details' : '[+] Show Details'}
+                            </button>
+                            {tool.updatedAt && (
+                                <Tooltip text={'Last Updated: ' + new Date(tool.updatedAt).toLocaleString()}>
+                                    <p className="text-xs text-gray-500">
+                                        {new Date(tool.updatedAt).toLocaleDateString()}
+                                    </p>
+                                </Tooltip>
+                            )}
+                          </div>
 
                           {showDetails && (
                             <div className="mt-2 space-y-2">
+                               <div>
+                                <p className="text-xs text-gray-400 mb-1">ID:</p>
+                                <pre className="text-xs text-gray-300 bg-gray-900 p-2 rounded-md font-mono whitespace-pre-wrap">
+                                    {sanitizedName}
+                                </pre>
+                              </div>
                               <div>
                                 <p className="text-xs text-gray-400 mb-1">Code:</p>
                                 <pre className="text-xs text-cyan-200 bg-gray-900 p-2 rounded-md font-mono whitespace-pre-wrap">
                                   {tool.implementationCode}
                                 </pre>
                               </div>
+                              {tool.createdAt && <p className="text-xs text-gray-500">Created: {new Date(tool.createdAt).toLocaleString()}</p>}
                               {tool.category !== 'UI Component' && (
                                 <div>
                                   <p className="text-xs text-gray-400 mb-1">Direct Usage:</p>

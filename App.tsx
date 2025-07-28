@@ -4,6 +4,7 @@ import { PREDEFINED_TOOLS, AVAILABLE_MODELS, DEFAULT_HUGGING_FACE_DEVICE } from 
 import type { LLMTool, EnrichedAIResponse, DebugInfo, AIResponse, APIConfig, AIModel, NewToolPayload, AIToolCall, ToolSelectionCallInfo, AgentExecutionCallInfo } from './types';
 import { UIToolRunner } from './components/UIToolRunner';
 import { ModelProvider } from './types';
+import { loadStateFromStorage, saveStateToStorage } from './versioning';
 
 const generateMachineReadableId = (name: string, existingTools: LLMTool[]): string => {
   let baseId = name
@@ -32,13 +33,27 @@ const generateMachineReadableId = (name: string, existingTools: LLMTool[]): stri
   return finalId;
 };
 
+const initializeTools = (): LLMTool[] => {
+    const loadedState = loadStateFromStorage();
+    if (loadedState && loadedState.tools) {
+        return loadedState.tools;
+    }
+    // If nothing in storage, initialize from predefined and add timestamps
+    const now = new Date().toISOString();
+    return PREDEFINED_TOOLS.map(tool => ({
+        ...tool,
+        createdAt: tool.createdAt || now,
+        updatedAt: tool.updatedAt || now,
+    }));
+};
+
 
 const App: React.FC = () => {
     const [userInput, setUserInput] = useState<string>('');
     const [isLoading, setIsLoading] = useState<boolean>(false);
     const [error, setError] = useState<string | null>(null);
     const [info, setInfo] = useState<string | null>(null);
-    const [tools, setTools] = useState<LLMTool[]>([]);
+    const [tools, setTools] = useState<LLMTool[]>(initializeTools);
     const [lastResponse, setLastResponse] = useState<EnrichedAIResponse | null>(null);
     const [showDebug, setShowDebug] = useState<boolean>(false);
     const [lastDebugInfo, setLastDebugInfo] = useState<DebugInfo | null>(null);
@@ -95,23 +110,8 @@ const App: React.FC = () => {
     );
 
     useEffect(() => {
-        try {
-            const storedToolsJson = localStorage.getItem('tools');
-            if (storedToolsJson) {
-                const storedTools = JSON.parse(storedToolsJson) as LLMTool[];
-                setTools(storedTools);
-            } else {
-                setTools(PREDEFINED_TOOLS);
-            }
-        } catch (e) {
-            console.error("Failed to load tools from localStorage", e);
-            setTools(PREDEFINED_TOOLS);
-        }
-    }, []);
-
-    useEffect(() => {
         if (tools.length > 0) {
-            localStorage.setItem('tools', JSON.stringify(tools));
+            saveStateToStorage({ tools });
         }
     }, [tools]);
     
@@ -139,10 +139,13 @@ const App: React.FC = () => {
                     throw new Error(`A tool with the name '${newToolPayload.name}' already exists. Use the 'Tool Improver' to modify it.`);
                 }
                 const newId = generateMachineReadableId(newToolPayload.name, tools);
+                const now = new Date().toISOString();
                 const completeTool: LLMTool = { 
                     ...newToolPayload, 
                     id: newId, 
-                    version: 1 
+                    version: 1,
+                    createdAt: now,
+                    updatedAt: now,
                 };
                 setTools(prevTools => [...prevTools, completeTool]);
                 setActiveUITool(null); // Close any active UI tool
@@ -158,6 +161,7 @@ const App: React.FC = () => {
                     ...toolToUpdate,
                     ...updates,
                     version: toolToUpdate.version + 1,
+                    updatedAt: new Date().toISOString(),
                 };
 
                 setTools(prevTools => prevTools.map(t => t.id === updatedTool.id ? updatedTool : t));
@@ -193,11 +197,19 @@ const App: React.FC = () => {
     
     const handleResetTools = useCallback(() => {
         if (window.confirm('This will delete ALL custom-made tools and restore the original set of tools. This action cannot be undone. Are you sure?')) {
-            // First, clear the item from storage to prevent race conditions on reload
-            localStorage.removeItem('tools');
-            // Then, update the state to immediately reflect the change in the UI
-            setTools(PREDEFINED_TOOLS);
-            // Finally, provide clear feedback to the user
+            // Clear all relevant storage items
+            localStorage.removeItem('singularity-agent-factory-state');
+            localStorage.removeItem('tools'); // Legacy key
+            
+            // Update the state to immediately reflect the change in the UI
+            const now = new Date().toISOString();
+            const defaultTools = PREDEFINED_TOOLS.map(tool => ({
+                ...tool,
+                createdAt: now,
+                updatedAt: now,
+            }));
+            setTools(defaultTools);
+
             setInfo("System reset complete. All custom tools have been deleted and original tools have been restored.");
             setError(null);
             setLastResponse(null);
