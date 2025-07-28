@@ -429,7 +429,7 @@ export const PREDEFINED_UI_TOOLS: LLMTool[] = [
     name: 'AI Model Selector',
     description: 'Renders a dropdown to select the active AI model.',
     category: 'UI Component',
-    version: 2,
+    version: 3,
     parameters: [
       { name: 'models', type: 'string', description: 'Array of available AI models', required: true },
       { name: 'selectedModelId', type: 'string', description: 'The ID of the currently selected model', required: true },
@@ -447,7 +447,7 @@ export const PREDEFINED_UI_TOOLS: LLMTool[] = [
       }, {});
       
       return (
-        <div className="w-full max-w-2xl mx-auto mb-4">
+        <div className="w-full max-w-2xl mx-auto">
           <label htmlFor="model-selector" className="block text-sm font-medium text-gray-400 mb-1">
             AI Model
           </label>
@@ -468,6 +468,62 @@ export const PREDEFINED_UI_TOOLS: LLMTool[] = [
               </optgroup>
             ))}
           </select>
+        </div>
+      );
+    `
+  },
+    {
+    id: 'tool_retrieval_strategy_selector',
+    name: 'Tool Retrieval Strategy Selector',
+    description: 'Allows the user to select the strategy for how the agent retrieves relevant tools.',
+    category: 'UI Component',
+    version: 1,
+    parameters: [
+      { name: 'toolRetrievalStrategy', type: 'string', description: 'The current strategy being used.', required: true },
+      { name: 'setToolRetrievalStrategy', type: 'string', description: 'Function to update the strategy.', required: true },
+      { name: 'isLoading', type: 'boolean', description: 'Whether the app is currently processing.', required: true },
+    ],
+    implementationCode: `
+      // Enums are not available in this scope, so we define a plain object.
+      const ToolRetrievalStrategy = {
+        Direct: 'DIRECT',
+        LLM: 'LLM',
+        Embedding: 'EMBEDDING',
+      };
+      
+      const strategies = [
+        { id: ToolRetrievalStrategy.LLM, name: 'LLM Filter', description: 'AI filters tools. Balanced but costs 1 extra API call.' },
+        { id: ToolRetrievalStrategy.Embedding, name: 'Embedding Filter', description: 'Fast keyword search. Efficient but less nuanced.' },
+        { id: ToolRetrievalStrategy.Direct, name: 'Direct', description: 'All tools are sent to AI. Fastest but uses large context.' },
+      ];
+
+      return (
+        <div className="w-full max-w-2xl mx-auto mt-4">
+            <label className="block text-sm font-medium text-gray-400 mb-1">Tool Retrieval Strategy</label>
+             <fieldset className="flex flex-col sm:flex-row gap-2 rounded-lg bg-gray-800 border border-gray-600 p-2">
+                <legend className="sr-only">Tool Retrieval Strategy</legend>
+                {strategies.map(strategy => (
+                    <div key={strategy.id} className="flex-1">
+                        <input 
+                            type="radio" 
+                            name="retrieval-strategy" 
+                            id={strategy.id} 
+                            value={strategy.id}
+                            checked={toolRetrievalStrategy === strategy.id}
+                            onChange={(e) => setToolRetrievalStrategy(e.target.value)}
+                            disabled={isLoading}
+                            className="sr-only peer"
+                        />
+                        <label 
+                            htmlFor={strategy.id}
+                            className="block w-full p-2 text-center rounded-md cursor-pointer peer-disabled:cursor-not-allowed peer-disabled:bg-gray-700 peer-disabled:text-gray-500 peer-checked:bg-indigo-600 peer-checked:text-white bg-gray-700/60 hover:bg-gray-600/80"
+                        >
+                            <span className="text-sm font-semibold">{strategy.name}</span>
+                             <p className="text-xs text-gray-300 peer-checked:text-indigo-200">{strategy.description}</p>
+                        </label>
+                    </div>
+                ))}
+             </fieldset>
         </div>
       );
     `
@@ -661,7 +717,7 @@ export const PREDEFINED_UI_TOOLS: LLMTool[] = [
     name: 'Debug Information Panel',
     description: 'Renders the debug panel with detailed AI interaction logs.',
     category: 'UI Component',
-    version: 11,
+    version: 12,
     parameters: [
       { name: 'debugInfo', type: 'string', description: 'The debug info object', required: false },
     ],
@@ -677,7 +733,6 @@ export const PREDEFINED_UI_TOOLS: LLMTool[] = [
         const [isOpen, setIsOpen] = React.useState(defaultOpen);
         const Icon = isOpen ? '▼' : '►';
         
-        // When new data comes in, we want to auto-open the section.
         React.useEffect(() => {
             setIsOpen(defaultOpen);
         }, [defaultOpen]);
@@ -729,7 +784,48 @@ export const PREDEFINED_UI_TOOLS: LLMTool[] = [
           )
       }
 
-      const { userInput, modelId, temperature, toolSelectionCall, agentExecutionCall } = debugInfo;
+      const { userInput, modelId, temperature, toolRetrievalStrategy, toolSelectionCall, agentExecutionCall } = debugInfo;
+      const ToolRetrievalStrategy = { Direct: 'DIRECT', LLM: 'LLM', Embedding: 'EMBEDDING' };
+
+      const renderToolSelectionContent = () => {
+        if (!toolSelectionCall) return <p className="text-yellow-400/80">Pending...</p>;
+        
+        switch (toolSelectionCall.strategy) {
+          case ToolRetrievalStrategy.Direct:
+            return <ValueDisplay title="Strategy: Direct" content="All tools were provided directly to the agent. No filtering was performed." />;
+          
+          case ToolRetrievalStrategy.Embedding:
+             return (
+                <div className="space-y-4">
+                  <ValueDisplay title="Strategy: Embedding (Keyword Search)" content="Tools were filtered by matching keywords from the user prompt against tool names and descriptions." />
+                  <ValueDisplay title="Selected Tool Names:" content={JSON.stringify(toolSelectionCall.selectedToolNames, null, 2)} />
+                  {toolSelectionCall.error && <ErrorDisplay title="Retrieval Error" error={toolSelectionCall.error} />}
+                </div>
+              );
+
+          case ToolRetrievalStrategy.LLM:
+          default:
+            return (
+              <div className="space-y-4">
+                  <details className="bg-gray-900/40 rounded-lg" open>
+                      <summary className="cursor-pointer p-2 font-semibold text-gray-300">Inputs to Retriever</summary>
+                      <div className="p-4 border-t border-gray-700 space-y-4">
+                          <ValueDisplay title="System Instruction:" content={toolSelectionCall.systemInstruction || 'N/A'} />
+                          <ValueDisplay title="All Available Tools:" content={JSON.stringify(toolSelectionCall.availableTools, null, 2)} />
+                      </div>
+                  </details>
+                  <details className="bg-gray-900/40 rounded-lg" open>
+                      <summary className="cursor-pointer p-2 font-semibold text-gray-300">Outputs & Result</summary>
+                      <div className="p-4 border-t border-gray-700 space-y-4">
+                           <ValueDisplay title="Raw Response from AI:" content={toolSelectionCall.rawResponse || 'N/A'} />
+                           <ValueDisplay title="Selected Tool Names:" content={JSON.stringify(toolSelectionCall.selectedToolNames, null, 2)} />
+                      </div>
+                  </details>
+                  {toolSelectionCall.error && <ErrorDisplay title="Retrieval Error" error={toolSelectionCall.error} />}
+              </div>
+            );
+        }
+      };
 
       return (
         <div className="w-full max-w-7xl mx-auto mt-6 bg-gray-800/60 border-2 border-dashed border-yellow-600/50 rounded-xl p-6">
@@ -737,34 +833,15 @@ export const PREDEFINED_UI_TOOLS: LLMTool[] = [
             <div className="space-y-4">
                 <div className="space-y-2">
                     <ValueDisplay title="User Input:" content={userInput} />
-                    <div className="grid grid-cols-2 gap-4">
+                    <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
                         <ValueDisplay title="Model:" content={modelId} />
                         <ValueDisplay title="Temperature:" content={temperature} />
+                        <ValueDisplay title="Retrieval Strategy:" content={toolRetrievalStrategy} />
                     </div>
                 </div>
 
-                <CollapsibleSection number="1" title="Tool Retrieval (RAG)" isPending={!toolSelectionCall?.rawResponse} defaultOpen={true}>
-                    {toolSelectionCall ? (
-                        <div className="space-y-4">
-                             <details className="bg-gray-900/40 rounded-lg" open>
-                                <summary className="cursor-pointer p-2 font-semibold text-gray-300">Inputs to Retriever</summary>
-                                <div className="p-4 border-t border-gray-700 space-y-4">
-                                    <ValueDisplay title="System Instruction:" content={toolSelectionCall.systemInstruction} />
-                                    <ValueDisplay title="All Available Tools:" content={JSON.stringify(toolSelectionCall.availableTools, null, 2)} />
-                                </div>
-                            </details>
-                            <details className="bg-gray-900/40 rounded-lg" open>
-                                <summary className="cursor-pointer p-2 font-semibold text-gray-300">Outputs & Result</summary>
-                                <div className="p-4 border-t border-gray-700 space-y-4">
-                                     <ValueDisplay title="Raw Response from AI:" content={toolSelectionCall.rawResponse} />
-                                     <ValueDisplay title="Selected Tool Names:" content={JSON.stringify(toolSelectionCall.selectedToolNames, null, 2)} />
-                                </div>
-                            </details>
-                            {toolSelectionCall.error && (
-                                <ErrorDisplay title="Retrieval Error" error={toolSelectionCall.error} />
-                            )}
-                        </div>
-                    ) : ( <p className="text-yellow-400/80">Pending...</p> )}
+                <CollapsibleSection number="1" title="Tool Retrieval" isPending={!toolSelectionCall?.selectedToolNames && !toolSelectionCall?.error} defaultOpen={true}>
+                    {renderToolSelectionContent()}
                 </CollapsibleSection>
                 
                 <CollapsibleSection number="2" title="Agent Execution" isPending={toolSelectionCall && !agentExecutionCall} defaultOpen={!!toolSelectionCall}>

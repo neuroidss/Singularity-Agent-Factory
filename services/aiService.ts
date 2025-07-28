@@ -1,4 +1,4 @@
-import { ModelProvider, type AIModel, type APIConfig, type AIResponse, type LLMTool } from '../types';
+import { ModelProvider, type AIModel, type APIConfig, type AIResponse, type LLMTool, type EnrichedAIResponse } from '../types';
 import * as geminiService from './geminiService';
 import * as openAIService from './openAIService';
 import * as ollamaService from './ollamaService';
@@ -37,21 +37,22 @@ export const generateGoal = async (
     apiConfig: APIConfig,
     temperature: number,
     allTools: LLMTool[],
-    autonomousActionLimit: number
+    autonomousActionLimit: number,
+    lastActionResult: string | null,
 ): Promise<{ goal: string, rawResponse: string }> => {
     switch (model.provider) {
         case ModelProvider.GoogleAI:
-            return geminiService.generateGoal(systemInstruction, model.id, temperature, apiConfig, allTools, autonomousActionLimit);
+            return geminiService.generateGoal(systemInstruction, model.id, temperature, apiConfig, allTools, autonomousActionLimit, lastActionResult);
         case ModelProvider.OpenAI_API:
             if (!apiConfig.openAIBaseUrl) throw new Error("OpenAI-Compatible Base URL is not configured.");
             const modelIdToUse = model.id === 'custom-openai' && apiConfig.openAIModelId ? apiConfig.openAIModelId : model.id;
-            return openAIService.generateGoal(systemInstruction, modelIdToUse, temperature, apiConfig, allTools, autonomousActionLimit);
+            return openAIService.generateGoal(systemInstruction, modelIdToUse, temperature, apiConfig, allTools, autonomousActionLimit, lastActionResult);
         case ModelProvider.Ollama:
             if (!apiConfig.ollamaHost) throw new Error("Ollama Host is not configured.");
-            return ollamaService.generateGoal(systemInstruction, model.id, temperature, apiConfig, allTools, autonomousActionLimit);
+            return ollamaService.generateGoal(systemInstruction, model.id, temperature, apiConfig, allTools, autonomousActionLimit, lastActionResult);
         case ModelProvider.HuggingFace:
             const onProgressStub = (msg: string) => console.log(`[HF GoalGen]: ${msg}`);
-            return huggingFaceService.generateGoal(systemInstruction, model.id, temperature, apiConfig, allTools, onProgressStub, autonomousActionLimit);
+            return huggingFaceService.generateGoal(systemInstruction, model.id, temperature, apiConfig, allTools, onProgressStub, autonomousActionLimit, lastActionResult);
         default:
             throw new Error(`Goal generation not supported for model provider: ${model.provider}`);
     }

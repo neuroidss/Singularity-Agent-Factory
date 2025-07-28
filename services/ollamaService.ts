@@ -122,12 +122,18 @@ export const generateGoal = async (
     temperature: number,
     apiConfig: APIConfig,
     allTools: LLMTool[],
-    autonomousActionLimit: number
+    autonomousActionLimit: number,
+    lastActionResult: string | null
 ): Promise<{ goal: string, rawResponse: string }> => {
     const lightweightTools = allTools.map(t => ({ name: t.name, description: t.description, version: t.version }));
     const toolsForPrompt = JSON.stringify(lightweightTools, null, 2);
-    const systemInstructionWithLimit = systemInstruction.replace('{{ACTION_LIMIT}}', String(autonomousActionLimit));
-    const fullSystemInstruction = `${systemInstructionWithLimit}\n\nHere is the current list of all available tools:\n${toolsForPrompt}`;
+
+    const lastActionText = lastActionResult || "No action has been taken yet.";
+    const instructionWithContext = systemInstruction
+        .replace('{{LAST_ACTION_RESULT}}', lastActionText)
+        .replace('{{ACTION_LIMIT}}', String(autonomousActionLimit));
+
+    const fullSystemInstruction = `${instructionWithContext}\n\nHere is the current list of all available tools:\n${toolsForPrompt}`;
 
     const body = createAPIBody(modelId, fullSystemInstruction, "What should I do next?", temperature, 'json');
     let responseText = "";

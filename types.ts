@@ -6,6 +6,12 @@ export enum OperatingMode {
   Autonomous = 'AUTONOMOUS',
 }
 
+export enum ToolRetrievalStrategy {
+  Direct = 'DIRECT',
+  LLM = 'LLM',
+  Embedding = 'EMBEDDING',
+}
+
 export interface ToolParameter {
   name: string;
   type: 'string' | 'number' | 'boolean' | 'object' | 'array';
@@ -52,10 +58,11 @@ export interface ServiceOutput {
 
 // Debug info for the first AI call (Tool Selection)
 export interface ToolSelectionCallInfo {
-    systemInstruction: string;
+    strategy: ToolRetrievalStrategy;
+    systemInstruction?: string;
     userPrompt: string;
-    availableTools: { name: string; description: string; }[];
-    rawResponse: string;
+    availableTools?: { name: string; description: string; }[];
+    rawResponse?: string;
     selectedToolNames?: string[];
     error?: string;
 }
@@ -74,6 +81,7 @@ export interface DebugInfo {
     userInput: string;
     modelId: string;
     temperature: number;
+    toolRetrievalStrategy: ToolRetrievalStrategy;
     toolSelectionCall?: ToolSelectionCallInfo;
     agentExecutionCall?: AgentExecutionCallInfo;
 }
