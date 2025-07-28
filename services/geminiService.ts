@@ -125,19 +125,21 @@ const parseNativeToolCall = (response: GenerateContentResponse, toolNameMap: Map
         };
     }
 
-    // Fallback path: Look for a text part with the non-standard 'print' format
+    // Fallback path: Look for a text part with a non-standard tool call format.
     const textPart = response.candidates?.[0]?.content?.parts?.find(part => 'text' in part);
     if (textPart && textPart.text) {
         let textContent = textPart.text.trim();
         
         // Remove markdown backticks if present
-        const markdownMatch = textContent.match(/```(?:tool_code|tool_call)?\s*([\s\S]+?)\s*```/);
+        const markdownMatch = textContent.match(/```(?:tool_code|tool_call|python)?\s*([\s\S]+?)\s*```/);
         if (markdownMatch && markdownMatch[1]) {
             textContent = markdownMatch[1].trim();
         }
 
-        const printRegex = /print\(default_api\.([a-zA-Z0-9_]+)\(([\s\S]*)\)\)/;
-        const match = textContent.match(printRegex);
+        // This regex handles `print(default_api.Tool())`, `default_api.Tool()`, and `Tool()`.
+        // It captures: 1=sanitizedName, 2=argsString
+        const callRegex = /(?:print\()?(?:default_api\.)?([a-zA-Z0-9_]+)\(([\s\S]*?)\)\)?/;
+        const match = textContent.match(callRegex);
 
         if (match) {
             const sanitizedName = match[1];
@@ -261,9 +263,14 @@ export const generateGoal = async (
     const lightweightTools = allTools.map(t => ({ name: t.name, description: t.description, version: t.version }));
     const toolsForPrompt = JSON.stringify(lightweightTools, null, 2);
 
+    // This is now a generic context placeholder. The calling function will format the content.
     const lastActionText = lastActionResult || "No action has been taken yet.";
+    
+    // Replace placeholders. It's assumed the calling function has prepared the systemInstruction
+    // with the correct placeholders like {{LAST_ACTION_RESULT}} or {{ACTION_HISTORY}}.
     const instructionWithContext = systemInstruction
         .replace('{{LAST_ACTION_RESULT}}', lastActionText)
+        .replace('{{ACTION_HISTORY}}', lastActionText) // Also replace the history placeholder if present
         .replace('{{ACTION_LIMIT}}', String(autonomousActionLimit));
 
     const fullSystemInstruction = `${instructionWithContext}\n\nHere is the current list of all available tools:\n${toolsForPrompt}`;

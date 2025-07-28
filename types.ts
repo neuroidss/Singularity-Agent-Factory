@@ -4,6 +4,7 @@ export enum OperatingMode {
   Command = 'COMMAND',
   Assist = 'ASSIST',
   Autonomous = 'AUTONOMOUS',
+  Task = 'TASK',
 }
 
 export enum ToolRetrievalStrategy {

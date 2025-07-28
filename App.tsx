@@ -87,6 +87,13 @@ const App: React.FC = () => {
     const [autonomousLog, setAutonomousLog] = useState<string[]>([]);
     const isRunningRef = useRef(isAutonomousLoopRunning);
 
+    // New state for Task mode loop
+    const [isTaskLoopRunning, setIsTaskLoopRunning] = useState<boolean>(false);
+    const [currentUserTask, setCurrentUserTask] = useState<string>('');
+    const taskHistoryRef = useRef<EnrichedAIResponse[]>([]);
+    const taskIsRunningRef = useRef(isTaskLoopRunning);
+
+
     const [apiConfig, setApiConfig] = useState<APIConfig>(() => {
         const defaultConfig: APIConfig = {
             openAIBaseUrl: '',
@@ -172,6 +179,10 @@ const App: React.FC = () => {
     useEffect(() => {
       isRunningRef.current = isAutonomousLoopRunning;
     }, [isAutonomousLoopRunning]);
+
+    useEffect(() => {
+      taskIsRunningRef.current = isTaskLoopRunning;
+    }, [isTaskLoopRunning]);
 
     const logToAutonomousPanel = useCallback((message: string) => {
         const timestamp = new Date().toLocaleTimeString();
@@ -441,6 +452,7 @@ The JSON object must have this exact format:
             // --- STEP 1: Tool Retrieval ---
             let selectedToolNames: string[] = [];
             let toolSelectionDebug: ToolSelectionCallInfo = { strategy: toolRetrievalStrategy, userPrompt: prompt };
+            if (isAutonomous) logToAutonomousPanel(`🔎 Retrieving tools with strategy: ${toolRetrievalStrategy}...`);
             
             switch (toolRetrievalStrategy) {
                 case ToolRetrievalStrategy.LLM: {
@@ -474,15 +486,14 @@ The JSON object must have this exact format:
                     break;
                 }
             }
-
+             if (isAutonomous) logToAutonomousPanel(`🛠️ Agent will use these tools: [${selectedToolNames.join(', ')}]`);
             setLastDebugInfo(prev => ({ ...prev, toolSelectionCall: toolSelectionDebug }));
 
             // --- STEP 2: Agent Execution ---
-            setInfo("🤖 Preparing agent with selected tools...");
             const coreLogicTool = findToolByName('Core Agent Logic');
             if (!coreLogicTool) throw new Error("Critical error: 'Core Agent Logic' tool not found.");
             
-            const mandatoryToolNames = ['Core Agent Logic', 'Tool Creator', 'Tool Improver', 'Tool Self-Tester', 'Tool Verifier'];
+            const mandatoryToolNames = ['Core Agent Logic', 'Tool Creator', 'Tool Improver', 'Tool Self-Tester', 'Tool Verifier', 'Task Complete'];
             const relevantToolNames = new Set([...selectedToolNames, ...mandatoryToolNames]);
             const relevantTools = Array.from(relevantToolNames).map(name => findToolByName(name)).filter((t): t is LLMTool => !!t);
             
@@ -492,6 +503,12 @@ The JSON object must have this exact format:
             // NEW: Augment the system instruction with the list of tool names
             const toolListForContext = agentTools.map(t => `- "${t.name}"`).join('\n');
             const augmentedSystemInstruction = `${agentSystemInstruction}\n\n---REFERENCE: Original Tool Names---\n${toolListForContext}`;
+
+            if (isAutonomous) {
+                logToAutonomousPanel(`🤖 Agent is thinking... Prompt size: ${prompt.length} chars. Tools: ${agentTools.length}.`);
+            } else {
+                setInfo("🤖 Preparing agent with selected tools...");
+            }
 
             const agentExecutionCall: AgentExecutionCallInfo = {
                 systemInstruction: augmentedSystemInstruction,
@@ -517,8 +534,8 @@ The JSON object must have this exact format:
 
             if(!aiResponse.toolCall) {
                 const noToolMessage = "The AI did not select a tool to execute. Please try rephrasing your request.";
-                setInfo(noToolMessage);
                 if (isAutonomous) logToAutonomousPanel(`⚠️ ${noToolMessage}`);
+                setInfo(noToolMessage);
                 return null;
             }
             
@@ -532,7 +549,8 @@ The JSON object must have this exact format:
                 });
                 return proposalResponse;
             } else {
-                if (isAutonomous) logToAutonomousPanel(`⚙️ Executing: ${aiResponse.toolCall.name}...`);
+                 if (isAutonomous) logToAutonomousPanel(`💡 Agent decided to call: ${aiResponse.toolCall.name} with args: ${JSON.stringify(aiResponse.toolCall.arguments)}`);
+                logToAutonomousPanel(`⚙️ Executing: ${aiResponse.toolCall.name}...`);
                 const executionResult = await executeAction(aiResponse.toolCall);
                  if (isAutonomous) {
                     const resultSummary = executionResult.executionError 
@@ -562,13 +580,97 @@ The JSON object must have this exact format:
             });
             return { toolCall: null, executionError: errorMessage };
         } finally {
-            setIsLoading(false);
+            if (!isAutonomous) {
+                setIsLoading(false);
+            }
         }
     }, [tools, findToolByName, showDebug, selectedModel, apiConfig, temperature, runtimeApi, operatingMode, executeAction, logToAutonomousPanel, toolRetrievalStrategy]);
+
+    const handleStopTask = useCallback(() => {
+        setIsTaskLoopRunning(false);
+        logToAutonomousPanel("⏹️ User requested to stop the task.");
+    }, [logToAutonomousPanel]);
+
+    const processTask = useCallback(async (initialTask: string) => {
+        setIsLoading(true);
+        setIsTaskLoopRunning(true);
+        setCurrentUserTask(initialTask);
+        taskHistoryRef.current = [];
+        setUserInput('');
+        handleClearLog();
+        
+        logToAutonomousPanel(`🚀 Starting task: "${initialTask}"`);
+        
+        let iteration = 0;
+        const maxIterations = 10; // Safety break
+
+        // This loop uses a do-while structure to fix a race condition where the loop
+        // condition was checked before the 'isTaskLoopRunning' state was updated.
+        // This ensures at least one iteration occurs, which contains an 'await', giving
+        // React time to process the state update and correctly reflect it in the ref.
+        do {
+            iteration++;
+            logToAutonomousPanel(`🌀 Task Cycle ${iteration}...`);
+
+            try {
+                // The prompt for the agent is the original task, plus the history.
+                const historyString = taskHistoryRef.current.length > 0
+                    ? `You have already performed the following actions:\n${JSON.stringify(taskHistoryRef.current, null, 2)}`
+                    : "You have not performed any actions yet.";
+                
+                const promptForAgent = `The user's overall goal is: "${initialTask}".\n\n${historyString}\n\nBased on this, what is the single next action you should take? If the goal is fully complete, call the "Task Complete" tool.`;
+
+                logToAutonomousPanel(`🤔 Thinking about next step... (prompt sent to agent)`);
+                const result = await processRequest(promptForAgent, true); // true for autonomous-like logging
+
+                if (!taskIsRunningRef.current) {
+                    logToAutonomousPanel("⏹️ Task stopped by user during processing.");
+                    break; // Exit the loop immediately if the user stopped it.
+                }
+
+                if (result) {
+                    taskHistoryRef.current.push(result);
+                    if (result.toolCall?.name === 'Task Complete') {
+                        logToAutonomousPanel(`✅ ${result.executionResult?.message || 'Task Complete!'}`);
+                        setInfo(`Task completed successfully.`);
+                        setIsTaskLoopRunning(false); // This will make the loop condition false
+                    }
+                } else {
+                     logToAutonomousPanel(`⚠️ Agent did not choose an action. The task may be stuck. Stopping.`);
+                     setError("Agent could not decide on the next action.");
+                     setIsTaskLoopRunning(false);
+                }
+
+            } catch(err) {
+                const errorMessage = err instanceof Error ? err.message : "An unexpected error occurred during the task loop.";
+                setError(errorMessage);
+                logToAutonomousPanel(`❌ Error in task cycle: ${errorMessage}`);
+                setIsTaskLoopRunning(false); // Stop loop on error
+            }
+        // The loop continues as long as the ref is true (user hasn't stopped it) and we're under the iteration limit.
+        } while (taskIsRunningRef.current && iteration < maxIterations)
+        
+        if (iteration >= maxIterations && taskIsRunningRef.current) {
+            logToAutonomousPanel("⚠️ Reached maximum iterations for the task. Stopping.");
+            setError("Task stopped after reaching the maximum number of steps.");
+        }
+
+        // Cleanup state regardless of how the loop ended
+        setIsLoading(false);
+        setIsTaskLoopRunning(false); // ensure it's false
+        setCurrentUserTask('');
+        taskHistoryRef.current = [];
+
+    }, [selectedModel, apiConfig, temperature, processRequest, logToAutonomousPanel, handleClearLog, setInfo, setError, setIsLoading, setUserInput]);
 
     const handleSubmit = useCallback(async () => {
         if (!userInput.trim()) {
             setError("Please enter a task or describe a tool to create.");
+            return;
+        }
+
+        if (operatingMode === OperatingMode.Task) {
+            await processTask(userInput);
             return;
         }
 
@@ -592,7 +694,7 @@ The JSON object must have this exact format:
         } else {
             await processRequest(userInput, false);
         }
-    }, [userInput, processRequest, executeAction]);
+    }, [userInput, processRequest, executeAction, operatingMode, processTask]);
 
     // New robust autonomous loop
     useEffect(() => {
@@ -710,6 +812,7 @@ The JSON object must have this exact format:
         autonomousActionCount, autonomousActionLimit, setAutonomousActionLimit,
         proposedAction, handleApproveAction, handleRejectAction,
         isAutonomousLoopRunning, handleToggleAutonomousLoop, autonomousLog, handleClearLog,
+        isTaskLoopRunning, handleStopTask,
     };
 
     const isHuggingFaceModel = selectedModel.provider === ModelProvider.HuggingFace;
@@ -728,7 +831,7 @@ The JSON object must have this exact format:
                    <UIToolRunner tool={getUITool('Autonomous Action Limiter')} props={uiProps} />
                 </div>
                 
-                {operatingMode === OperatingMode.Autonomous && (
+                {(operatingMode === OperatingMode.Autonomous || operatingMode === OperatingMode.Task && (isTaskLoopRunning || autonomousLog.length > 0)) && (
                     <div className="w-full max-w-7xl mx-auto">
                         <UIToolRunner tool={getUITool('Autonomous Control Panel')} props={uiProps} />
                     </div>
