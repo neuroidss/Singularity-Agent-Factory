@@ -1,8 +1,8 @@
-export type ToolCategory = 'Text Generation' | 'Image Generation' | 'Data Analysis' | 'Automation' | 'Audio Processing' | 'Mathematics' | 'UI Component';
+export type ToolCategory = 'UI Component' | 'Functional' | 'Automation';
 
 export interface ToolParameter {
   name: string;
-  type: 'string' | 'number' | 'boolean';
+  type: 'string' | 'number' | 'boolean' | 'object' | 'array';
   description: string;
   required: boolean;
 }
@@ -19,27 +19,20 @@ export interface LLMTool {
   implementationCode: string;
 }
 
-export type AIAction = 'EXECUTE_EXISTING' | 'CREATE' | 'IMPROVE_EXISTING' | 'CLARIFY';
+export type NewToolPayload = Omit<LLMTool, 'id' | 'version'>;
 
-export type AINewToolDefinition = Omit<LLMTool, 'id'>;
+export interface AIToolCall {
+    name: string;
+    arguments: Record<string, any>;
+}
 
 export interface AIResponse {
-  action: AIAction;
-  reason: string;
-  // For EXECUTE_EXISTING
-  selectedToolName?: string;
-  executionParameters?: Record<string, any>; 
-  // For CREATE
-  newToolDefinition?: AINewToolDefinition;
-  // For IMPROVE_EXISTING
-  toolNameToModify?: string;
-  newImplementationCode?: string;
-  // For CLARIFY
-  clarificationRequest?: string;
+  toolCall: AIToolCall | null;
 }
 
 // This type includes the original AI response plus the results of client-side execution.
-export interface EnrichedAIResponse extends AIResponse {
+export interface EnrichedAIResponse {
+  toolCall: AIToolCall | null;
   tool?: LLMTool;
   executionResult?: any; // The result after running the code.
   executionError?: string; // Any error that occurred during execution.
@@ -49,14 +42,36 @@ export interface ServiceOutput {
   data: AIResponse;
 }
 
-export interface DebugInfo {
-    userInput: string;
-    selectedTools?: LLMTool[] | null;
-    augmentedUserInput: string;
+// NEW DebugInfo structure for multi-stage debugging
+export interface MissionPlanningInfo {
     systemInstruction: string;
-    rawAIResponse: string;
+    response: {
+        mission: string;
+        toolNames: string[];
+    }
+}
+
+export interface FinalAgentCallInfo {
+    systemInstruction: string;
+    userPrompt: string;
+    toolsProvided: LLMTool[];
+    rawResponse: string;
     processedResponse: EnrichedAIResponse | null;
 }
+
+export interface DebugInfo {
+    userInput: string;
+    modelId: string;
+    temperature: number;
+    
+    // Each step can be null until it completes, or contain an error.
+    missionPlanning?: MissionPlanningInfo | { error: string };
+    finalAgentCall?: FinalAgentCallInfo | { error: string };
+
+    // This will be the overall error if one occurs outside a specific step
+    processError?: string; 
+}
+
 
 // Model Selection Types
 export enum ModelProvider {

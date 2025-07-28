@@ -1,4 +1,5 @@
 
+
 # Singularity Agent Factory
 
 **Live Demo:** [https://neuroidss.github.io/Singularity-Agent-Factory/](https://neuroidss.github.io/Singularity-Agent-Factory/)
@@ -9,13 +10,14 @@ The ultimate goal is to bootstrap a "singularity agent" that can recursively enh
 
 ## Core Concept
 
-The system is built around a "prime directive": **Always Take Action**. The agent must respond to every user request with one of three actions:
+The system is built around a powerful feedback loop where the agent's capabilities are constantly expanding and refining based on user interaction. The agent's ability to self-improve is not an abstract concept but a concrete capability provided by two fundamental, unchangeable meta-tools:
 
-1.  **EXECUTE:** If a suitable tool exists to fulfill the request, execute it.
-2.  **CREATE:** If no suitable tool exists, create a new one.
-3.  **IMPROVE:** If the request is ambiguous or an existing tool can be enhanced, improve it.
+1.  **`Tool Creator`:** The agent's ability to create entirely new capabilities from scratch.
+2.  **`Tool Improver`:** The agent's ability to modify, fix, or enhance its existing tools.
 
-This creates a powerful feedback loop where the agent's capabilities are constantly expanding and refining based on user interaction.
+These two tools form the foundation of the agent's evolutionary path. For any given task, the agent makes a clear, explicit choice: use an existing tool, create a new one with `Tool Creator`, or refine an existing one with `Tool Improver`.
+
+To ensure this cycle of self-improvement is never broken, the agent's core logic is designed to understand that the abilities to **CREATE** and **IMPROVE** are fundamental. The `Tool Creator` and `Tool Improver` are not just other tools in the list; they are permanent fixtures of the agent's capabilities, ensuring it is always ready to learn and evolve.
 
 ## How It Works: The Agent Lifecycle
 
@@ -25,9 +27,9 @@ The agent's "thought process" for every user request follows a Retrieval-Augment
 User Input -> [1. Tool Retriever (RAG)] -> [2. Core Agent (LLM)] -> [3. Action (Execute/Create/Improve)]
 ```
 
-1.  **Tool Retriever (RAG):** The user's request is first sent to a "Tool Retriever" model. Its job is to analyze the request and select a small, relevant set of tools from the main tool library. This is crucial—the agent doesn't get overwhelmed with every tool at once, only the ones it needs for the task at hand.
-2.  **Core Agent (LLM):** The user's request, along with the *code and descriptions of the retrieved tools*, is then sent to the main agent. The agent uses this context to decide which action to take (`EXECUTE`, `CREATE`, or `IMPROVE`) and generates a JSON object describing its plan.
-3.  **Action:** The application parses the agent's JSON plan and executes it. This might involve running a tool's code, adding a new tool to the library, or updating an existing one.
+1.  **Tool Retriever (RAG):** The user's request is first sent to a "Tool Retriever" model. Its job is to analyze the request and select a small, relevant set of tools from the main tool library. This is crucial—the agent doesn't get overwhelmed with every tool at once, only the ones it needs for the task at hand. Critically, it always includes the foundational meta-tools (`Core Agent Logic`, `Tool Creator`, `Tool Improver`) for any request that requires an action.
+2.  **Core Agent (LLM):** The user's request, along with the *code and descriptions of the retrieved tools*, is then sent to the main agent. The agent uses this context to decide which tool to call and generates a JSON object describing its plan.
+3.  **Action:** The application parses the agent's JSON plan and executes it. This might involve running a tool's code, adding a new tool via `Tool Creator`, or updating an existing one via `Tool Improver`.
 
 ## Key Components
 
@@ -35,29 +37,40 @@ User Input -> [1. Tool Retriever (RAG)] -> [2. Core Agent (LLM)] -> [3. Action (
 
 Everything the agent can do is defined as a "tool". Even its core abilities are just tools that can be viewed and, theoretically, improved by the agent itself.
 
--   `Core Agent Logic`: This tool contains the fundamental system prompt for the main agent. It defines the "prime directive" and the agent's core personality.
--   `Tool Creator`: This "meta-tool" contains the instructions and schema the agent must follow to create a *new* tool. By making this a tool, the agent could someday learn to improve its own creation process.
--   `Tool Improver`: This "meta-tool" contains the instructions for improving an *existing* tool. This is the key to recursive self-improvement.
+-   `Core Agent Logic`: This tool contains the fundamental system prompt for the main agent. It defines the agent's core personality and decision-making process.
+-   `Tool Creator`: This "meta-tool" allows the agent to create entirely new tools.
+-   `Tool Improver`: This "meta-tool" allows the agent to modify and enhance existing tools, which is the key to recursive self-improvement.
 -   **Functional & UI Tools:** All other tools that the agent creates or starts with, from a simple `Calculator` to the components that render the application's UI.
 
-### The Self-Improvement Loop In Action
+## The Self-Improvement Loop In Action
 
 This is the most important concept to test.
 
-1.  **Creation:** Give the agent a simple task it can't do, like:
+1.  **Creation:** Give the agent a simple task it can't do:
     > `calculate 2+2`
 
-    The agent should recognize it lacks a calculator, and its response should be `action: "CREATE"`. It will generate a new `Calculator` tool.
+    The agent should recognize it lacks a calculator and call the `Tool Creator` to generate a new `Calculator` tool.
 
 2.  **Execution:** After the calculator is created, submit the same prompt again:
     > `calculate 2+2`
 
-    This time, the agent should find the tool and respond with `action: "EXECUTE_EXISTING"`, providing the correct answer.
+    This time, the agent should find the `Calculator` tool and call it to provide the correct answer.
 
 3.  **Improvement:** Now, ask for an enhancement that the current tool cannot handle:
     > `add a square root function to the calculator`
 
-    The agent should identify the `Calculator` tool and respond with `action: "IMPROVE_EXISTING"`. It will rewrite the tool's `implementationCode` to add the new functionality and increase its version number.
+    The agent should identify the `Calculator` tool and call the `Tool Improver`, providing the new `implementationCode` to add the new functionality and increase its version number.
+
+### Guiding Complex Creation (The "Snake Game" Test)
+
+For more complex tasks, like creating a `UI Component` for a game, the agent needs more explicit guidance. By default, an LLM may not understand the specific constraints of a React-based environment (e.g., it might try to generate HTML with `<script>` tags).
+
+To solve this, the `Core Agent Logic` tool has been enhanced with specific rules for creating UI Components. It now instructs the agent to:
+- Write valid JSX.
+- Use React Hooks (`useState`, `useEffect`) for state and interactivity.
+- Avoid invalid patterns like `<script>` tags or direct DOM manipulation.
+
+This "teaching" process is a manual improvement to the agent's "brain," enabling it to successfully tackle more sophisticated creation tasks and continue its path toward self-sufficiency.
 
 ## The Future Vision
 

@@ -38,11 +38,15 @@ export const UIToolRunner: React.FC<UIToolRunnerComponentProps> = ({ tool, props
       return () => <div>Error: Tool "{tool.name}" is not a UI Component.</div>;
     }
 
+    // Sanitize the code by removing any potential top-level export statements.
+    // This makes the runner more robust against AI-generated code that includes exports.
+    const sanitizedCode = tool.implementationCode.replace(/export default .*;?/g, '');
+
     // The source code of the component function we're creating on the fly.
     // It takes props and includes the tool's implementation.
     const componentSource = `(props) => {
       const { ${Object.keys(props).join(', ')} } = props;
-      ${tool.implementationCode}
+      ${sanitizedCode}
     }`;
 
     try {

@@ -1,7 +1,5 @@
-
-
-import { GoogleGenAI, Type } from "@google/genai";
-import type { AIResponse, LLMTool, APIConfig } from "../types";
+import { GoogleGenAI, Type, FunctionDeclaration, GenerateContentResponse } from "@google/genai";
+import type { AIResponse, LLMTool, APIConfig, ToolParameter, MissionPlanningInfo } from "../types";
 
 const getAIClient = (apiConfig: APIConfig): GoogleGenAI => {
     // Prioritize the key from the UI configuration.
@@ -11,76 +9,229 @@ const getAIClient = (apiConfig: APIConfig): GoogleGenAI => {
     if (!apiKey) {
         try {
             // Safely access process.env to avoid breaking in pure browser environments.
-            if (typeof process !== 'undefined' && process.env && process.env.GEMINI_API_KEY) {
-                apiKey = process.env.GEMINI_API_KEY;
+            if (typeof process !== 'undefined' && process.env && process.env.API_KEY) {
+                apiKey = process.env.API_KEY;
             }
         } catch (e) {
             // In some sandboxed environments, accessing 'process' can throw an error.
             // We can ignore this and proceed without the environment variable.
-            console.warn("Could not access process.env to check for GEMINI_API_KEY.");
+            console.warn("Could not access process.env to check for API_KEY.");
         }
     }
 
     if (!apiKey) {
-        throw new Error("Google AI API Key not found. Please set it in the app's API Configuration or create a GEMINI_API_KEY environment variable.");
+        throw new Error("Google AI API Key not found. Please set it in the app's API Configuration or create a API_KEY environment variable.");
     }
     return new GoogleGenAI({ apiKey });
 };
 
-export const selectRelevantTools = async (
+
+// --- Dynamic Tool Generation for Gemini API ---
+
+const sanitizeForFunctionName = (name: string): string => {
+  return name.replace(/[^a-zA-Z0-9_]/g, '_');
+};
+
+const mapTypeToGemini = (type: ToolParameter['type']): Type => {
+    switch (type) {
+        case 'string': return Type.STRING;
+        case 'number': return Type.NUMBER;
+        case 'boolean': return Type.BOOLEAN;
+        case 'array': return Type.ARRAY;
+        case 'object': return Type.OBJECT;
+        default: return Type.STRING;
+    }
+};
+
+const buildGeminiTools = (tools: LLMTool[]): { functionDeclarations: FunctionDeclaration[] } => {
+    const functionDeclarations = tools.map((tool): FunctionDeclaration => {
+        // The properties need to be of a more complex type to support array items
+        const properties: Record<string, any> = {};
+        const required: string[] = [];
+
+        tool.parameters.forEach(param => {
+            if (param.type === 'array') {
+                // This is the special case that fixes the bug.
+                // The API requires a schema for items within an array.
+                // We'll define the schema for the 'parameters' argument used in Tool Creator/Improver.
+                if (param.name === 'parameters') {
+                    properties[param.name] = {
+                        type: Type.ARRAY,
+                        description: param.description,
+                        items: {
+                            type: Type.OBJECT,
+                            description: "Schema for a single tool parameter.",
+                            properties: {
+                                name: { type: Type.STRING, description: "The parameter's name." },
+                                type: { type: Type.STRING, description: "The parameter's type: 'string', 'number', 'boolean', etc." },
+                                description: { type: Type.STRING, description: 'A concise description of the parameter.' },
+                                required: { type: Type.BOOLEAN, description: 'Whether the parameter is required.' }
+                            },
+                            required: ['name', 'type', 'description', 'required']
+                        }
+                    };
+                } else {
+                    // A default for other arrays, assuming they contain strings.
+                    // This can be expanded if other tools use arrays of objects.
+                    properties[param.name] = {
+                        type: Type.ARRAY,
+                        description: param.description,
+                        items: { type: Type.STRING }
+                    };
+                }
+            } else {
+                properties[param.name] = {
+                    type: mapTypeToGemini(param.type),
+                    description: param.description,
+                };
+            }
+
+            if (param.required) {
+                required.push(param.name);
+            }
+        });
+        
+        // Sanitize the tool name to be a valid function name for the API
+        const functionName = sanitizeForFunctionName(tool.name);
+
+        return {
+            name: functionName,
+            description: tool.description,
+            parameters: {
+                type: Type.OBJECT,
+                properties,
+                required,
+            },
+        };
+    });
+
+    return { functionDeclarations };
+};
+
+
+export const planMissionAndSelectTools = async (
     userInput: string,
-    allTools: Pick<LLMTool, 'id' | 'name' | 'description'>[],
-    retrieverSystemInstructionTemplate: string,
+    systemInstruction: string,
     modelId: string,
     temperature: number,
     apiConfig: APIConfig,
-): Promise<string[]> => {
+): Promise<MissionPlanningInfo['response']> => {
     const ai = getAIClient(apiConfig);
-     const retrieverSchema = {
+     const missionPlannerSchema = {
         type: Type.OBJECT,
         properties: {
+            mission: { 
+                type: Type.STRING,
+                description: "The translated, actionable mission for the AI agent, in English."
+            },
             toolNames: {
                 type: Type.ARRAY,
-                description: "An array of tool name strings that are most relevant to the user's request.",
+                description: "An array of tool name strings that are most relevant to the mission.",
                 items: {
                     type: Type.STRING
                 }
             }
         },
-        required: ["toolNames"],
+        required: ["mission", "toolNames"],
     };
     
-    const retrieverSystemInstruction = retrieverSystemInstructionTemplate
-        .replace('{{USER_INPUT}}', userInput)
-        .replace('{{TOOLS_LIST}}', JSON.stringify(allTools.map(t => ({name: t.name, description: t.description})), null, 2));
-
     try {
         const response = await ai.models.generateContent({
             model: modelId,
-            contents: "Select the most relevant tools based on the user request and available tools provided in the system instruction.",
+            contents: userInput,
             config: {
-                systemInstruction: retrieverSystemInstruction,
+                systemInstruction: systemInstruction,
                 responseMimeType: "application/json",
-                responseSchema: retrieverSchema,
+                responseSchema: missionPlannerSchema,
                 temperature: temperature,
             },
         });
 
         const jsonText = response.text.trim();
         if (!jsonText) {
-            throw new Error("Tool retriever model returned an empty response.");
+            throw new Error("Mission planning model returned an empty response.");
         }
         const parsed = JSON.parse(jsonText);
-        if (!parsed.toolNames || !Array.isArray(parsed.toolNames)) {
-            throw new Error("Tool retriever model did not return the 'toolNames' array.");
-        }
-        return parsed.toolNames;
+        
+        return {
+            mission: parsed.mission,
+            toolNames: parsed.toolNames,
+        };
 
     } catch (error) {
-        console.error("Error during tool retrieval:", error);
-        throw new Error(`Failed to select relevant tools: ${error instanceof Error ? error.message : String(error)}`);
+        console.error("Error during mission planning:", error);
+        throw new Error(`Failed to plan mission and select tools: ${error instanceof Error ? error.message : String(error)}`);
     }
 }
+
+const parseNativeToolCall = (response: GenerateContentResponse, toolNameMap: Map<string, string>): AIResponse => {
+    // Standard path: Look for a functionCall part
+    const functionCallPart = response.candidates?.[0]?.content?.parts?.find(part => 'functionCall' in part);
+
+    if (functionCallPart && functionCallPart.functionCall) {
+        const { name, args } = functionCallPart.functionCall;
+        const originalToolName = toolNameMap.get(name);
+
+        if (!originalToolName) {
+            console.warn(`AI called an unknown tool via Gemini (native): ${name}`);
+            return { toolCall: null };
+        }
+        return {
+            toolCall: { name: originalToolName, arguments: args || {} }
+        };
+    }
+
+    // Fallback path: Look for a text part with the non-standard 'print' format
+    const textPart = response.candidates?.[0]?.content?.parts?.find(part => 'text' in part);
+    if (textPart && textPart.text) {
+        let textContent = textPart.text.trim();
+        
+        // Remove markdown backticks if present
+        const markdownMatch = textContent.match(/```(?:tool_code|tool_call)?\s*([\s\S]+?)\s*```/);
+        if (markdownMatch && markdownMatch[1]) {
+            textContent = markdownMatch[1].trim();
+        }
+
+        const printRegex = /print\(default_api\.([a-zA-Z0-9_]+)\(([\s\S]*)\)\)/;
+        const match = textContent.match(printRegex);
+
+        if (match) {
+            const sanitizedName = match[1];
+            const argsString = match[2];
+            const originalToolName = toolNameMap.get(sanitizedName);
+
+            if (!originalToolName) {
+                console.warn(`AI called an unknown tool via Gemini (fallback parser): ${sanitizedName}`);
+                return { toolCall: null };
+            }
+            
+            try {
+                // The AI can return python-style kwargs with raw string literals (e.g., '\\n' for newlines).
+                // When building the source for `new Function`, this `\` gets interpreted as an escape for `n`,
+                // creating a literal newline in the code, which is a syntax error inside a string.
+                // We must escape all backslashes in the arguments string before parsing.
+                const jsSafeArgsString = argsString.replace(/\\/g, '\\\\');
+                
+                // This replaces python-style kwargs assignment with JS-style object properties.
+                // e.g., "name='foo', code='bar'" becomes "name:'foo', code:'bar'"
+                const jsObjectContent = jsSafeArgsString.replace(/([a-zA-Z0-9_]+)=/g, '$1:');
+                const argsParser = new Function(`return {${jsObjectContent}}`);
+                const args = argsParser();
+
+                return {
+                    toolCall: { name: originalToolName, arguments: args || {} }
+                };
+            } catch (e) {
+                console.error("Fallback parser failed to evaluate arguments string:", e, { argsString });
+                return { toolCall: null };
+            }
+        }
+    }
+
+    // If no parsable tool call is found
+    return { toolCall: null };
+};
+
 
 export const generateResponse = async (
     userInput: string,
@@ -89,151 +240,47 @@ export const generateResponse = async (
     temperature: number,
     onRawResponseChunk: (chunk: string) => void,
     apiConfig: APIConfig,
+    relevantTools: LLMTool[],
     // onProgress is unused for this service, but included for signature consistency
     onProgress?: (message: string) => void, 
 ): Promise<AIResponse> => {
     const ai = getAIClient(apiConfig);
-    let responseText = "";
-
-    const mainResponseSchema = {
-        type: Type.OBJECT,
-        properties: {
-            action: {
-                type: Type.STRING,
-                enum: ['EXECUTE_EXISTING', 'CREATE', 'IMPROVE_EXISTING', 'CLARIFY'],
-                description: "The agent's decision."
-            },
-            reason: {
-                type: Type.STRING,
-                description: "A concise explanation for the chosen action.",
-            },
-             // For EXECUTE_EXISTING
-            selectedToolName: {
-                type: Type.STRING,
-                description: "For EXECUTE_EXISTING: Name of the tool to run."
-            },
-            executionParameters: {
-                type: Type.STRING,
-                description: "For EXECUTE_EXISTING: JSON string of parameters for the tool. Example: '{\\\"input\\\":\\\"hello world\\\"}'"
-            },
-            // For CREATE
-            newToolDefinition: {
-                type: Type.OBJECT,
-                description: "For CREATE: Full definition of the new tool.",
-                properties: {
-                    name: { type: Type.STRING, description: "Human-readable name for the new tool." },
-                    description: { type: Type.STRING, description: "A concise, one-sentence explanation of what the new tool does." },
-                    category: { type: Type.STRING, enum: ['Text Generation', 'Image Generation', 'Data Analysis', 'Automation', 'Audio Processing', 'Mathematics', 'UI Component'], },
-                    version: { type: Type.INTEGER, description: "Set to 1 for new tools." },
-                    parameters: {
-                        type: Type.ARRAY,
-                        items: {
-                            type: Type.OBJECT,
-                            properties: {
-                                name: { type: Type.STRING },
-                                type: { type: Type.STRING, enum: ['string', 'number', 'boolean'] },
-                                description: { type: Type.STRING },
-                                required: { type: Type.BOOLEAN }
-                            },
-                            required: ["name", "type", "description", "required"]
-                        }
-                    },
-                    implementationCode: { type: Type.STRING, description: "The tool's code (JSX for UI, JS for others). Escape internal double quotes (e.g., \\\"a\\\")." }
-                },
-                required: ["name", "description", "category", "version", "parameters", "implementationCode"],
-            },
-            // For IMPROVE_EXISTING
-            toolNameToModify: {
-                type: Type.STRING,
-                description: "For IMPROVE_EXISTING: Name of the tool to modify."
-            },
-            newImplementationCode: {
-                type: Type.STRING,
-                description: "For IMPROVE_EXISTING: The complete new code for the tool."
-            },
-            // For CLARIFY
-            clarificationRequest: {
-                type: Type.STRING,
-                description: "For CLARIFY: Question to ask the user."
-            }
-        },
-        required: ["action", "reason"],
-    };
+    
+    // Create a map from sanitized name -> original name
+    const toolNameMap = new Map(relevantTools.map(t => [sanitizeForFunctionName(t.name), t.name]));
+    
+    // Build the tool declarations for the Gemini API
+    const { functionDeclarations } = buildGeminiTools(relevantTools);
+    
+    let rawResponseForDebug = "";
 
     try {
-        const responseStream = await ai.models.generateContentStream({
+        // Use the native tool-calling feature
+        const response = await ai.models.generateContent({
             model: modelId,
             contents: userInput,
             config: {
-                systemInstruction,
-                responseMimeType: "application/json",
-                responseSchema: mainResponseSchema,
+                systemInstruction: systemInstruction,
                 temperature: temperature,
+                tools: [{ functionDeclarations }],
             },
         });
-
-        for await (const chunk of responseStream) {
-            const chunkText = chunk.text;
-            if (chunkText) {
-                responseText += chunkText;
-                onRawResponseChunk(responseText);
-            }
-        }
         
-        const trimmedResponse = responseText.trim();
-        if (!trimmedResponse) {
-             throw new Error("AI returned an empty response.");
-        }
-        
-        const parsedResponse = JSON.parse(trimmedResponse);
-        let response: Partial<AIResponse> = parsedResponse;
+        // For debugging, we show the entire raw response object from the API.
+        rawResponseForDebug = JSON.stringify(response, null, 2);
+        onRawResponseChunk(rawResponseForDebug);
 
-
-        if (response.executionParameters && typeof response.executionParameters === 'string') {
-            try {
-                response.executionParameters = JSON.parse(response.executionParameters);
-            } catch (e) {
-                throw new Error(`Failed to parse 'executionParameters' JSON string: ${response.executionParameters}`);
-            }
-        }
-
-        const validatedResponse = response as AIResponse;
-        
-        switch (validatedResponse.action) {
-            case 'EXECUTE_EXISTING':
-                if (!validatedResponse.selectedToolName || typeof validatedResponse.executionParameters === 'undefined') throw new Error("Missing 'selectedToolName' or 'executionParameters' for EXECUTE_EXISTING.");
-                break;
-            case 'CREATE':
-                 if (!validatedResponse.newToolDefinition) throw new Error("Missing 'newToolDefinition' for CREATE.");
-                break;
-            case 'IMPROVE_EXISTING':
-                 if (!validatedResponse.toolNameToModify || !validatedResponse.newImplementationCode) throw new Error("Missing 'toolNameToModify' or 'newImplementationCode' for IMPROVE_EXISTING.");
-                break;
-            case 'CLARIFY':
-                if (!validatedResponse.clarificationRequest) throw new Error("Missing 'clarificationRequest' for CLARIFY.");
-                break;
-            default:
-                 if (validatedResponse.action) {
-                    throw new Error(`Invalid action received from AI: ${validatedResponse.action}`);
-                } else {
-                    throw new Error(`AI response is missing an action.`);
-                }
-        }
-        
-        return validatedResponse;
+        return parseNativeToolCall(response, toolNameMap);
 
     } catch (error) {
-        console.error("Error in Gemini Service:", error);
-        
-        let finalMessage = "An unknown error occurred during AI processing.";
-        if (error instanceof Error) {
-            finalMessage = `AI processing failed: ${error.message}`;
-        }
+        console.error("Error in Gemini Service (native tool mode):", error);
+        // Try to get a more specific error message from the response if it exists
+        const errorDetails = (error as any).message || (error as any).toString();
+        const responseText = (error as any).response?.text?.();
+        const finalMessage = `AI processing failed: ${errorDetails}${responseText ? `\nResponse: ${responseText}` : ''}`;
         
         const processingError = new Error(finalMessage) as any;
-        
-        // Attach raw response to the error object for debugging in the UI.
-        processingError.rawAIResponse = responseText;
+        processingError.rawAIResponse = rawResponseForDebug || JSON.stringify(error, null, 2);
         throw processingError;
     }
 };

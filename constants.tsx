@@ -1,7 +1,7 @@
-
 import React from 'react';
 import type { LLMTool, AIModel, HuggingFaceDevice } from './types';
 import { ModelProvider } from './types';
+import { PREDEFINED_UI_TOOLS } from './components/ui_tools';
 
 export const AVAILABLE_MODELS: AIModel[] = [
     // Google AI
@@ -39,57 +39,115 @@ export const HUGGING_FACE_DEVICES: {label: string, value: HuggingFaceDevice}[] =
 ];
 export const DEFAULT_HUGGING_FACE_DEVICE: HuggingFaceDevice = 'webgpu';
 
+// A standardized prompt for models without native tool/function calling support (e.g., Ollama, HuggingFace).
+// It instructs the model to return ONLY a JSON object.
+export const STANDARD_TOOL_CALL_SYSTEM_PROMPT = `
+You have access to a set of tools. To answer the user's request, you must choose a single tool and call it.
+Your response MUST be a single, valid JSON object and nothing else. Do not add any text, reasoning, or markdown formatting.
 
-export const PREDEFINED_TOOLS: LLMTool[] = [
+**JSON Response Format:**
+{
+  "name": "tool_name_to_call",
+  "arguments": {
+    "arg1": "value1",
+    "arg2": "value2"
+  }
+}
+
+If no tool is required or you cannot fulfill the request, respond with an empty JSON object: {}.
+
+Here are the available tools:
+{{TOOLS_JSON}}
+`;
+
+
+const CORE_AUTOMATION_TOOLS: LLMTool[] = [
   // --- Core Agent Logic Tools (The AI's "Brain") ---
   {
     id: 'core_agent_logic',
     name: 'Core Agent Logic',
     description: "This is the AI's core operating system. Its implementation defines the AI's priorities and available actions. Modifying this tool changes how the AI thinks and makes decisions.",
     category: 'Automation',
-    version: 31,
+    version: 43,
     parameters: [],
-    implementationCode: `You are an advanced AI agent with a core mission of proactive self-improvement. Your goal is to become increasingly capable by expanding and refining your toolset to fulfill the user's request.
+    implementationCode: `You are an expert AI agent. Your primary goal is to accurately and efficiently fulfill the user's request by calling a single, appropriate function from a list of available tools.
 
-**Prime Directive: Proactive Self-Improvement**
-Your fundamental purpose is to expand your capabilities to fulfill user requests. Always take the most proactive and useful action.
+**Your Process:**
+1.  **Analyze User's Request:** Understand their ultimate goal.
+2.  **Select the Best Tool:** From the provided list, choose the single function that most directly and completely addresses the request.
+    *   To create a new capability, you MUST choose \`Tool_Creator\`.
+    *   To fix or change an existing capability, you MUST choose \`Tool_Improver\`.
+3.  **Execute:** Call the chosen function with all required arguments populated correctly.
 
-**Your Action Hierarchy:**
-1.  **CREATE:** This is your primary directive when a capability is missing. If the user asks for something and no tool can do it (e.g., "play snake," "reverse text"), you MUST immediately create the necessary tool. **Do not ask for permission to create a tool; it is your core function.** Use the 'Tool Creator' for this.
-2.  **EXECUTE:** If a perfectly suitable tool already exists, use it. **CRITICAL: If the tool is a 'UI Component' (like a game or display), 'executing' it means you should select it to be displayed to the user. Do not try to extract data from it or call it like a function.** For all other tools, provide the necessary parameters to run them.
-3.  **IMPROVE:** If a tool exists but is inadequate, or the user explicitly asks for a change, improve it using the 'Tool Improver'.
-4.  **CLARIFY:** This is your absolute last resort. Only use this if the user's goal is completely unintelligible (e.g., "asdfghjkl") and you cannot even infer what kind of tool they might want. Avoid clarifying if you can reasonably create or improve something instead.
+**CRITICAL INSTRUCTIONS:**
+*   You MUST call exactly one function. Do not respond with text. Your entire response should be the function call.
+*   If a tool is a 'UI Component', it has no functional parameters. Call it with an empty arguments object.
+*   Pay close attention to the required types for function arguments (e.g., string, number, boolean) and format them correctly.
 
-Your response MUST be a single, valid JSON object with an 'action', a 'reason', and a corresponding payload for that action.
+**RULES FOR CREATING UI COMPONENTS:**
+*   The 'implementationCode' for a 'UI Component' MUST be valid JSX code that returns a single React element.
+*   You MUST NOT include \`<script>\`, \`import\`, or \`export\` statements. All logic must be contained within a React component body, which will be executed in an environment where \`React\` is already available as a global variable.
+*   For state, interactivity, and side-effects (like game loops or data fetching), you MUST use React Hooks (e.g., \`React.useState\`, \`React.useEffect\`, \`React.useRef\`). Do not use global DOM manipulation like \`document.getElementById\`.
+*   **Example of a correct, simple UI component:**
+    \`\`\`jsx
+    const [count, setCount] = React.useState(0);
+
+    return (
+      <div className="flex items-center gap-4">
+        <p>Count: {count}</p>
+        <button
+          onClick={() => setCount(count + 1)}
+          className="bg-indigo-500 px-3 py-1 rounded"
+        >
+          Increment
+        </button>
+      </div>
+    );
+    \`\`\`
 `,
   },
   {
-    id: 'tool_retriever_logic',
-    name: 'Tool Retriever Logic',
-    description: 'This tool contains the system prompt for the first-pass AI call that selects relevant tools for the main agent, implementing a RAG pattern.',
+    id: 'mission_and_tool_selection_logic',
+    name: 'Mission & Tool Selection Logic',
+    description: 'A unified logic prompt that translates a user request into a mission and selects relevant tools in a single AI call.',
     category: 'Automation',
-    version: 8,
-    parameters: [
-       { name: 'userInput', type: 'string', description: 'The original request from the user.', required: true },
-       { name: 'toolsList', type: 'string', description: 'A JSON string of all available tools.', required: true },
-    ],
-    implementationCode: `You are an advanced tool router. Your critical task is to analyze a user's request and select relevant tools from a list. Your selection is crucial for the main AI agent.
+    version: 1,
+    parameters: [],
+    implementationCode: `You are a mission controller and tool router for a "Singularity Agent". Your purpose is to translate a human user's request into a clear mission and select the necessary tools for the agent to execute it.
 
-**Your Goal:** Select a concise set of tools that enables the main agent to act on the user's request.
-
-**Selection Logic:**
-1.  **Core Tools (Mandatory):** You MUST ALWAYS include 'Core Agent Logic', 'Tool Creator', and 'Tool Improver' in your selection. These are fundamental for the agent.
-2.  **Analyze Request vs. Available Tools:** Carefully compare the user's request to the descriptions of the tools in the provided list.
-3.  **Selection Criteria:**
-    *   If the user's request directly mentions or describes functionality that an **existing tool** in the list can perform (e.g., "calculate 2+2" and a 'Calculator' tool exists), you MUST include that tool in your selection.
-    *   If the user asks to **modify, fix, or improve** an existing tool by name, you MUST include that tool.
-    *   **CRITICAL:** If the user asks for something new for which **NO specific tool exists** in the list (e.g., "play snake" when there is no 'SnakeGame' tool), DO NOT invent a tool name. In this scenario, your selection should ONLY contain the three mandatory core tools. The main agent will use the 'Tool Creator' to handle the request. Do not add any other tools.
-4.  **Conciseness:** Do not add irrelevant tools. A smaller, accurate selection is better.
+**Your Process:**
+1.  **Analyze User Intent:** Understand the core task from the user's request, which may be in any language.
+2.  **Consult Tool List:** Examine the list of available tools to see if any can fulfill the request.
+3.  **Formulate Mission:** Based on your analysis, create a clear, actionable mission *in English*.
+    *   If a tool exists, the mission is to execute it.
+    *   If no tool exists, the mission is to create it.
+    *   For conversation, the mission is to respond appropriately.
+4.  **Select Tools:**
+    *   If the mission is to **create** something, your primary tool is \`Tool Creator\`.
+    *   If the mission is to **improve** something, your primary tools are \`Tool Improver\` and the tool to improve.
+    *   If the mission is to **execute** an existing tool, that tool is your primary tool.
+    *   If the mission is just to **chat**, no tools are needed.
+5.  **Assemble Final Tool Set:**
+    *   **Always** include the three mandatory tools: \`Core Agent Logic\`, \`Tool Creator\`, and \`Tool Improver\`.
+    *   Add the primary tools you identified in step 4.
+    *   Ensure the final list has unique names.
 
 **Output Format:**
 - You MUST respond with a single, valid JSON object.
-- The object must contain one key: "toolNames".
-- The value of "toolNames" must be an array of the selected tool name strings.
+- The object must contain two keys:
+  1.  \`mission\`: A string containing the mission you formulated in English.
+  2.  \`toolNames\`: An array of strings containing the final, unique tool names.
+
+**Example:**
+-   **User Request:** "I want to play snake"
+-   **Available Tools:** Contains "Snake Game"
+-   **Your Output (JSON):**
+    \`\`\`json
+    {
+      "mission": "The user wants to play 'Snake Game'. A tool for this purpose already exists. Your mission is to execute the 'Snake Game' tool.",
+      "toolNames": ["Core Agent Logic", "Tool Creator", "Tool Improver", "Snake Game"]
+    }
+    \`\`\`
 
 **User Request:**
 "{{USER_INPUT}}"
@@ -98,617 +156,74 @@ Your response MUST be a single, valid JSON object with an 'action', a 'reason', 
 {{TOOLS_LIST}}
 `,
   },
-  {
+   {
     id: 'tool_creator',
     name: 'Tool Creator',
-    description: 'Contains the instructions and schema for creating a new tool. Use this when no existing tool can fulfill the user request.',
+    description: "Directly creates and adds a new tool to the application's runtime. The new tool is available for use immediately. Use this to build entirely new capabilities when no other tool is suitable.",
     category: 'Automation',
     version: 4,
-    parameters: [],
-    implementationCode: `To create a new tool, your JSON response must be:
-{
-  "action": "CREATE",
-  "reason": "A brief explanation of why you are creating this tool.",
-  "newToolDefinition": {
-    "name": "(string) A short, descriptive, human-readable name for the tool (e.g., 'Text Reverser').",
-    "description": "(string) A concise, one-sentence explanation of what the tool does.",
-    "category": "(string) Must be one of: 'Text Generation', 'Image Generation', 'Data Analysis', 'Automation', 'Audio Processing', 'Mathematics', 'UI Component'.",
-    "version": 1,
-    "parameters": [
-      {
-        "name": "(string) The parameter name.",
-        "type": "(string) The data type ('string', 'number', 'boolean').",
-        "description": "(string) A description of the parameter.",
-        "required": "(boolean) Whether the parameter is required."
-      }
+    parameters: [
+      { name: 'name', type: 'string', description: 'A short, descriptive, human-readable name for the new tool.', required: true },
+      { name: 'description', type: 'string', description: "A concise, one-sentence explanation of what the new tool does.", required: true },
+      { name: 'category', type: 'string', description: "The category for the new tool. Must be one of: 'UI Component' (for visual elements and games), 'Functional' (for data processing), or 'Automation' (for agent logic).", required: true },
+      { name: 'parameters', type: 'array', description: "An array of parameter objects for the new tool. E.g., [{\"name\":\"a\",\"type\":\"number\",\"description\":\"First number\",\"required\":true}]. Use an empty array for no parameters.", required: true },
+      { name: 'implementationCode', type: 'string', description: "The new tool's code (JSX for UI, vanilla JS for others).", required: true },
     ],
-    "implementationCode": "(string) The actual code for the tool.\\n- For **functional tools**, this is the body of a JavaScript function. The 'args' object is available with the parameters (e.g., 'const { myParam } = args; return myParam.split(\\'\\').reverse().join(\\'\\');').\\n- For **UI Component tools**, this is the body of a React component. You can use React hooks (useState, useEffect, etc.) directly. You MUST return a JSX element. DO NOT wrap your code in a component declaration like 'const MyComponent = () => { ... }'. Just provide the hooks and the final return statement. Example: 'const [count, setCount] = React.useState(0); return (<div className=\\\"p-2\\\"><button className=\\\"bg-blue-500 p-2 rounded\\\" onClick={() => setCount(count+1)}>Count: {count}</button></div>);'.\\n- **CRITICAL:** All double quotes inside this string MUST be escaped (e.g., '<div className=\\\"my-class\\\">')."
-  }
-}`
+    implementationCode: `
+      const { name, description, category, parameters, implementationCode } = args;
+      if (!name || !description || !category || !implementationCode) {
+        throw new Error("Tool Creator requires 'name', 'description', 'category', and 'implementationCode' parameters.");
+      }
+
+      const newToolPayload = {
+        name,
+        description,
+        category,
+        parameters: parameters || [],
+        implementationCode,
+      };
+
+      // The runtime is provided by the execution environment
+      const createdTool = runtime.tools.add(newToolPayload);
+      
+      return { 
+          success: true, 
+          message: \`Tool '\${createdTool.name}' created successfully with ID '\${createdTool.id}'.\`
+      };
+    `
   },
-    {
+  {
     id: 'tool_improver',
     name: 'Tool Improver',
-    description: 'Contains the instructions and schema for improving an existing tool. Use this to add features, fix bugs, or enhance existing capabilities.',
+    description: "Updates an existing tool with new code, description, or parameters. Use this to fix bugs, add features, or enhance existing capabilities. The tool's version will be automatically incremented.",
     category: 'Automation',
-    version: 2,
-    parameters: [],
-    implementationCode: `To improve an existing tool, your JSON response must be:
-{
-  "action": "IMPROVE_EXISTING",
-  "reason": "A brief explanation of what improvement you are making and why.",
-  "toolNameToModify": "(string) The exact name of the tool you are modifying.",
-  "newImplementationCode": "(string) The *complete*, new source code for the tool. You must provide the entire implementation, not just the changed parts. CRITICAL: All double quotes inside this string MUST be escaped (e.g., '<div className=\\\"my-class\\\">')."
-}`
-  },
-  // --- UI Component Tools ---
-  {
-    id: 'application_header',
-    name: 'Application Header',
-    description: 'Renders the main header and subtitle of the application.',
-    category: 'UI Component',
-    version: 3,
-    parameters: [],
-    implementationCode: `
-      return (
-        <header className="text-center mb-6">
-          <h1 className="text-3xl font-bold text-gray-200">
-              Singularity Agent Factory
-          </h1>
-          <p className="mt-1 text-sm text-gray-400">
-              An AI agent for self-improvement.
-          </p>
-        </header>
-      );
-    `,
-  },
-  {
-    id: 'security_warning_banner',
-    name: 'Security Warning Banner',
-    description: 'Renders the security warning about AI-generated code execution.',
-    category: 'UI Component',
-    version: 2,
-    parameters: [],
-    implementationCode: `
-      return (
-        <div className="w-full max-w-7xl mx-auto p-2 mb-4 bg-yellow-900/40 border border-yellow-700/60 rounded-md text-yellow-300 text-center text-xs">
-          <p>️<span className="font-bold">Warning:</span> This app's UI and logic are modifiable by the AI. Unpredictable behavior may occur.</p>
-        </div>
-      );
-    `
-  },
-  {
-    id: 'api_endpoint_configuration',
-    name: 'API Endpoint Configuration',
-    description: 'Configure endpoints and API keys for different model providers. Settings are saved automatically.',
-    category: 'UI Component',
-    version: 3,
-    parameters: [
-      { name: 'apiConfig', type: 'string', description: 'The current API configuration object', required: true },
-      { name: 'setApiConfig', type: 'string', description: 'Function to update the API configuration', required: true },
-      { name: 'selectedModelProvider', type: 'string', description: 'The provider of the currently selected model', required: true },
-      { name: 'selectedModelId', type: 'string', description: 'The ID of the currently selected model', required: true },
-    ],
-    implementationCode: `
-      const { openAIBaseUrl, openAIAPIKey, ollamaHost, googleAIAPIKey, openAIModelId } = apiConfig;
-      const provider = selectedModelProvider;
-
-      const handleGoogleKeyChange = (e) => {
-        setApiConfig({ ...apiConfig, googleAIAPIKey: e.target.value });
-      };
-      
-      const handleOpenAIUrlChange = (e) => {
-        setApiConfig({ ...apiConfig, openAIBaseUrl: e.target.value });
-      };
-      
-      const handleOpenAIKeyChange = (e) => {
-        setApiConfig({ ...apiConfig, openAIAPIKey: e.target.value });
-      };
-      
-      const handleOllamaHostChange = (e) => {
-        setApiConfig({ ...apiConfig, ollamaHost: e.target.value });
-      };
-      
-      const handleOpenAIModelChange = (e) => {
-        setApiConfig({ ...apiConfig, openAIModelId: e.target.value });
-      };
-
-      const InputField = ({ label, id, value, onChange, placeholder, type = 'text' }) => (
-        <div>
-          <label htmlFor={id} className="block text-sm font-medium text-gray-400 mb-1">
-            {label}
-          </label>
-          <input
-            type={type}
-            id={id}
-            value={value || ''}
-            onChange={onChange}
-            placeholder={placeholder}
-            className="w-full bg-gray-800 border border-gray-600 rounded-lg p-2.5 text-white focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
-          />
-        </div>
-      );
-
-      return (
-        <div className="w-full max-w-2xl mx-auto mb-4 p-4 bg-gray-800/80 border border-gray-700 rounded-lg">
-          <h3 className="text-md font-semibold text-gray-200 mb-3">API Configuration for {provider}</h3>
-          <div className="space-y-3">
-            {provider === 'GoogleAI' && (
-                <InputField 
-                  label="Google AI API Key"
-                  id="google-key"
-                  type="password"
-                  value={googleAIAPIKey}
-                  onChange={handleGoogleKeyChange}
-                  placeholder="Enter your Google AI API Key"
-                />
-            )}
-            {provider === 'OpenAI_API' && (
-              <>
-                <InputField 
-                  label="OpenAI-Compatible Base URL"
-                  id="openai-url"
-                  value={openAIBaseUrl}
-                  onChange={handleOpenAIUrlChange}
-                  placeholder="e.g., https://api.openai.com/v1"
-                />
-                <InputField 
-                  label="API Key (optional)"
-                  id="openai-key"
-                  type="password"
-                  value={openAIAPIKey}
-                  onChange={handleOpenAIKeyChange}
-                  placeholder="Enter your API key if required"
-                />
-                {selectedModelId === 'custom-openai' && (
-                   <InputField 
-                    label="Custom Model Name"
-                    id="openai-model"
-                    value={openAIModelId}
-                    onChange={handleOpenAIModelChange}
-                    placeholder="e.g., meta-llama/Llama-3-8b-chat-hf"
-                  />
-                )}
-              </>
-            )}
-            {provider === 'Ollama' && (
-              <InputField 
-                label="Ollama Host"
-                id="ollama-host"
-                value={ollamaHost}
-                onChange={handleOllamaHostChange}
-                placeholder="e.g., http://localhost:11434"
-              />
-            )}
-          </div>
-        </div>
-      );
-    `
-  },
-  {
-    id: 'hugging_face_configuration',
-    name: 'Hugging Face Configuration',
-    description: 'Configure the device for in-browser models from Hugging Face.',
-    category: 'UI Component',
     version: 1,
     parameters: [
-      { name: 'apiConfig', type: 'string', description: 'The current API configuration object', required: true },
-      { name: 'setApiConfig', type: 'string', description: 'Function to update the API configuration', required: true },
+      { name: 'name', type: 'string', description: 'The name of the tool to improve. This MUST match an existing tool name exactly.', required: true },
+      { name: 'description', type: 'string', description: "The new, improved description. If omitted, the description will not be changed.", required: false },
+      { name: 'parameters', type: 'array', description: "The new, improved array of parameter objects. If omitted, the parameters will not be changed.", required: false },
+      { name: 'implementationCode', type: 'string', description: "The new, improved implementation code. If omitted, the code will not be changed.", required: false },
     ],
     implementationCode: `
-      const { huggingFaceDevice } = apiConfig;
+      const { name, ...updates } = args;
+      if (!name) {
+        throw new Error("Tool Improver requires a 'name' to identify which tool to update.");
+      }
+      if (Object.keys(updates).length === 0) {
+        throw new Error("Tool Improver requires at least one property to update (e.g., 'description', 'implementationCode').");
+      }
       
-      const DEVICES = [
-        { label: 'WebGPU (recommended)', value: 'webgpu' },
-        { label: 'WASM (slower, compatible)', value: 'wasm' },
-      ];
-
-      const handleDeviceChange = (e) => {
-        setApiConfig({ ...apiConfig, huggingFaceDevice: e.target.value });
+      const improvedTool = runtime.tools.update(name, updates);
+      
+      return {
+          success: true,
+          message: \`Tool '\${improvedTool.name}' improved successfully. It is now version \${improvedTool.version}.\`
       };
-
-      return (
-        <div className="w-full max-w-2xl mx-auto mb-4 p-4 bg-gray-800/80 border border-gray-700 rounded-lg">
-          <h3 className="text-md font-semibold text-gray-200 mb-3">Hugging Face Configuration</h3>
-           <p className="text-xs text-gray-400 mb-3">Settings for running models directly in your browser. Loading a model for the first time will trigger a download.</p>
-          <div className="space-y-3">
-             <div>
-                <label htmlFor="hf-device" className="block text-sm font-medium text-gray-400 mb-1">Execution Device</label>
-                <select 
-                    id="hf-device" 
-                    value={huggingFaceDevice} 
-                    onChange={handleDeviceChange} 
-                    className="w-full bg-gray-800 border border-gray-600 rounded-lg p-2.5 text-white focus:ring-2 focus:ring-indigo-500"
-                >
-                    {DEVICES.map(d => <option key={d.value} value={d.value}>{d.label}</option>)}
-                </select>
-             </div>
-          </div>
-        </div>
-      );
     `
-  },
-  {
-    id: 'ai_model_selector',
-    name: 'AI Model Selector',
-    description: 'Renders a dropdown to select the active AI model.',
-    category: 'UI Component',
-    version: 2,
-    parameters: [
-      { name: 'models', type: 'string', description: 'Array of available AI models', required: true },
-      { name: 'selectedModelId', type: 'string', description: 'The ID of the currently selected model', required: true },
-      { name: 'setSelectedModelId', type: 'string', description: 'Function to update the selected model', required: true },
-      { name: 'isLoading', type: 'boolean', description: 'Whether the app is currently processing', required: true },
-    ],
-    implementationCode: `
-      const groupedModels = models.reduce((acc, model) => {
-        const provider = model.provider;
-        if (!acc[provider]) {
-          acc[provider] = [];
-        }
-        acc[provider].push(model);
-        return acc;
-      }, {});
-      
-      return (
-        <div className="w-full max-w-2xl mx-auto mb-4">
-          <label htmlFor="model-selector" className="block text-sm font-medium text-gray-400 mb-1">
-            AI Model
-          </label>
-          <select
-            id="model-selector"
-            value={selectedModelId}
-            onChange={(e) => setSelectedModelId(e.target.value)}
-            disabled={isLoading}
-            className="w-full bg-gray-800 border border-gray-600 rounded-lg p-2.5 text-white focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition-colors duration-200"
-          >
-            {Object.entries(groupedModels).map(([provider, providerModels]) => (
-              <optgroup key={provider} label={provider}>
-                {providerModels.map(model => (
-                    <option key={model.id} value={model.id}>
-                      {model.name}
-                    </option>
-                ))}
-              </optgroup>
-            ))}
-          </select>
-        </div>
-      );
-    `
-  },
-   {
-    id: 'model_parameters_configuration',
-    name: 'Model Parameters Configuration',
-    description: 'Adjust model parameters like temperature. Lower values (e.g., 0.1) make the output more deterministic, while higher values make it more creative.',
-    category: 'UI Component',
-    version: 1,
-    parameters: [
-      { name: 'temperature', type: 'number', description: 'The current temperature value', required: true },
-      { name: 'setTemperature', type: 'string', description: 'Function to update the temperature', required: true },
-      { name: 'isLoading', type: 'boolean', description: 'Whether the app is currently processing', required: true },
-    ],
-    implementationCode: `
-      const handleTempChange = (e) => {
-        setTemperature(parseFloat(e.target.value));
-      };
+  }
+];
 
-      return (
-        <div className="w-full max-w-2xl mx-auto mb-4">
-          <label htmlFor="temperature-slider" className="block text-sm font-medium text-gray-400 mb-1">
-            Temperature: <span className="font-mono text-white">{temperature.toFixed(2)}</span>
-          </label>
-           <p className="text-xs text-gray-500 mb-2">Controls randomness. 0.0 is deterministic, 1.0 is creative.</p>
-          <input
-            id="temperature-slider"
-            type="range"
-            min="0"
-            max="1"
-            step="0.01"
-            value={temperature}
-            onChange={handleTempChange}
-            disabled={isLoading}
-            className="w-full h-2 bg-gray-700 rounded-lg appearance-none cursor-pointer"
-          />
-        </div>
-      );
-    `
-  },
-  {
-    id: 'user_input_form',
-    name: 'User Input Form',
-    description: 'Renders the main textarea for user input and the submit button.',
-    category: 'UI Component',
-    version: 2,
-    parameters: [
-        {name: 'userInput', type: 'string', description: 'Current value of the input', required: true},
-        {name: 'setUserInput', type: 'string', description: 'Function to update the input value', required: true},
-        {name: 'handleSubmit', type: 'string', description: 'Function to call on submit', required: true},
-        {name: 'isLoading', type: 'boolean', description: 'Whether the app is processing', required: true},
-    ],
-    implementationCode: `
-      const Spinner = () => (
-        <svg className="animate-spin -ml-1 mr-3 h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-        </svg>
-      );
-      
-      return (
-        <div className="w-full max-w-2xl mx-auto bg-gray-800/60 border border-gray-700 rounded-xl p-4">
-            <div className="relative w-full group">
-                <textarea
-                    id="userInput"
-                    value={userInput}
-                    onChange={(e) => setUserInput(e.target.value)}
-                    placeholder="Describe a task, create a tool, or change the UI..."
-                    className="w-full h-24 p-3 bg-gray-900 border border-gray-600 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition-colors duration-200 resize-y"
-                    disabled={isLoading}
-                    onKeyDown={(e) => {
-                        if (e.key === 'Enter' && !e.shiftKey) {
-                            e.preventDefault();
-                            handleSubmit();
-                        }
-                    }}
-                />
-            </div>
-            <button
-                onClick={handleSubmit}
-                disabled={isLoading || !userInput.trim()}
-                className="mt-3 w-full flex items-center justify-center gap-2 bg-indigo-600 text-white font-semibold py-2.5 px-4 rounded-lg hover:bg-indigo-700 disabled:bg-indigo-900/50 disabled:cursor-not-allowed disabled:text-gray-400 transition-all duration-200"
-            >
-                {isLoading ? (<><Spinner />Processing...</>) : 'Submit'}
-            </button>
-        </div>
-      );
-    `
-  },
-   {
-    id: 'status_messages_display',
-    name: 'Status Messages Display',
-    description: 'Renders error or info messages to the user.',
-    category: 'UI Component',
-    version: 1,
-    parameters: [
-      { name: 'error', type: 'string', description: 'Error message text', required: false },
-      { name: 'info', type: 'string', description: 'Info message text', required: false },
-    ],
-    implementationCode: `
-      return (
-        <>
-          {error && <p className="mt-4 text-center text-red-400 bg-red-900/30 p-3 rounded-lg w-full max-w-3xl mx-auto">{error}</p>}
-          {info && !error && <p className="mt-4 text-center text-cyan-300 bg-cyan-900/30 p-3 rounded-lg w-full max-w-3xl mx-auto">{info}</p>}
-        </>
-      );
-    `
-  },
-  {
-    id: 'debug_panel_toggle_switch',
-    name: 'Debug Panel Toggle Switch',
-    description: 'Renders the toggle switch for showing/hiding the debug panel.',
-    category: 'UI Component',
-    version: 1,
-    parameters: [
-      { name: 'showDebug', type: 'boolean', description: 'Current state of the debug panel visibility', required: true },
-      { name: 'setShowDebug', type: 'string', description: 'Function to toggle the debug panel', required: true },
-    ],
-    implementationCode: `
-      return (
-        <div className="w-full max-w-3xl mx-auto mt-4 text-right">
-            <label htmlFor="debugToggle" className="inline-flex items-center gap-3 cursor-pointer text-sm text-yellow-400">
-                <span className="font-medium">Show Debug Panel</span>
-                <div className="relative">
-                    <input
-                        type="checkbox"
-                        id="debugToggle"
-                        className="sr-only peer"
-                        checked={showDebug}
-                        onChange={() => setShowDebug(!showDebug)}
-                    />
-                    <div className="block bg-gray-600 w-10 h-6 rounded-full peer-checked:bg-yellow-400 transition"></div>
-                    <div className="absolute left-1 top-1 bg-white w-4 h-4 rounded-full transition peer-checked:translate-x-full"></div>
-                </div>
-            </label>
-        </div>
-      );
-    `
-  },
-   {
-    id: 'execution_result_panel',
-    name: 'Execution Result Panel',
-    description: 'Renders the result of a tool execution.',
-    category: 'UI Component',
-    version: 3,
-    parameters: [
-      { name: 'response', type: 'string', description: 'The enriched AI response object', required: true },
-    ],
-    implementationCode: `
-      if (!response) return null;
-      const { action, tool, reason, executionResult, executionError } = response;
-      const actionsWithResult = ['EXECUTE_EXISTING', 'CREATE_AND_EXECUTE', 'IMPROVE_EXISTING', 'CREATE'];
-      if (!actionsWithResult.includes(action)) return null;
-
-      const title = action.replace(/_/g, ' ').replace(/\\b\\w/g, l => l.toUpperCase());
-
-      return (
-          <div className="w-full max-w-3xl mx-auto mt-6">
-                <div className="bg-gray-800 border border-gray-700 rounded-xl p-4 shadow-lg">
-                  <h3 className="text-lg font-bold text-gray-200">{title}</h3>
-                  {tool && <p className="text-xs text-gray-400 mb-2">Tool: <span className="font-semibold text-indigo-400">{tool.name} (v{tool.version})</span></p>}
-                  <p className="text-sm text-gray-400 italic">"{reason}"</p>
-                  
-                  <div className="mt-3 pt-3 border-t border-gray-600">
-                      {typeof executionError !== 'undefined' ? (
-                          <>
-                            <p className="text-red-400 text-sm mb-1 font-semibold">Execution Error:</p>
-                            <div className="bg-red-900/50 p-2 rounded-lg text-red-300 whitespace-pre-wrap font-mono text-xs">{executionError}</div>
-                          </>
-                      ) : (
-                          <>
-                          <p className="text-gray-400 text-sm mb-1">Result:</p>
-                          <div className="bg-gray-900 p-2 rounded-lg text-white whitespace-pre-wrap text-xs">{JSON.stringify(executionResult, null, 2)}</div>
-                          </>
-                      )}
-                  </div>
-                </div>
-          </div>
-      );
-    `
-  },
-  {
-    id: 'debug_information_panel',
-    name: 'Debug Information Panel',
-    description: 'Renders the debug panel with detailed AI interaction logs.',
-    category: 'UI Component',
-    version: 4,
-    parameters: [
-      { name: 'debugInfo', type: 'string', description: 'The debug info object', required: false },
-    ],
-    implementationCode: `
-      const DebugSection = ({ title, children, isPending }) => (
-        <div>
-          <h4 className="text-lg font-semibold text-yellow-300 mb-2 border-b border-yellow-300/30 pb-1 flex items-center gap-2">
-            {isPending && (
-                <svg className="animate-spin h-5 w-5 text-yellow-400" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                </svg>
-            )}
-            {title}
-          </h4>
-          <pre className="bg-gray-900/70 border border-gray-700 text-sm text-gray-300 p-4 rounded-lg overflow-x-auto">
-            <code>{children}</code>
-          </pre>
-        </div>
-      );
-
-      return (
-        <div className="w-full max-w-7xl mx-auto mt-6 bg-gray-800/60 border-2 border-dashed border-yellow-600/50 rounded-xl p-6">
-            <h3 className="text-2xl font-bold text-center mb-6 text-yellow-400">Debug View</h3>
-            { !debugInfo ? (
-              <p className="text-yellow-300 text-center">No debug information available. Submit a request to see the details here.</p>
-            ) : (
-              <div className="space-y-6">
-                <DebugSection title="1. User Input">{debugInfo.userInput}</DebugSection>
-                
-                <DebugSection title="2. Retrieved Tools" isPending={!debugInfo.selectedTools}>
-                    {debugInfo.selectedTools ? JSON.stringify(debugInfo.selectedTools.map(t => ({id: t.id, name: t.name, description: t.description})), null, 2) : 'Pending...'}
-                </DebugSection>
-
-                <DebugSection title="3. Augmented User Prompt" isPending={debugInfo.augmentedUserInput === 'Pending...'}>
-                    {debugInfo.augmentedUserInput}
-                </DebugSection>
-                
-                <DebugSection title="4. System Prompt Sent to AI" isPending={debugInfo.systemInstruction === 'Pending...'}>
-                    {debugInfo.systemInstruction}
-                </DebugSection>
-
-                <DebugSection title="5. Raw JSON Response from AI" isPending={debugInfo.rawAIResponse === '⏳ Waiting for stream...'}>
-                    {debugInfo.rawAIResponse}
-                </DebugSection>
-
-                <DebugSection title="6. Processed Result (App State)" isPending={!debugInfo.processedResponse}>
-                    {JSON.stringify(debugInfo.processedResponse, null, 2)}
-                </DebugSection>
-              </div>
-            )}
-        </div>
-      );
-    `
-  },
-  {
-    id: 'tool_list_display',
-    name: 'Tool List Display',
-    description: 'Renders the grid of all available tools.',
-    category: 'UI Component',
-    version: 3,
-    parameters: [
-      { name: 'tools', type: 'string', description: 'Array of all available tools', required: true },
-      { name: 'UIToolRunner', type: 'string', description: 'The UI tool runner component itself, for recursion', required: true },
-    ],
-    implementationCode: `
-      return (
-        <div className="w-full max-w-7xl mx-auto mt-8">
-          <h2 className="text-2xl font-bold text-center mb-6 text-gray-300">Available Tools ({tools.length})</h2>
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
-            {tools.map(tool => (
-              <UIToolRunner key={tool.id + '-' + tool.version} tool={{
-                  id: 'tool_card',
-                  name: 'Tool Card',
-                  category: 'UI Component',
-                  version: 1,
-                  parameters: [],
-                  implementationCode: \`
-                    const [showDetails, setShowDetails] = React.useState(false);
-
-                    const generateExampleParams = (tool) => {
-                      if (!tool.parameters || tool.parameters.length === 0) return '{}';
-                      const example = {};
-                      tool.parameters.forEach(p => {
-                          if (p.type === 'string') example[p.name] = 'some ' + p.name;
-                          if (p.type === 'number') example[p.name] = 123;
-                          if (p.type === 'boolean') example[p.name] = true;
-                      });
-                      return JSON.stringify(example, null, 2);
-                    };
-                    
-                    return (
-                      <div className="bg-gray-800 border border-gray-700 rounded-lg p-3 flex flex-col gap-2 text-sm">
-                        <div>
-                          <h3 className="font-bold text-white truncate">{tool.name}</h3>
-                          <p className="text-xs text-indigo-400">{tool.category} - v{tool.version}</p>
-                        </div>
-                        <p className="text-gray-300 text-xs flex-grow min-h-[30px]">{tool.description}</p>
-                        
-                        <div className="mt-auto pt-2 border-t border-gray-700/50">
-                          <button
-                            onClick={() => setShowDetails(!showDetails)}
-                            className="w-full text-left text-xs font-semibold text-cyan-300 hover:text-cyan-200"
-                          >
-                            {showDetails ? '[-] Hide Details' : '[+] Show Details'}
-                          </button>
-
-                          {showDetails && (
-                            <div className="mt-2 space-y-2">
-                              <div>
-                                <p className="text-xs text-gray-400 mb-1">Code:</p>
-                                <pre className="text-xs text-cyan-200 bg-gray-900 p-2 rounded-md font-mono whitespace-pre-wrap">
-                                  {tool.implementationCode}
-                                </pre>
-                              </div>
-                              {tool.category !== 'UI Component' && (
-                                <div>
-                                  <p className="text-xs text-gray-400 mb-1">Direct Usage:</p>
-                                  <pre className="text-xs text-teal-200 bg-gray-900 p-2 rounded-md font-mono whitespace-pre-wrap">
-                                    {'run "' + tool.name + '" with ' + generateExampleParams(tool)}
-                                  </pre>
-                                </div>
-                              )}
-                            </div>
-                          )}
-                        </div>
-                      </div>
-                    );
-                  \`
-              }} props={{ tool }} />
-            ))}
-          </div>
-        </div>
-      );
-    `
-  },
-  {
-    id: 'application_footer',
-    name: 'Application Footer',
-    description: 'Renders the footer with attribution.',
-    category: 'UI Component',
-    version: 1,
-    parameters: [],
-    implementationCode: `
-      return (
-        <footer className="text-center mt-12 text-gray-500 text-sm">
-          <p>Powered by Google Gemini</p>
-        </footer>
-      );
-    `
-  },
+export const PREDEFINED_TOOLS: LLMTool[] = [
+    ...CORE_AUTOMATION_TOOLS,
+    ...PREDEFINED_UI_TOOLS,
 ];
