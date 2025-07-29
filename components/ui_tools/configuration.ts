@@ -1,3 +1,4 @@
+
 import type { LLMTool } from '../../types';
 
 export const configurationTools: LLMTool[] = [
@@ -205,11 +206,12 @@ export const configurationTools: LLMTool[] = [
     name: 'Tool Retrieval Strategy Selector',
     description: 'Allows the user to select the strategy for how the agent retrieves relevant tools.',
     category: 'UI Component',
-    version: 2,
+    version: 3,
     parameters: [
       { name: 'toolRetrievalStrategy', type: 'string', description: 'The current strategy being used.', required: true },
       { name: 'setToolRetrievalStrategy', type: 'string', description: 'Function to update the strategy.', required: true },
       { name: 'isLoading', type: 'boolean', description: 'Whether the app is currently processing.', required: true },
+      { name: 'info', type: 'string', description: 'The current info message, for status checking.', required: false },
     ],
     implementationCode: `
       // Enums are not available in this scope, so we define a plain object.
@@ -224,6 +226,8 @@ export const configurationTools: LLMTool[] = [
         { id: ToolRetrievalStrategy.Embedding, name: 'Embedding Filter', description: 'Semantic search via embeddings. Finds tools by meaning.' },
         { id: ToolRetrievalStrategy.Direct, name: 'Direct', description: 'All tools are sent to AI. Fastest but uses large context.' },
       ];
+
+      const isEmbeddingBusy = info && (info.includes('embedding') || info.includes('Embedding'));
 
       return (
         <div className="w-full max-w-2xl mx-auto mt-4">
@@ -246,12 +250,86 @@ export const configurationTools: LLMTool[] = [
                             htmlFor={strategy.id}
                             className="block w-full p-2 text-center rounded-md cursor-pointer peer-disabled:cursor-not-allowed peer-disabled:bg-gray-700 peer-disabled:text-gray-500 peer-checked:bg-indigo-600 peer-checked:text-white bg-gray-700/60 hover:bg-gray-600/80"
                         >
-                            <span className="text-sm font-semibold">{strategy.name}</span>
-                             <p className="text-xs text-gray-300 peer-checked:text-indigo-200">{strategy.description}</p>
+                            <div className="flex items-center justify-center gap-2">
+                                <span className="text-sm font-semibold">{strategy.name}</span>
+                                {strategy.id === 'EMBEDDING' && isEmbeddingBusy && (
+                                    <div className="w-4 h-4">
+                                        <svg className="animate-spin h-full w-full text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                                            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                                            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                                        </svg>
+                                    </div>
+                                )}
+                            </div>
+                            <p className="text-xs text-gray-300 peer-checked:text-indigo-200">{strategy.description}</p>
                         </label>
                     </div>
                 ))}
              </fieldset>
+        </div>
+      );
+    `
+  },
+   {
+    id: 'embedding_parameters_configuration',
+    name: 'Embedding Parameters Configuration',
+    description: 'Adjust parameters for the embedding-based tool retriever. Higher threshold means stricter matching; Top K limits the number of results.',
+    category: 'UI Component',
+    version: 1,
+    parameters: [
+      { name: 'embeddingSimilarityThreshold', type: 'number', description: 'The minimum similarity score for a tool to be considered relevant.', required: true },
+      { name: 'setEmbeddingSimilarityThreshold', type: 'string', description: 'Function to update the similarity threshold.', required: true },
+      { name: 'embeddingTopK', type: 'number', description: 'The maximum number of semantically similar tools to return.', required: true },
+      { name: 'setEmbeddingTopK', type: 'string', description: 'Function to update the Top K value.', required: true },
+      { name: 'isLoading', type: 'boolean', description: 'Whether the app is currently processing.', required: true },
+    ],
+    implementationCode: `
+      const handleThresholdChange = (e) => {
+        setEmbeddingSimilarityThreshold(parseFloat(e.target.value));
+      };
+      const handleTopKChange = (e) => {
+        setEmbeddingTopK(parseInt(e.target.value, 10));
+      };
+
+      return (
+        <div className="w-full max-w-2xl mx-auto mt-4 p-4 bg-gray-800/80 border border-gray-700 rounded-lg">
+          <h3 className="text-md font-semibold text-gray-200 mb-3">Embedding Retriever Settings</h3>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
+              <div>
+                <label htmlFor="embedding-threshold-slider" className="block text-sm font-medium text-gray-400 mb-1">
+                  Similarity Threshold: <span className="font-mono text-white">{embeddingSimilarityThreshold.toFixed(2)}</span>
+                </label>
+                <p className="text-xs text-gray-500 mb-2 h-8">Minimum score for a tool to be included (0.0 = any match).</p>
+                <input
+                  id="embedding-threshold-slider"
+                  type="range"
+                  min="0"
+                  max="1"
+                  step="0.01"
+                  value={embeddingSimilarityThreshold}
+                  onChange={handleThresholdChange}
+                  disabled={isLoading}
+                  className="w-full h-2 bg-gray-700 rounded-lg appearance-none cursor-pointer"
+                />
+              </div>
+              <div>
+                  <label htmlFor="embedding-topk-slider" className="block text-sm font-medium text-gray-400 mb-1">
+                  Top K Results: <span className="font-mono text-white">{embeddingTopK}</span>
+                </label>
+                <p className="text-xs text-gray-500 mb-2 h-8">Max number of tools to return after filtering.</p>
+                <input
+                  id="embedding-topk-slider"
+                  type="range"
+                  min="1"
+                  max="20"
+                  step="1"
+                  value={embeddingTopK}
+                  onChange={handleTopKChange}
+                  disabled={isLoading}
+                  className="w-full h-2 bg-gray-700 rounded-lg appearance-none cursor-pointer"
+                />
+              </div>
+          </div>
         </div>
       );
     `

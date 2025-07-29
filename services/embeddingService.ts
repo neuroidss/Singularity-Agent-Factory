@@ -1,10 +1,12 @@
+
 import { pipeline, type FeatureExtractionPipeline, dot } from '@huggingface/transformers';
 import type { LLMTool } from '../types';
 
 const MODEL_NAME = 'Xenova/all-MiniLM-L6-v2';
+const EMBEDDING_CACHE_VERSION = 'v2_desc_only';
 
 class EmbeddingSingleton {
-    static task = 'feature-extraction';
+    static task: 'feature-extraction' = 'feature-extraction';
     static model = MODEL_NAME;
     static instance: FeatureExtractionPipeline | null = null;
 
@@ -17,7 +19,7 @@ class EmbeddingSingleton {
             (window as any).env.allowLocalModels = false;
             (window as any).env.useFbgemm = false;
 
-            this.instance = await pipeline<'feature-extraction'>(this.task, this.model, {
+            const pipelineOptions = {
                  progress_callback: (progress: any) => {
                      const { status, file, progress: p, loaded, total } = progress;
                      if (status === 'progress' && p > 0) {
@@ -28,7 +30,9 @@ class EmbeddingSingleton {
                          onProgress(`Embedding model status: ${status}...`);
                      }
                 },
-            });
+            };
+
+            this.instance = await pipeline<'feature-extraction'>(this.task, this.model, pipelineOptions);
              onProgress('✅ Embedding model ready.');
         }
         return this.instance;
@@ -57,20 +61,37 @@ export const retrieveToolsByEmbeddings = async (
     toolEmbeddingsCache: Map<string, number[]>,
     setToolEmbeddingsCache: (cache: Map<string, number[]>) => void,
     onProgress: (message: string) => void,
+    similarityThreshold: number,
+    topK: number,
 ): Promise<LLMTool[]> => {
-    const SIMILARITY_THRESHOLD = 0.5;
+    const foundTools = new Set<LLMTool>();
 
-    // --- 1. Generate Prompt Embedding ---
-    onProgress('🧠 Analyzing your request...');
+    // --- Step 1: Direct Name Matching ---
+    // A very strong signal is when the user explicitly names a tool.
+    allTools.forEach(tool => {
+        // Use a regex to find the tool name as a whole word to avoid partial matches (e.g., "AI" in "FAIL").
+        const toolNameRegex = new RegExp(`\\b${tool.name.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&')}\\b`, 'i');
+        if (toolNameRegex.test(prompt)) {
+            foundTools.add(tool);
+        }
+    });
+
+    if (foundTools.size > 0) {
+        const names = Array.from(foundTools).map(t => t.name).join(', ');
+        onProgress(`🎯 Found direct name match for: ${names}`);
+    }
+
+
+    // --- Step 2. Generate Prompt & Tool Embeddings ---
+    onProgress('🧠 Analyzing request with semantic embeddings...');
     const [promptEmbedding] = await getEmbeddingsForTexts([`query: ${prompt}`], onProgress);
     if (!promptEmbedding) {
         throw new Error("Failed to generate embedding for the prompt.");
     }
 
-    // --- 2. Generate Tool Embeddings (if not cached) ---
     const toolsToEmbed: LLMTool[] = [];
     allTools.forEach(tool => {
-        const cacheKey = `${tool.id}-${tool.version}`;
+        const cacheKey = `embedding-${EMBEDDING_CACHE_VERSION}-${tool.id}-${tool.version}`;
         if (!toolEmbeddingsCache.has(cacheKey)) {
             toolsToEmbed.push(tool);
         }
@@ -78,39 +99,53 @@ export const retrieveToolsByEmbeddings = async (
 
     if (toolsToEmbed.length > 0) {
         onProgress(`✨ Generating embeddings for ${toolsToEmbed.length} new/updated tools...`);
-        const toolTexts = toolsToEmbed.map(tool => `passage: Tool: ${tool.name}\nDescription: ${tool.description}\nImplementation:\n${tool.implementationCode}`);
+        const toolTexts = toolsToEmbed.map(tool => `passage: Tool: ${tool.name}. Description: ${tool.description}`);
         const newEmbeddings = await getEmbeddingsForTexts(toolTexts, onProgress);
 
         const newCache = new Map(toolEmbeddingsCache);
         toolsToEmbed.forEach((tool, index) => {
-            const cacheKey = `${tool.id}-${tool.version}`;
+            const cacheKey = `embedding-${EMBEDDING_CACHE_VERSION}-${tool.id}-${tool.version}`;
             newCache.set(cacheKey, newEmbeddings[index]);
         });
-        setToolEmbeddingsCache(newCache); // Update the state in App.tsx
+        setToolEmbeddingsCache(newCache);
     }
-     onProgress('🔍 Searching for relevant tools...');
+     onProgress('🔍 Searching for semantically related tools...');
 
-    // --- 3. Calculate Similarities and Filter ---
-    const similarTools = new Set<LLMTool>();
-    const currentCache = new Map(toolEmbeddingsCache); // Use the most up-to-date cache for searching
+    // --- Step 3. Calculate Similarities, Filter, and Rank ---
+    const scoredTools: { tool: LLMTool; score: number }[] = [];
+    const currentCache = new Map(toolEmbeddingsCache);
+
     allTools.forEach(tool => {
-        const cacheKey = `${tool.id}-${tool.version}`;
-        const toolEmbedding = currentCache.get(cacheKey) || toolEmbeddingsCache.get(cacheKey);
+        // Don't re-evaluate tools we already found by name.
+        if (foundTools.has(tool)) {
+            return;
+        }
+
+        const cacheKey = `embedding-${EMBEDDING_CACHE_VERSION}-${tool.id}-${tool.version}`;
+        const toolEmbedding = currentCache.get(cacheKey);
+
         if (toolEmbedding) {
             const similarity = cosineSimilarity(promptEmbedding, toolEmbedding);
-            if (similarity > SIMILARITY_THRESHOLD) {
-                similarTools.add(tool);
+            if (similarity >= similarityThreshold) {
+                scoredTools.push({ tool, score: similarity });
             }
         }
     });
 
-    // --- 4. Always include mandatory tools ---
+    // Sort by score (highest first) and then take the top K results.
+    scoredTools.sort((a, b) => b.score - a.score);
+    const topKTools = scoredTools.slice(0, topK).map(item => item.tool);
+
+    // Add the semantically found tools to our results.
+    topKTools.forEach(tool => foundTools.add(tool));
+
+    // --- Step 4. Always include mandatory tools ---
     const mandatoryToolNames = ['Tool Creator', 'Tool Improver'];
     mandatoryToolNames.forEach(name => {
         const tool = allTools.find(t => t.name === name);
-        if (tool) similarTools.add(tool);
+        if (tool) foundTools.add(tool);
     });
     
-    onProgress(`✅ Found ${similarTools.size} relevant tools.`);
-    return Array.from(similarTools);
+    onProgress(`✅ Found ${foundTools.size} relevant tools in total.`);
+    return Array.from(foundTools);
 };

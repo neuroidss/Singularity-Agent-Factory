@@ -1,7 +1,8 @@
+
 import React, { useState, useCallback, useMemo, useEffect, useRef } from 'react';
 import * as aiService from './services/aiService';
 import { PREDEFINED_TOOLS, AVAILABLE_MODELS, DEFAULT_HUGGING_FACE_DEVICE } from './constants';
-import type { LLMTool, EnrichedAIResponse, DebugInfo, AIResponse, APIConfig, AIModel, NewToolPayload, AIToolCall, ToolSelectionCallInfo, AgentExecutionCallInfo, AgentWorker, AgentStatus } from './types';
+import type { LLMTool, EnrichedAIResponse, DebugInfo, AIResponse, APIConfig, AIModel, NewToolPayload, AIToolCall, ToolSelectionCallInfo, AgentExecutionCallInfo, AgentWorker, AgentStatus, RobotState, EnvironmentObject } from './types';
 import { UIToolRunner } from './components/UIToolRunner';
 import { ModelProvider, OperatingMode, ToolRetrievalStrategy } from './types';
 import { loadStateFromStorage, saveStateToStorage } from './versioning';
@@ -104,6 +105,30 @@ const App: React.FC = () => {
 
     // State for embedding-based tool retrieval
     const [toolEmbeddingsCache, setToolEmbeddingsCache] = useState<Map<string, number[]>>(new Map());
+    const [embeddingSimilarityThreshold, setEmbeddingSimilarityThreshold] = useState<number>(
+        () => parseFloat(localStorage.getItem('embeddingSimilarityThreshold') || '0.5')
+    );
+    const [embeddingTopK, setEmbeddingTopK] = useState<number>(
+        () => parseInt(localStorage.getItem('embeddingTopK') || '5', 10)
+    );
+
+    // State for Robotics Simulation
+    const [robotState, setRobotState] = useState<RobotState>({ x: 1, y: 1, rotation: 90, hasPackage: false });
+    const [environmentState, setEnvironmentState] = useState<EnvironmentObject[]>([
+        // Borders
+        ...Array.from({length: 12}, (_, i) => ({ x: i, y: 0, type: 'wall' as const })),
+        ...Array.from({length: 12}, (_, i) => ({ x: i, y: 11, type: 'wall' as const })),
+        ...Array.from({length: 10}, (_, i) => ({ x: 0, y: i + 1, type: 'wall' as const })),
+        ...Array.from({length: 10}, (_, i) => ({ x: 11, y: i + 1, type: 'wall' as const })),
+        // Internal maze
+        { x: 3, y: 1, type: 'wall' }, { x: 3, y: 2, type: 'wall' }, { x: 3, y: 3, type: 'wall' },
+        { x: 3, y: 4, type: 'wall' }, { x: 3, y: 5, type: 'wall' },
+        { x: 8, y: 10, type: 'wall' }, { x: 8, y: 9, type: 'wall' }, { x: 8, y: 8, type: 'wall' },
+        { x: 8, y: 7, type: 'wall' }, { x: 8, y: 6, type: 'wall' },
+        // Items
+        { x: 9, y: 2, type: 'package' },
+        { x: 2, y: 9, type: 'goal' },
+    ]);
 
 
     const [apiConfig, setApiConfig] = useState<APIConfig>(() => {
@@ -187,6 +212,12 @@ const App: React.FC = () => {
     useEffect(() => {
         localStorage.setItem('lastActionDate', lastActionDate);
     }, [lastActionDate]);
+    useEffect(() => {
+        localStorage.setItem('embeddingSimilarityThreshold', String(embeddingSimilarityThreshold));
+    }, [embeddingSimilarityThreshold]);
+    useEffect(() => {
+        localStorage.setItem('embeddingTopK', String(embeddingTopK));
+    }, [embeddingTopK]);
 
     useEffect(() => {
       isRunningRef.current = isAutonomousLoopRunning;
@@ -288,8 +319,63 @@ The JSON object must have this exact format:
 
                 return result;
             }
-        }
-    }), [tools, selectedModel, apiConfig, temperature]);
+        },
+        robot: {
+            getState: () => ({ robot: robotState, environment: environmentState }),
+            moveForward: () => {
+                return new Promise((resolve, reject) => {
+                    setRobotState(prev => {
+                        let { x, y } = prev;
+                        if (prev.rotation === 0) y -= 1; // Up
+                        if (prev.rotation === 90) x += 1; // Right
+                        if (prev.rotation === 180) y += 1; // Down
+                        if (prev.rotation === 270) x -= 1; // Left
+
+                        const isCollision = environmentState.some(obj => obj.x === x && obj.y === y && obj.type === 'wall');
+                        if (isCollision) {
+                            reject(new Error("Move failed: Robot would collide with a wall."));
+                            return prev;
+                        }
+                        
+                        resolve({ success: true, message: `Moved forward to (${x}, ${y})`});
+                        return { ...prev, x, y };
+                    });
+                });
+            },
+            turn: (direction: 'left' | 'right') => {
+                 setRobotState(prev => {
+                    const newRotation = direction === 'left' 
+                        ? (prev.rotation - 90 + 360) % 360
+                        : (prev.rotation + 90) % 360;
+                    return { ...prev, rotation: newRotation };
+                });
+                return { success: true, message: `Turned ${direction}.` };
+            },
+            grip: () => {
+                const packageObj = environmentState.find(obj => obj.type === 'package');
+                if (robotState.hasPackage) {
+                    throw new Error("Grip failed: Robot is already holding the package.");
+                }
+                if (packageObj && packageObj.x === robotState.x && packageObj.y === robotState.y) {
+                    setRobotState(prev => ({...prev, hasPackage: true}));
+                    setEnvironmentState(prev => prev.filter(obj => obj.type !== 'package'));
+                    return { success: true, message: "Package picked up." };
+                }
+                throw new Error("Grip failed: Robot is not at the package location.");
+            },
+            release: () => {
+                 const goalObj = environmentState.find(obj => obj.type === 'goal');
+                 if (!robotState.hasPackage) {
+                    throw new Error("Release failed: Robot is not holding a package.");
+                }
+                 setRobotState(prev => ({...prev, hasPackage: false}));
+                 if (goalObj && goalObj.x === robotState.x && goalObj.y === robotState.y) {
+                    return { success: true, message: "Package delivered to the goal! Task complete." };
+                 }
+                 return { success: true, message: "Package dropped." };
+            }
+        },
+    }), [tools, selectedModel, apiConfig, temperature, robotState, environmentState]);
 
     const runToolImplementation = async (code: string, params: any, runtime: any): Promise<any> => {
         let codeToRun = code;
@@ -340,6 +426,14 @@ The JSON object must have this exact format:
             setActiveUITool(null);
         }
     }, []);
+
+    const handleClearEmbeddingsCache = useCallback(() => {
+        if (window.confirm('This will clear the cached tool embeddings, forcing them to be recalculated on the next embedding search. Are you sure?')) {
+            setToolEmbeddingsCache(new Map());
+            setInfo("Tool embeddings cache has been cleared.");
+        }
+    }, []);
+
 
     const executeAction = useCallback(async (toolCall: AIToolCall): Promise<EnrichedAIResponse> => {
         if (!toolCall) return { toolCall: null };
@@ -473,7 +567,9 @@ The JSON object must have this exact format:
                         tools, 
                         toolEmbeddingsCache,
                         setToolEmbeddingsCache,
-                        setInfo
+                        setInfo,
+                        embeddingSimilarityThreshold,
+                        embeddingTopK
                     );
                     selectedToolNames = foundTools.map(t => t.name);
                     toolSelectionDebug = { ...toolSelectionDebug, availableTools: tools.map(t => ({name: t.name, description: t.description})), selectedToolNames };
@@ -584,7 +680,7 @@ The JSON object must have this exact format:
                 setIsLoading(false);
             }
         }
-    }, [tools, findToolByName, showDebug, selectedModel, apiConfig, temperature, runtimeApi, operatingMode, executeAction, logToAutonomousPanel, toolRetrievalStrategy, toolEmbeddingsCache]);
+    }, [tools, findToolByName, showDebug, selectedModel, apiConfig, temperature, runtimeApi, operatingMode, executeAction, logToAutonomousPanel, toolRetrievalStrategy, toolEmbeddingsCache, embeddingSimilarityThreshold, embeddingTopK]);
 
     const handleStopTask = useCallback(() => {
         setIsTaskLoopRunning(false);
@@ -912,12 +1008,16 @@ The JSON object must have this exact format:
         UIToolRunner,
         apiConfig, setApiConfig,
         handleResetTools,
+        handleClearEmbeddingsCache,
         operatingMode, setOperatingMode,
         autonomousActionCount, autonomousActionLimit, setAutonomousActionLimit,
         proposedAction, handleApproveAction, handleRejectAction,
         isAutonomousLoopRunning, handleToggleAutonomousLoop, autonomousLog, handleClearLog,
         isTaskLoopRunning, handleStopTask,
         agentSwarm, isSwarmRunning, handleStopSwarm,
+        embeddingSimilarityThreshold, setEmbeddingSimilarityThreshold,
+        embeddingTopK, setEmbeddingTopK,
+        robotState, environmentState,
     };
 
     const isHuggingFaceModel = selectedModel.provider === ModelProvider.HuggingFace;
@@ -949,9 +1049,17 @@ The JSON object must have this exact format:
                 )}
 
 
+                <div className="w-full max-w-4xl mx-auto">
+                    <UIToolRunner tool={getUITool('Robot Simulation Environment')} props={uiProps} />
+                </div>
+
+
                 <div className="flex flex-col gap-4 mt-8">
                   <UIToolRunner tool={getUITool('AI Model Selector')} props={uiProps} />
                   <UIToolRunner tool={getUITool('Tool Retrieval Strategy Selector')} props={uiProps} />
+                  {toolRetrievalStrategy === 'EMBEDDING' && (
+                    <UIToolRunner tool={getUITool('Embedding Parameters Configuration')} props={uiProps} />
+                  )}
                   <UIToolRunner tool={getUITool('Model Parameters Configuration')} props={uiProps} />
                   
                   {isHuggingFaceModel && (

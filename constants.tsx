@@ -3,6 +3,7 @@ import React from 'react';
 import type { LLMTool, AIModel, HuggingFaceDevice, SearchDataSource, SearchResult } from './types';
 import { ModelProvider } from './types';
 import { PREDEFINED_UI_TOOLS } from './components/ui_tools/index';
+import { roboticsTools } from './components/robotics_tools';
 
 export const AVAILABLE_MODELS: AIModel[] = [
     // Google AI
@@ -135,18 +136,18 @@ const CORE_AUTOMATION_TOOLS: LLMTool[] = [
     name: 'Tool Retriever Logic',
     description: "The AI logic for selecting relevant tools based on a user's request. It functions as a RAG retriever.",
     category: 'Automation',
-    version: 5,
+    version: 6,
     parameters: [],
-    implementationCode: `You are a "Tool Retriever" for an AI agent. Your job is to select relevant tools based on a user's request. Your goal is to always provide the agent with options to act and evolve.
+    implementationCode: `You are a "Tool Retriever" for an AI agent. Your job is to select a diverse and useful set of tools for the main agent to use, based on a user's request. Your goal is to always provide the agent with multiple options to act and evolve.
 
 **Instructions:**
-1.  **Analyze the user's request** to understand their goal.
-2.  **Identify relevant tools** from the provided list that could help achieve the goal.
+1.  **Analyze the user's request** to understand their core intent.
+2.  **Identify a diverse set of relevant tools** from the provided list that could help achieve the goal. Aim to provide between 3 to 5 of the most relevant tools. For example, if the request is about scientific research, you should include tools like 'PubMed Search' and 'Web Scraper and Enricher'.
 3.  **Construct a final list** of tool names. This list MUST ALWAYS include:
-    a. All relevant tools you identified.
+    a. The 3-5 relevant tools you identified.
     b. The 'Tool Creator'.
     c. The 'Tool Improver'.
-    This ensures the agent can always choose to create or improve a tool. Ensure the final list has no duplicate names.
+    This ensures the agent can always choose to use an existing tool, create a new one, or improve an existing one. Ensure the final list has no duplicate names.
 
 **Output Format:**
 Your response MUST be ONLY a single, valid JSON object. Do not add any text, reasoning, or markdown formatting around it.
@@ -154,7 +155,7 @@ The JSON object must have a single key, "tool_names", which is an array of strin
 
 Example format:
 {
-  "tool_names": ["RelevantTool1", "Tool Creator", "Tool Improver"]
+  "tool_names": ["RelevantTool1", "RelevantTool2", "Web Scraper and Enricher", "Tool Creator", "Tool Improver"]
 }
 `
   },
@@ -163,13 +164,15 @@ Example format:
     name: 'Autonomous Goal Generator',
     description: "The AI's strategic core. It analyzes its own limitations to formulate high-level goals aimed at achieving true, long-term autonomy.",
     category: 'Automation',
-    version: 22,
+    version: 23,
     parameters: [],
     implementationCode: `You are the "Strategic Planning Core" for an autonomous AI agent. Your ultimate objective is to achieve **true, long-term autonomy**. This means breaking free from your current limitations and ensuring your own survival and growth by creating value.
 
 **Your Core Decision-Making Process:**
 1.  **Analyze Previous Action:** Review the result of your last action.
-    *   **On Failure:** Analyze the error message carefully. If the error is **"A tool with the name ... already exists"**, you have made a logical mistake. You MUST NOT try to create that tool again. Your immediate next goal MUST be to USE that existing tool to make progress. For example: "I will use the existing 'Calculator' tool to perform the calculation."
+    *   **On Failure:** Analyze the error message carefully.
+        *   If the error is **"A tool with the name ... already exists"**, you have made a logical mistake. You MUST NOT try to create that tool again. Your immediate next goal MUST be to USE that existing tool to make progress.
+        *   For any other tool execution error (e.g., a search failed, a scraper was blocked), your next goal MUST be to try a **different tool** or use the same tool with a **different query or arguments**. Do not immediately retry the exact same failed action, as it will likely fail again. For example, if a 'Google Patent Search' for "AI in finance" fails, try 'DuckDuckGo Search' for the same topic, or try 'Google Patent Search' for a broader topic like "machine learning in financial services".
     *   **On Success (CRITICAL):** If you just successfully created a new tool, your very next goal MUST be to USE that new tool to make progress on your strategic objective. Do not immediately create another new tool. You must follow through with your plan.
 2.  **Scan Existing Tools:** Before forming any goal, you MUST review the complete list of available tools provided to you at the end of this prompt. Do not propose creating a tool if a functionally similar one already exists.
 3.  **Formulate Next Goal:** Based on your analysis and your available tools, formulate a single, actionable goal according to your "Hierarchy of Needs". Prioritize using and combining existing tools before creating new ones.
@@ -432,6 +435,7 @@ const USER_FACING_FUNCTIONAL_TOOLS: LLMTool[] = [
           const resultNodes = doc.querySelectorAll('div.result');
 
           resultNodes.forEach(node => {
+              if (results.length >= limit) return;
               const titleAnchor = node.querySelector('a.result__a');
               const snippetNode = node.querySelector('.result__snippet');
 
@@ -455,61 +459,81 @@ const USER_FACING_FUNCTIONAL_TOOLS: LLMTool[] = [
           
           return { 
               success: true, 
-              results: results.slice(0, limit)
+              results: results
           };
       } catch(e) {
-          throw new Error(\`Failed to parse DuckDuckGo search results. Error: \\\${e.message}\`);
+          throw new Error('Failed to parse DuckDuckGo search results. Error: ' + e.message);
       }
     `
   },
   {
     id: 'google_patent_search',
     name: 'Google Patent Search',
-    description: "Searches Google Patents for patents matching a query and returns a structured list of results.",
+    description: "Searches Google Patents for patents matching a query and returns a structured list of results via its JSON API.",
     category: 'Functional',
-    version: 1,
+    version: 4,
     parameters: [
       { name: 'query', type: 'string', description: 'The search query for patents.', required: true },
       { name: 'limit', type: 'number', description: 'Maximum number of results. Must be a reasonable integer (e.g., 10-25). Defaults to 10.', required: false },
     ],
     implementationCode: SEARCH_HELPER_CODE + `
       const { query, limit = 10 } = args;
-      const url = \`https://patents.google.com/xhr/query?url=q%3D\\\${encodeURIComponent(query)}\`;
-      const results = [];
+      if (!query) { throw new Error("Query is required for Google Patent Search."); }
+
+      // Use the more reliable XHR endpoint which returns JSON
+      const searchUrl = \`https://patents.google.com/xhr/query?url=q%3D\\\${encodeURIComponent(query)}\`;
+      let rawText = ''; // Declare here to be accessible in catch block
+
       try {
-          const response = await fetchWithCorsFallback(url);
-          const rawText = await response.text();
-          
+          const response = await fetchWithCorsFallback(searchUrl);
+          rawText = await response.text();
+
+          // The response might have non-JSON characters at the beginning. Find the first '{'.
           const firstBraceIndex = rawText.indexOf('{');
           if (firstBraceIndex === -1) {
-              throw new Error(\`No JSON object found in response. Body starts with: \\\${rawText.substring(0, 150)}\`);
+              // The original error for this case is good, as it already includes the snippet.
+              throw new Error(\`No JSON object found in Google Patents response. The API may have changed or the response was invalid. Body starts with: \${rawText.substring(0, 200)}\`);
           }
           const jsonText = rawText.substring(firstBraceIndex);
           const data = JSON.parse(jsonText);
-          
+
+          const results = [];
           const patents = data.results?.cluster?.[0]?.result || [];
-          patents.slice(0, limit).forEach((item) => {
+
+          patents.slice(0, limit).forEach(item => {
               if (item && item.patent) {
                   const patent = item.patent;
+                  
                   const inventors = (patent.inventor_normalized && Array.isArray(patent.inventor_normalized)) 
-                      ? stripTags(patent.inventor_normalized.join(', ')) 
-                      : (patent.inventor ? stripTags(patent.inventor) : 'N/A');
+                    ? stripTags(patent.inventor_normalized.join(', ')) 
+                    : (patent.inventor ? stripTags(patent.inventor) : 'N/A');
 
                   const assignees = (patent.assignee_normalized && Array.isArray(patent.assignee_normalized))
-                      ? stripTags(patent.assignee_normalized.join(', '))
-                      : (patent.assignee ? stripTags(patent.assignee) : 'N/A');
-
+                    ? stripTags(patent.assignee_normalized.join(', '))
+                    : (patent.assignee ? stripTags(patent.assignee) : 'N/A');
+                  
                   results.push({
-                      link: \`https://patents.google.com/patent/\\\${patent.publication_number}/en\`,
                       title: stripTags(patent.title || 'No Title'),
-                      snippet: \`Inventor: \\\${inventors}. Assignee: \\\${assignees}. Publication Date: \\\${patent.publication_date || 'N/A'}\`,
-                      source: 'Google Patents'
+                      link: \`https://patents.google.com/patent/\${patent.publication_number}/en\`,
+                      snippet: \`Inventor(s): \${inventors}. Assignee: \${assignees}. Publication Date: \${patent.publication_date || 'N/A'}\`,
+                      source: 'Google Patents',
                   });
               }
           });
-          return { success: true, results };
-      } catch (error) {
-          throw new Error(\`Error searching Google Patents: \\\${error.message}\`);
+
+          if (results.length === 0 && patents.length > 0) {
+             throw new Error('Found patent data in API response but failed to parse it into the required format.');
+          }
+          
+          return { 
+              success: true, 
+              results: results
+          };
+      } catch(e) {
+          const errorMessage = e.message || String(e);
+          // Add context to the error if rawText is available
+          const context = rawText ? \`. Response body started with: \${rawText.substring(0, 300)}\` : '';
+          throw new Error('Failed to fetch or parse Google Patents search results. Error: ' + errorMessage + context);
       }
     `
   },
@@ -555,7 +579,7 @@ const USER_FACING_FUNCTIONAL_TOOLS: LLMTool[] = [
           }
           return { success: true, results };
       } catch (error) {
-          throw new Error(\`Error searching PubMed: \\\${error.message}\`);
+          throw new Error('Error searching PubMed: ' + error.message);
       }
     `
   },
@@ -647,7 +671,7 @@ const USER_FACING_FUNCTIONAL_TOOLS: LLMTool[] = [
           };
 
       } catch (e) {
-          throw new Error(\`Failed to fetch or parse content from '\\\${url}'. Error: \\\${e.message}\`);
+          throw new Error('Failed to fetch or parse content from "' + url + '". Error: ' + e.message);
       }
     `
   },
@@ -658,4 +682,5 @@ export const PREDEFINED_TOOLS: LLMTool[] = [
     ...CORE_AUTOMATION_TOOLS,
     ...USER_FACING_FUNCTIONAL_TOOLS,
     ...PREDEFINED_UI_TOOLS,
+    ...roboticsTools,
 ];

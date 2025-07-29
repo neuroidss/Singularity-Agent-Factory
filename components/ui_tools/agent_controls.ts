@@ -6,24 +6,33 @@ export const agentControlsTools: LLMTool[] = [
       name: 'System Controls',
       description: 'Provides system-level actions like resetting the application state.',
       category: 'UI Component',
-      version: 3,
+      version: 4,
       parameters: [
           { name: 'handleResetTools', type: 'string', description: 'Function to reset all tools to their default state.', required: true },
+          { name: 'handleClearEmbeddingsCache', type: 'string', description: 'Function to clear the tool embeddings cache.', required: true },
       ],
       implementationCode: `
         return (
           <div className="w-full max-w-7xl mx-auto p-4 bg-slate-800/50 border border-slate-700/80 rounded-lg">
-            <div className="flex flex-col sm:flex-row justify-between sm:items-center gap-3">
+            <div className="flex flex-col sm:flex-row justify-between sm:items-center gap-4">
               <div>
                 <h3 className="text-md font-semibold text-slate-200">System Recovery</h3>
-                <p className="text-sm text-slate-400 max-w-2xl">If the agent becomes unstable or critical tools are deleted, you can reset all tools to their original state. This action cannot be undone.</p>
+                <p className="text-sm text-slate-400 max-w-2xl">If the agent becomes unstable or tool search behaves unexpectedly, use these recovery options. These actions cannot be undone.</p>
               </div>
-              <button
-                onClick={handleResetTools}
-                className="bg-red-600 text-white font-bold py-2 px-4 rounded-lg hover:bg-red-700 transition-colors flex-shrink-0"
-              >
-                Reset All Tools
-              </button>
+              <div className="flex flex-col sm:flex-row gap-2 flex-shrink-0">
+                  <button
+                    onClick={handleClearEmbeddingsCache}
+                    className="bg-yellow-600 text-white font-bold py-2 px-4 rounded-lg hover:bg-yellow-700 transition-colors"
+                  >
+                    Clear Embeddings Cache
+                  </button>
+                  <button
+                    onClick={handleResetTools}
+                    className="bg-red-600 text-white font-bold py-2 px-4 rounded-lg hover:bg-red-700 transition-colors"
+                  >
+                    Reset All Tools
+                  </button>
+              </div>
             </div>
           </div>
         );

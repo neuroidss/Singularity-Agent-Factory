@@ -145,3 +145,17 @@ export interface SearchResult {
     snippet: string;
     source: SearchDataSource;
 }
+
+// Types for the robotics simulation
+export interface RobotState {
+  x: number;
+  y: number;
+  rotation: number; // 0: up, 90: right, 180: down, 270: left
+  hasPackage: boolean;
+}
+
+export interface EnvironmentObject {
+  x: number;
+  y: number;
+  type: 'wall' | 'package' | 'goal';
+}
