@@ -692,7 +692,9 @@ The JSON object must have this exact format:
 
         const autonomousRunner = async () => {
             logToAutonomousPanel("▶️ Starting autonomous loop...");
-            let lastCycleResult: EnrichedAIResponse | null = lastResponse;
+            // FIX: Initialize with null. The loop is self-contained and shouldn't
+            // depend on the last action taken outside of it. This prevents re-triggering.
+            let lastCycleResult: EnrichedAIResponse | null = null;
 
             while (isRunningRef.current) {
                 logToAutonomousPanel("🌀 Starting new cycle...");
@@ -759,8 +761,10 @@ The JSON object must have this exact format:
         };
 
         autonomousRunner();
-
-    }, [isAutonomousLoopRunning, logToAutonomousPanel, lastResponse, autonomousActionLimit, findToolByName, selectedModel, apiConfig, temperature, tools, processRequest, setAutonomousActionCount, setLastActionDate, setIsAutonomousLoopRunning]);
+    // FIX: Removed 'lastResponse' from the dependency array. The loop's state
+    // is now self-contained within the autonomousRunner function, preventing the
+    // useEffect hook from re-firing after each action and launching concurrent loops.
+    }, [isAutonomousLoopRunning, logToAutonomousPanel, autonomousActionLimit, findToolByName, selectedModel, apiConfig, temperature, tools, processRequest, setAutonomousActionCount, setLastActionDate, setIsAutonomousLoopRunning]);
     
     const handleToggleAutonomousLoop = () => {
         if(operatingMode !== OperatingMode.Autonomous) {
