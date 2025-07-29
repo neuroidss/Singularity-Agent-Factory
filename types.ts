@@ -32,7 +32,7 @@ export interface ToolParameter {
 }
 
 export interface LLMTool {
-  id: string;
+  id:string;
   name:string;
   description: string;
   category: ToolCategory;
@@ -127,3 +127,21 @@ export interface APIConfig {
 
 // Props passed to UI tools. All properties are optional.
 export type UIToolRunnerProps = Record<string, any>;
+
+// Types for new search tools
+export enum SearchDataSource {
+    GoogleSearch = 'Google Search',
+    WebSearch = 'Web Search',
+    PubMed = 'PubMed',
+    BioRxivFeed = 'bioRxiv Feed',
+    BioRxivPmcArchive = 'bioRxiv (PMC)',
+    GooglePatents = 'Google Patents',
+    OpenGenes = 'OpenGenes API',
+}
+
+export interface SearchResult {
+    link: string;
+    title: string;
+    snippet: string;
+    source: SearchDataSource;
+}

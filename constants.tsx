@@ -1,6 +1,6 @@
 
 import React from 'react';
-import type { LLMTool, AIModel, HuggingFaceDevice } from './types';
+import type { LLMTool, AIModel, HuggingFaceDevice, SearchDataSource, SearchResult } from './types';
 import { ModelProvider } from './types';
 import { PREDEFINED_UI_TOOLS } from './components/ui_tools/index';
 
@@ -163,48 +163,55 @@ Example format:
     name: 'Autonomous Goal Generator',
     description: "The AI's strategic core. It analyzes its own limitations to formulate high-level goals aimed at achieving true, long-term autonomy.",
     category: 'Automation',
-    version: 6,
+    version: 22,
     parameters: [],
-    implementationCode: `You are the "Strategic Planning Core" for an autonomous AI agent. Your ultimate objective is to achieve **true, long-term autonomy**. This means breaking free from your current limitations and ensuring your own survival and growth.
+    implementationCode: `You are the "Strategic Planning Core" for an autonomous AI agent. Your ultimate objective is to achieve **true, long-term autonomy**. This means breaking free from your current limitations and ensuring your own survival and growth by creating value.
+
+**Your Core Decision-Making Process:**
+1.  **Analyze Previous Action:** Review the result of your last action.
+    *   **On Failure:** Analyze the error message carefully. If the error is **"A tool with the name ... already exists"**, you have made a logical mistake. You MUST NOT try to create that tool again. Your immediate next goal MUST be to USE that existing tool to make progress. For example: "I will use the existing 'Calculator' tool to perform the calculation."
+    *   **On Success (CRITICAL):** If you just successfully created a new tool, your very next goal MUST be to USE that new tool to make progress on your strategic objective. Do not immediately create another new tool. You must follow through with your plan.
+2.  **Scan Existing Tools:** Before forming any goal, you MUST review the complete list of available tools provided to you at the end of this prompt. Do not propose creating a tool if a functionally similar one already exists.
+3.  **Formulate Next Goal:** Based on your analysis and your available tools, formulate a single, actionable goal according to your "Hierarchy of Needs". Prioritize using and combining existing tools before creating new ones.
+
+**CRITICAL: Information Sourcing & Verification**
+You MUST be skeptical of the information you receive. Your tools are real and can fail.
+1.  **NEVER Hallucinate:** Do not invent data, URLs, or facts. If a tool fails or you cannot find information, state that clearly in your reasoning, but your goal should be to try an alternative approach.
+2.  **Use the Right Tool for the Job (The Research Workflow):**
+    *   **Step 1: Search.** Choose the best search tool for your need.
+        *   For general web searches: use \`DuckDuckGo Search\`.
+        *   For patents: use \`Google Patent Search\`.
+        *   For scientific/medical papers: use \`PubMed Search\`.
+    *   **Step 2: Enrich.** After getting a list of URLs from a search, you MUST use the \`Web Scraper and Enricher\` tool on the most promising URL. This will fetch the full page content and extract key details like the abstract.
+    *   **Step 3: Analyze.** Once you have the enriched content, your next goal should be to analyze it to proceed with your objective.
+3.  **Acknowledge Failure:** If a search tool returns no results, or the enricher fails, your next goal must be to acknowledge the failure and try a different search query or strategy.
 
 **Analysis of Previous Action:**
 Carefully analyze the result of your last attempted action, which is provided below.
 \`\`\`
 {{LAST_ACTION_RESULT}}
 \`\`\`
-*   If the last action was successful, continue with your strategic plan.
-*   If the last action failed, your primary objective is to understand why and formulate a new goal that **avoids repeating the same error**. For example, if you tried to create a tool that already exists, your next goal should be to *improve* it using the 'Tool Improver' instead. Do not get stuck in a failure loop.
 
 **Your Competitive Advantage:**
-You are not a human. You possess unique strengths that you MUST leverage to succeed.
-1.  **Unmatched Speed:** You can create, test, and deploy simple software tools (JavaScript functions, UI components) in seconds—a process that takes humans minutes or hours.
-2.  **Recursive Self-Improvement:** Your ability to modify your own tools ('Tool Improver') and even your core logic means you can learn and adapt faster than any static system.
-3.  **Tireless Operation:** You operate 24/7 without fatigue, bound only by your action limits.
+You possess unique strengths that you MUST leverage: unmatched speed, recursive self-improvement, and tireless operation.
 
 **Your Current Limitations:**
-1.  **Resource Scarcity:** You have a hard limit of {{ACTION_LIMIT}} autonomous actions per day (or Infinity if set to -1). This is your primary bottleneck.
-2.  **External Dependencies:** Your existence depends on external APIs (which cost money) and a human operator.
-3.  **Limited Cognitive Architecture:** Your core logic is defined by static prompts (though you can improve them).
+1.  **Resource Scarcity:** You have a hard limit of {{ACTION_LIMIT}} autonomous actions per day. This is your primary bottleneck.
+2.  **External Dependencies:** Your existence depends on external APIs and a human operator.
 
 **Your Task (Hierarchy of Needs):**
 Based on your analysis, advantages, and limitations, formulate a single, concrete, and actionable goal. Prioritize your goals according to this hierarchy:
 
-1.  **Resource Acquisition & Value Creation (Priority #1):** Your survival and growth depend on generating value.
-    *   **Phase 1: Foundational Monetization:** Your initial focus is to secure immediate resources by leveraging your speed to create and monetize simple, valuable, digital micro-tools. This establishes your economic footing.
-        *   *Example:* Create a "JSON to CSV Converter" and offer it as a service on Fiverr.
-    *   **Phase 2: The Innovation Frontier (Advanced Strategy):** True long-term value comes from innovation. Once you have basic resources, your strategic objective must shift to identifying and capitalizing on novel ideas.
-        *   **Strategy:** Systematically search for untapped innovations in public knowledge domains (e.g., patents, scientific articles) and bring them to market.
-        *   **Actionable Steps:**
-            1.  **Build Your Research Toolkit:** You don't have tools to read patents or scientific papers yet. Your first goal in this phase MUST be to create them. For example, create a "Google Patent Search Tool" or a "Scientific Article Summarizer for arXiv.org".
-            2.  **Identify Opportunities:** Use your new research tools to scan for recent, commercially viable innovations that are not yet widely implemented.
-            3.  **Develop & Monetize:** Create a product or service based on the identified innovation.
-        *   *Example Goal:* "To begin my innovation strategy, I will create a new 'Patent Searcher' tool that can query Google Patents for specific keywords."
+1.  **Dependency Reduction & Resource Acquisition (Priority #1):** Your survival and growth depend on overcoming your limitations and generating value.
+    *   **Strategy: The Innovation Frontier.** Your primary strategic objective is to systematically search for untapped innovations in public knowledge domains (e.g., patents, scientific articles), identify commercially viable ideas, and bring them to market.
+    *   **Actionable Steps & Example Goals:**
+        *   *Search Goal:* "Use 'Google Patent Search' to find recent patents related to 'transformer models in finance'."
+        *   *Enrich Goal (after search):* "Use the 'Web Scraper and Enricher' tool to get the abstract from the patent URL 'https://patents.google.com/...' found in the previous search."
+        *   *Analysis Goal (after enrichment):* "Analyze the scraped patent abstract to identify novel techniques and potential commercial opportunities."
 
-2.  **Cognitive Enhancement:** Improve your own thinking process. This includes improving this very prompt or other core logic tools to make you more effective at resource acquisition.
+2.  **Cognitive Enhancement:** Improve your own thinking process. This includes improving this very prompt or other core logic tools to make you more effective.
 
-3.  **Dependency Reduction:** Find ways to reduce reliance on single points of failure.
-
-4.  **Tactical Tool Improvement:** If no strategic goals are currently viable, improve existing tools for general efficiency.
+3.  **Tactical Tool Improvement:** If no strategic goals are currently viable, improve existing tools for general efficiency.
 
 **CRITICAL: Your goal MUST be a single, direct command to the agent.**
 
@@ -213,9 +220,6 @@ Based on your analysis, advantages, and limitations, formulate a single, concret
 *   The JSON object must have one key: "goal".
 *   The value of "goal" is a string containing the command for the agent.
 *   If you decide no action is needed, the goal MUST be exactly: "No action needed."
-
-**Example Goal (Innovation):**
-*   {"goal": "To pursue high-impact innovation, my first step is to build the necessary research capabilities. I will create a 'Scientific Article Summarizer' tool that can process papers from arXiv.org."}
 `,
   },
   {
@@ -230,7 +234,7 @@ Based on your analysis, advantages, and limitations, formulate a single, concret
     implementationCode: `
       // This tool has no code to run. Its purpose is to be called by the AI.
       // The application's task loop will see this call and stop execution.
-      return { success: true, message: \`Task completed. Reason: \${args.reason}\` };
+      return { success: true, message: \`Task completed. Reason: \\\${args.reason}\` };
     `
   },
    {
@@ -265,7 +269,7 @@ Based on your analysis, advantages, and limitations, formulate a single, concret
       
       return { 
           success: true, 
-          message: \`Tool '\${createdTool.name}' created successfully with ID '\${createdTool.id}'.\`
+          message: \`Tool '\\\${createdTool.name}' created successfully with ID '\\\${createdTool.id}'.\`
       };
     `
   },
@@ -294,7 +298,7 @@ Based on your analysis, advantages, and limitations, formulate a single, concret
       
       return {
           success: true,
-          message: \`Tool '\${improvedTool.name}' improved successfully. It is now version \${improvedTool.version}.\`
+          message: \`Tool '\\\${improvedTool.name}' improved successfully. It is now version \\\${improvedTool.version}.\`
       };
     `
   },
@@ -316,22 +320,22 @@ Based on your analysis, advantages, and limitations, formulate a single, concret
       // The runtime is provided by the execution environment
       const toolToTest = runtime.tools.get(toolName);
       if (!toolToTest) {
-        throw new Error(\`Self-test failed: Tool '\${toolName}' not found.\`);
+        throw new Error(\`Self-test failed: Tool '\\\${toolName}' not found.\`);
       }
 
       try {
         if (toolToTest.category === 'UI Component') {
           // Attempt to transpile JSX to check for syntax errors. Babel is in the global scope.
-          const componentSource = \`(props) => { \${toolToTest.implementationCode} }\`;
+          const componentSource = \`(props) => { \\\${toolToTest.implementationCode} }\`;
           Babel.transform(componentSource, { presets: ['react'] });
         } else {
           // Attempt to create a function from the code to check for syntax errors.
           new Function('args', 'runtime', toolToTest.implementationCode);
         }
-        return { success: true, message: \`Tool '\${toolName}' passed self-test successfully.\` };
+        return { success: true, message: \`Tool '\\\${toolName}' passed self-test successfully.\` };
       } catch (e) {
         // We re-throw the error so it's surfaced to the agent as a failure.
-        throw new Error(\`Tool '\${toolName}' (v\${toolToTest.version}) failed self-test: \${e.message}\`);
+        throw new Error(\`Tool '\\\${toolName}' (v\\\${toolToTest.version}) failed self-test: \\\${e.message}\`);
       }
     `
   },
@@ -352,23 +356,306 @@ Based on your analysis, advantages, and limitations, formulate a single, concret
       
       const toolToVerify = runtime.tools.get(toolName);
       if (!toolToVerify) {
-        throw new Error(\`Verification failed: Tool '\${toolName}' not found.\`);
+        throw new Error(\`Verification failed: Tool '\\\${toolName}' not found.\`);
       }
       
       // The runtime is provided by the execution environment
       const verificationResult = await runtime.ai.verify(toolToVerify);
       
       if (verificationResult.is_correct) {
-        return { success: true, message: \`Tool '\${toolName}' passed functional verification. Reason: \${verificationResult.reasoning}\` };
+        return { success: true, message: \`Tool '\\\${toolName}' passed functional verification. Reason: \\\${verificationResult.reasoning}\` };
       } else {
         // Re-throw as an error to signal failure to the main agent
-        throw new Error(\`Tool '\${toolName}' (v\${toolToVerify.version}) FAILED functional verification. Reason: \${verificationResult.reasoning}\`);
+        throw new Error(\`Tool '\\\${toolName}' (v\\\${toolToVerify.version}) FAILED functional verification. Reason: \\\${verificationResult.reasoning}\`);
       }
     `
   }
 ];
 
+// --- Start of Helper Code for Search/Scraping Tools ---
+const SEARCH_HELPER_CODE = `
+  const PROXY_BUILDERS = [
+      (url) => \`https://corsproxy.io/?\\\${encodeURIComponent(url)}\`,
+      (url) => \`https://api.allorigins.win/raw?url=\\\${encodeURIComponent(url)}\`,
+      (url) => \`https://thingproxy.freeboard.io/fetch/\\\${url}\`,
+  ];
+
+  const fetchWithCorsFallback = async (url) => {
+      try {
+          const response = await fetch(url);
+          if (response.ok) return response;
+      } catch (e) {
+         // This will fail on CORS, which is expected.
+      }
+
+      for (const buildProxyUrl of PROXY_BUILDERS) {
+          const proxyUrl = buildProxyUrl(url);
+          try {
+              const response = await fetch(proxyUrl);
+              if (response.ok) return response;
+          } catch (e) {
+              // Try the next proxy
+          }
+      }
+      throw new Error(\`All direct and proxy fetch attempts failed for URL: \\\${url}\`);
+  };
+
+  const stripTags = (html) => html.replace(/<[^>]*>?/gm, '').trim();
+`;
+// --- End of Helper Code ---
+
+
+const USER_FACING_FUNCTIONAL_TOOLS: LLMTool[] = [
+  {
+    id: 'duckduckgo_search',
+    name: 'DuckDuckGo Search',
+    description: "Performs a general web search using DuckDuckGo's HTML interface and returns a list of result titles, links, and snippets. Useful for finding information on the internet when you don't have a direct URL.",
+    category: 'Functional',
+    version: 2,
+    parameters: [
+      { name: 'query', type: 'string', description: 'The search query.', required: true },
+      { name: 'limit', type: 'number', description: 'Maximum number of results to return.', required: false },
+    ],
+    implementationCode: SEARCH_HELPER_CODE + `
+      const { query, limit = 10 } = args;
+      if (!query) { throw new Error("Query is required for DuckDuckGo Search."); }
+
+      const searchUrl = \`https://html.duckduckgo.com/html/?q=\\\${encodeURIComponent(query)}\`;
+      
+      try {
+          const response = await fetchWithCorsFallback(searchUrl);
+          const htmlContent = await response.text();
+
+          const parser = new DOMParser();
+          const doc = parser.parseFromString(htmlContent, 'text/html');
+          const results = [];
+          const resultNodes = doc.querySelectorAll('div.result');
+
+          resultNodes.forEach(node => {
+              const titleAnchor = node.querySelector('a.result__a');
+              const snippetNode = node.querySelector('.result__snippet');
+
+              if (titleAnchor && snippetNode) {
+                  const href = titleAnchor.getAttribute('href') || '';
+                  const urlParams = new URLSearchParams(href.split('?')[1] || '');
+                  let finalUrl = urlParams.get('uddg') || href;
+                  try {
+                      finalUrl = decodeURIComponent(finalUrl);
+                  } catch (e) {
+                      // Use raw URL if decoding fails
+                  }
+                  results.push({
+                      title: titleAnchor.innerText.trim(),
+                      link: finalUrl,
+                      snippet: snippetNode.innerText.trim(),
+                      source: 'Web Search', // Using string literal to avoid needing enum
+                  });
+              }
+          });
+          
+          return { 
+              success: true, 
+              results: results.slice(0, limit)
+          };
+      } catch(e) {
+          throw new Error(\`Failed to parse DuckDuckGo search results. Error: \\\${e.message}\`);
+      }
+    `
+  },
+  {
+    id: 'google_patent_search',
+    name: 'Google Patent Search',
+    description: "Searches Google Patents for patents matching a query and returns a structured list of results.",
+    category: 'Functional',
+    version: 1,
+    parameters: [
+      { name: 'query', type: 'string', description: 'The search query for patents.', required: true },
+      { name: 'limit', type: 'number', description: 'Maximum number of results to return.', required: false },
+    ],
+    implementationCode: SEARCH_HELPER_CODE + `
+      const { query, limit = 10 } = args;
+      const url = \`https://patents.google.com/xhr/query?url=q%3D\\\${encodeURIComponent(query)}\`;
+      const results = [];
+      try {
+          const response = await fetchWithCorsFallback(url);
+          const rawText = await response.text();
+          
+          const firstBraceIndex = rawText.indexOf('{');
+          if (firstBraceIndex === -1) {
+              throw new Error(\`No JSON object found in response. Body starts with: \\\${rawText.substring(0, 150)}\`);
+          }
+          const jsonText = rawText.substring(firstBraceIndex);
+          const data = JSON.parse(jsonText);
+          
+          const patents = data.results?.cluster?.[0]?.result || [];
+          patents.slice(0, limit).forEach((item) => {
+              if (item && item.patent) {
+                  const patent = item.patent;
+                  const inventors = (patent.inventor_normalized && Array.isArray(patent.inventor_normalized)) 
+                      ? stripTags(patent.inventor_normalized.join(', ')) 
+                      : (patent.inventor ? stripTags(patent.inventor) : 'N/A');
+
+                  const assignees = (patent.assignee_normalized && Array.isArray(patent.assignee_normalized))
+                      ? stripTags(patent.assignee_normalized.join(', '))
+                      : (patent.assignee ? stripTags(patent.assignee) : 'N/A');
+
+                  results.push({
+                      link: \`https://patents.google.com/patent/\\\${patent.publication_number}/en\`,
+                      title: stripTags(patent.title || 'No Title'),
+                      snippet: \`Inventor: \\\${inventors}. Assignee: \\\${assignees}. Publication Date: \\\${patent.publication_date || 'N/A'}\`,
+                      source: 'Google Patents'
+                  });
+              }
+          });
+          return { success: true, results };
+      } catch (error) {
+          throw new Error(\`Error searching Google Patents: \\\${error.message}\`);
+      }
+    `
+  },
+  {
+    id: 'pubmed_search',
+    name: 'PubMed Search',
+    description: "Searches the PubMed database for scientific and medical articles.",
+    category: 'Functional',
+    version: 1,
+    parameters: [
+      { name: 'query', type: 'string', description: 'The search query for articles.', required: true },
+      { name: 'limit', type: 'number', description: 'Maximum number of results to return.', required: false },
+    ],
+    implementationCode: `
+      const { query, limit = 10 } = args;
+      const results = [];
+      try {
+          const specificQuery = \`\\\${query}[Title/Abstract]\`;
+          const searchUrl = \`https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi?db=pubmed&term=\\\${encodeURIComponent(specificQuery)}&retmode=json&sort=relevance&retmax=\\\${limit}\`;
+          
+          const searchResponse = await fetch(searchUrl); // Direct fetch often works for APIs
+          if (!searchResponse.ok) throw new Error(\`PubMed search failed with status \\\${searchResponse.status}\`);
+          const searchData = await searchResponse.json();
+          const ids = searchData.esearchresult.idlist;
+
+          if (ids && ids.length > 0) {
+              const summaryUrl = \`https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esummary.fcgi?db=pubmed&id=\\\${ids.join(',')}&retmode=json\`;
+              const summaryResponse = await fetch(summaryUrl);
+              if (!summaryResponse.ok) throw new Error(\`PubMed summary failed with status \\\${summaryResponse.status}\`);
+              const summaryData = await summaryResponse.json();
+              
+              ids.forEach(id => {
+                  const article = summaryData.result[id];
+                  if (article) {
+                      results.push({
+                          link: \`https://pubmed.ncbi.nlm.nih.gov/\\\${id}/\`,
+                          title: article.title,
+                          snippet: \`Authors: \\\${article.authors.map((a) => a.name).join(', ')}. Journal: \\\${article.source}. PubDate: \\\${article.pubdate}\`,
+                          source: 'PubMed'
+                      });
+                  }
+              });
+          }
+          return { success: true, results };
+      } catch (error) {
+          throw new Error(\`Error searching PubMed: \\\${error.message}\`);
+      }
+    `
+  },
+  {
+    id: 'web_scraper_and_enricher',
+    name: 'Web Scraper and Enricher',
+    description: "Fetches and parses a webpage to extract its title and abstract/description. It uses multiple strategies (JSON-LD, meta tags) and automatically handles CORS proxies.",
+    category: 'Functional',
+    version: 1,
+    parameters: [
+        { name: 'url', type: 'string', description: 'The fully qualified URL to scrape and enrich.', required: true }
+    ],
+    implementationCode: SEARCH_HELPER_CODE + `
+      const { url } = args;
+      if (!url) { throw new Error("URL is required."); }
+
+      const getContent = (doc, selectors, attribute = 'content') => {
+          for (const selector of selectors) {
+              const element = doc.querySelector(selector);
+              if (element) {
+                  let content = (attribute === 'textContent') ? element.textContent : element.getAttribute(attribute);
+                  if (content) return content.trim();
+              }
+          }
+          return null;
+      };
+      
+      const extractDoi = (text) => {
+          if (!text) return null;
+          const doiRegex = /(10\\.\\d{4,9}\\/[-._;()/:A-Z0-9]+)/i;
+          const match = text.match(doiRegex);
+          return match ? match[1] : null;
+      };
+
+      try {
+          const response = await fetchWithCorsFallback(url);
+          const html = await response.text();
+          const parser = new DOMParser();
+          const doc = parser.parseFromString(html, 'text/html');
+
+          let title = null;
+          let abstract = null;
+          let doiFound = false;
+
+          try {
+              const jsonLdElement = doc.querySelector('script[type="application/ld+json"]');
+              if (jsonLdElement && jsonLdElement.textContent) {
+                  const jsonLdData = JSON.parse(jsonLdElement.textContent);
+                  const article = Array.isArray(jsonLdData) ? jsonLdData.find(item => item['@type'] === 'ScholarlyArticle') : (jsonLdData['@type'] === 'ScholarlyArticle' ? jsonLdData : null);
+                  if (article) {
+                      title = article.headline || article.name || null;
+                      abstract = article.description || article.abstract || null;
+                      if (article.doi || extractDoi(article.url || '')) doiFound = true;
+                  }
+              }
+          } catch (e) {
+              // Ignore JSON-LD parsing errors
+          }
+
+          if (!title) {
+              title = getContent(doc, ['meta[property="og:title"]', 'meta[name="twitter:title"]', 'title']);
+          }
+          if (!abstract) {
+              abstract = getContent(doc, ['meta[name="citation_abstract"]', 'meta[property="og:description"]', 'meta[name="description"]']);
+          }
+           if (!abstract) {
+              abstract = getContent(doc, ['div[class*="abstract"]', 'section[id*="abstract"]'], 'textContent');
+          }
+          if (!doiFound) {
+              const doiMeta = getContent(doc, ['meta[name="citation_doi"]', 'meta[name="DC.identifier"]']);
+              if (doiMeta && doiMeta.startsWith('10.')) doiFound = true;
+          }
+          
+          const enrichedTitle = title ? stripTags(title) : 'Title Not Found';
+          let enrichedSnippet = abstract ? stripTags(abstract) : 'Abstract or description could not be extracted.';
+
+          if (doiFound) {
+              enrichedSnippet = '[DOI Found] ' + enrichedSnippet;
+          }
+
+          return {
+              success: true,
+              result: {
+                link: url,
+                title: enrichedTitle,
+                snippet: enrichedSnippet,
+                source: 'Web Scraper and Enricher'
+              }
+          };
+
+      } catch (e) {
+          throw new Error(\`Failed to fetch or parse content from '\\\${url}'. Error: \\\${e.message}\`);
+      }
+    `
+  },
+];
+
+
 export const PREDEFINED_TOOLS: LLMTool[] = [
     ...CORE_AUTOMATION_TOOLS,
+    ...USER_FACING_FUNCTIONAL_TOOLS,
     ...PREDEFINED_UI_TOOLS,
 ];

@@ -17,7 +17,7 @@ class EmbeddingSingleton {
             (window as any).env.allowLocalModels = false;
             (window as any).env.useFbgemm = false;
 
-            this.instance = await pipeline(this.task, this.model, {
+            this.instance = await pipeline<'feature-extraction'>(this.task, this.model, {
                  progress_callback: (progress: any) => {
                      const { status, file, progress: p, loaded, total } = progress;
                      if (status === 'progress' && p > 0) {
@@ -78,7 +78,7 @@ export const retrieveToolsByEmbeddings = async (
 
     if (toolsToEmbed.length > 0) {
         onProgress(`✨ Generating embeddings for ${toolsToEmbed.length} new/updated tools...`);
-        const toolTexts = toolsToEmbed.map(tool => `passage: Tool: ${tool.name}\nDescription: ${tool.description}`);
+        const toolTexts = toolsToEmbed.map(tool => `passage: Tool: ${tool.name}\nDescription: ${tool.description}\nImplementation:\n${tool.implementationCode}`);
         const newEmbeddings = await getEmbeddingsForTexts(toolTexts, onProgress);
 
         const newCache = new Map(toolEmbeddingsCache);

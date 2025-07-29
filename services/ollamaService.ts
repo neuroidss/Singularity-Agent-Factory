@@ -41,13 +41,26 @@ const generateDetailedError = (error: unknown, host: string, rawResponse?: strin
 }
 
 const parseToolCallResponse = (responseText: string, toolNameMap: Map<string, string>): AIResponse => {
-    const trimmedResponse = responseText.trim();
-    if (!trimmedResponse) {
+    let jsonText = responseText.trim();
+    if (!jsonText) {
         return { toolCall: null };
     }
     
+    // Attempt to extract JSON from markdown code blocks, a common failure mode.
+    const markdownMatch = jsonText.match(/```(?:json)?\s*([\s\S]+?)\s*```/s);
+    if (markdownMatch && markdownMatch[1]) {
+        jsonText = markdownMatch[1].trim();
+    }
+
+    // As a fallback, find the first '{' and last '}' to strip extraneous text.
+    const firstBrace = jsonText.indexOf('{');
+    const lastBrace = jsonText.lastIndexOf('}');
+    if (firstBrace !== -1 && lastBrace > firstBrace) {
+        jsonText = jsonText.substring(firstBrace, lastBrace + 1);
+    }
+    
     try {
-        const parsed = JSON.parse(trimmedResponse);
+        const parsed = JSON.parse(jsonText);
 
         // Handle the case of {} for no tool
         if (!parsed.name || typeof parsed.arguments === 'undefined') {
