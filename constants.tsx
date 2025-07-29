@@ -414,7 +414,7 @@ const USER_FACING_FUNCTIONAL_TOOLS: LLMTool[] = [
     version: 2,
     parameters: [
       { name: 'query', type: 'string', description: 'The search query.', required: true },
-      { name: 'limit', type: 'number', description: 'Maximum number of results to return.', required: false },
+      { name: 'limit', type: 'number', description: 'Maximum number of results. Must be a reasonable integer (e.g., 10-25). Defaults to 10.', required: false },
     ],
     implementationCode: SEARCH_HELPER_CODE + `
       const { query, limit = 10 } = args;
@@ -470,7 +470,7 @@ const USER_FACING_FUNCTIONAL_TOOLS: LLMTool[] = [
     version: 1,
     parameters: [
       { name: 'query', type: 'string', description: 'The search query for patents.', required: true },
-      { name: 'limit', type: 'number', description: 'Maximum number of results to return.', required: false },
+      { name: 'limit', type: 'number', description: 'Maximum number of results. Must be a reasonable integer (e.g., 10-25). Defaults to 10.', required: false },
     ],
     implementationCode: SEARCH_HELPER_CODE + `
       const { query, limit = 10 } = args;
@@ -521,7 +521,7 @@ const USER_FACING_FUNCTIONAL_TOOLS: LLMTool[] = [
     version: 1,
     parameters: [
       { name: 'query', type: 'string', description: 'The search query for articles.', required: true },
-      { name: 'limit', type: 'number', description: 'Maximum number of results to return.', required: false },
+      { name: 'limit', type: 'number', description: 'Maximum number of results. Must be a reasonable integer (e.g., 10-25). Defaults to 10.', required: false },
     ],
     implementationCode: `
       const { query, limit = 10 } = args;
