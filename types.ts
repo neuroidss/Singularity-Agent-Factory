@@ -5,6 +5,17 @@ export enum OperatingMode {
   Assist = 'ASSIST',
   Autonomous = 'AUTONOMOUS',
   Task = 'TASK',
+  Swarm = 'SWARM',
+}
+
+export type AgentStatus = 'idle' | 'working' | 'succeeded' | 'failed' | 'terminated';
+
+export interface AgentWorker {
+  id: string;
+  status: AgentStatus;
+  lastAction: string | null;
+  error: string | null;
+  result: any | null;
 }
 
 export enum ToolRetrievalStrategy {

@@ -1,7 +1,7 @@
 import React, { useState, useCallback, useMemo, useEffect, useRef } from 'react';
 import * as aiService from './services/aiService';
 import { PREDEFINED_TOOLS, AVAILABLE_MODELS, DEFAULT_HUGGING_FACE_DEVICE } from './constants';
-import type { LLMTool, EnrichedAIResponse, DebugInfo, AIResponse, APIConfig, AIModel, NewToolPayload, AIToolCall, ToolSelectionCallInfo, AgentExecutionCallInfo } from './types';
+import type { LLMTool, EnrichedAIResponse, DebugInfo, AIResponse, APIConfig, AIModel, NewToolPayload, AIToolCall, ToolSelectionCallInfo, AgentExecutionCallInfo, AgentWorker, AgentStatus } from './types';
 import { UIToolRunner } from './components/UIToolRunner';
 import { ModelProvider, OperatingMode, ToolRetrievalStrategy } from './types';
 import { loadStateFromStorage, saveStateToStorage } from './versioning';
@@ -87,6 +87,14 @@ const App: React.FC = () => {
     const [isAutonomousLoopRunning, setIsAutonomousLoopRunning] = useState<boolean>(false);
     const [autonomousLog, setAutonomousLog] = useState<string[]>([]);
     const isRunningRef = useRef(isAutonomousLoopRunning);
+
+    // State for Swarm mode
+    const [agentSwarm, setAgentSwarm] = useState<AgentWorker[]>([]);
+    const [isSwarmRunning, setIsSwarmRunning] = useState(false);
+    const isSwarmRunningRef = useRef(isSwarmRunning);
+    const swarmIterationCounter = useRef(0);
+    const swarmAgentIdCounter = useRef(0);
+
 
     // New state for Task mode loop
     const [isTaskLoopRunning, setIsTaskLoopRunning] = useState<boolean>(false);
@@ -187,6 +195,10 @@ const App: React.FC = () => {
     useEffect(() => {
       taskIsRunningRef.current = isTaskLoopRunning;
     }, [isTaskLoopRunning]);
+    
+    useEffect(() => {
+      isSwarmRunningRef.current = isSwarmRunning;
+    }, [isSwarmRunning]);
 
     const logToAutonomousPanel = useCallback((message: string) => {
         const timestamp = new Date().toLocaleTimeString();
@@ -566,7 +578,7 @@ The JSON object must have this exact format:
                 }
                 return newDebug;
             });
-            return { toolCall: null, executionError: errorMessage };
+            throw err; // Re-throw the error so swarm/task loops can catch it
         } finally {
             if (!isAutonomous) {
                 setIsLoading(false);
@@ -579,77 +591,118 @@ The JSON object must have this exact format:
         logToAutonomousPanel("⏹️ User requested to stop the task.");
     }, [logToAutonomousPanel]);
 
-    const processTask = useCallback(async (initialTask: string) => {
-        setIsLoading(true);
-        setIsTaskLoopRunning(true);
-        setCurrentUserTask(initialTask);
-        taskHistoryRef.current = [];
-        setUserInput('');
-        handleClearLog();
-        
-        logToAutonomousPanel(`🚀 Starting task: "${initialTask}"`);
-        
-        let iteration = 0;
-        const maxIterations = 10; // Safety break
+     const handleStopSwarm = useCallback(() => {
+        setIsSwarmRunning(false);
+        setInfo("🛑 Swarm task stopped by user.");
+    }, []);
 
-        // This loop uses a do-while structure to fix a race condition where the loop
-        // condition was checked before the 'isTaskLoopRunning' state was updated.
-        // This ensures at least one iteration occurs, which contains an 'await', giving
-        // React time to process the state update and correctly reflect it in the ref.
-        do {
-            iteration++;
-            logToAutonomousPanel(`🌀 Task Cycle ${iteration}...`);
-
-            try {
-                // The prompt for the agent is the original task, plus the history.
-                const historyString = taskHistoryRef.current.length > 0
-                    ? `You have already performed the following actions:\n${JSON.stringify(taskHistoryRef.current, null, 2)}`
-                    : "You have not performed any actions yet.";
-                
-                const promptForAgent = `The user's overall goal is: "${initialTask}".\n\n${historyString}\n\nBased on this, what is the single next action you should take? If the goal is fully complete, call the "Task Complete" tool.`;
-
-                logToAutonomousPanel(`🤔 Thinking about next step... (prompt sent to agent)`);
-                const result = await processRequest(promptForAgent, true); // true for autonomous-like logging
-
-                if (!taskIsRunningRef.current) {
-                    logToAutonomousPanel("⏹️ Task stopped by user during processing.");
-                    break; // Exit the loop immediately if the user stopped it.
-                }
-
-                if (result) {
-                    taskHistoryRef.current.push(result);
-                    if (result.toolCall?.name === 'Task Complete') {
-                        logToAutonomousPanel(`✅ ${result.executionResult?.message || 'Task Complete!'}`);
-                        setInfo(`Task completed successfully.`);
-                        setIsTaskLoopRunning(false); // This will make the loop condition false
-                    }
-                } else {
-                     logToAutonomousPanel(`⚠️ Agent did not choose an action. The task may be stuck. Stopping.`);
-                     setError("Agent could not decide on the next action.");
-                     setIsTaskLoopRunning(false);
-                }
-
-            } catch(err) {
-                const errorMessage = err instanceof Error ? err.message : "An unexpected error occurred during the task loop.";
-                setError(errorMessage);
-                logToAutonomousPanel(`❌ Error in task cycle: ${errorMessage}`);
-                setIsTaskLoopRunning(false); // Stop loop on error
-            }
-        // The loop continues as long as the ref is true (user hasn't stopped it) and we're under the iteration limit.
-        } while (taskIsRunningRef.current && iteration < maxIterations)
-        
-        if (iteration >= maxIterations && taskIsRunningRef.current) {
-            logToAutonomousPanel("⚠️ Reached maximum iterations for the task. Stopping.");
-            setError("Task stopped after reaching the maximum number of steps.");
+    const runSwarmCycle = useCallback(async () => {
+        if (!isSwarmRunningRef.current) {
+            setIsLoading(false);
+            setIsSwarmRunning(false);
+            setInfo("Swarm task concluded.");
+            return;
         }
 
-        // Cleanup state regardless of how the loop ended
-        setIsLoading(false);
-        setIsTaskLoopRunning(false); // ensure it's false
-        setCurrentUserTask('');
-        taskHistoryRef.current = [];
+        const MAX_ITERATIONS = 25;
+        if (swarmIterationCounter.current >= MAX_ITERATIONS) {
+            setInfo("⚠️ Swarm reached maximum iterations. Stopping.");
+            setError("Swarm stopped after reaching the maximum number of steps.");
+            setIsSwarmRunning(false);
+            setIsLoading(false);
+            return;
+        }
 
-    }, [selectedModel, apiConfig, temperature, processRequest, logToAutonomousPanel, handleClearLog, setInfo, setError, setIsLoading, setUserInput]);
+        const idleAgentIndex = agentSwarm.findIndex(a => a.status === 'idle');
+        if (idleAgentIndex === -1) {
+            // No idle agents, wait a moment and check again
+            setTimeout(runSwarmCycle, 2000);
+            return;
+        }
+
+        const agent = agentSwarm[idleAgentIndex];
+        swarmIterationCounter.current++;
+
+        try {
+            // Set agent to working
+            setAgentSwarm(prev => prev.map(a => a.id === agent.id ? { ...a, status: 'working', lastAction: 'Thinking about next step...', error: null } : a));
+            
+            const historyString = taskHistoryRef.current.length > 0
+                ? `The swarm has already performed these actions:\n${JSON.stringify(taskHistoryRef.current, null, 2)}`
+                : "The swarm has not performed any actions yet.";
+            
+            const promptForAgent = `The swarm's overall goal is: "${currentUserTask}".\n\n${historyString}\n\nBased on this, what is the single next action to take? If the goal is fully complete, call the "Task Complete" tool.`;
+
+            const result = await processRequest(promptForAgent, true);
+
+            if (!isSwarmRunningRef.current) throw new Error("Swarm stopped by user during processing.");
+
+            if (result) {
+                taskHistoryRef.current.push(result);
+                const actionSummary = result.toolCall ? `Called '${result.toolCall.name}'` : 'No action taken';
+                setAgentSwarm(prev => prev.map(a => a.id === agent.id ? { ...a, status: 'succeeded', lastAction: actionSummary, result: result.executionResult } : a));
+                
+                if (result.toolCall?.name === 'Task Complete') {
+                    setInfo(`✅ Task Completed by Agent ${agent.id}: ${result.executionResult?.message || 'Finished!'}`);
+                    setIsSwarmRunning(false);
+                    setIsLoading(false);
+                    return;
+                }
+            } else {
+                 setAgentSwarm(prev => prev.map(a => a.id === agent.id ? { ...a, status: 'failed', error: 'Agent did not choose an action.' } : a));
+            }
+        } catch (err) {
+            const errorMessage = err instanceof Error ? err.message : "An unknown error occurred.";
+            // Terminate the failing agent and spawn a new one
+            setAgentSwarm(prev => {
+                const terminatedStatus: AgentStatus = 'terminated';
+                const failedSwarm = prev.map(a => a.id === agent.id ? { ...a, status: terminatedStatus, error: errorMessage, lastAction: `FAILED: ${a.lastAction}` } : a);
+                swarmAgentIdCounter.current++;
+                const newAgent: AgentWorker = {
+                    id: `agent-${swarmAgentIdCounter.current}`,
+                    status: 'idle',
+                    lastAction: 'Newly spawned',
+                    error: null,
+                    result: null,
+                };
+                return [...failedSwarm, newAgent];
+            });
+        }
+        
+        // Schedule the next cycle
+        setTimeout(runSwarmCycle, 1000);
+    }, [agentSwarm, currentUserTask, processRequest]);
+
+
+    const startSwarmTask = useCallback(async (initialTask: string) => {
+        setIsLoading(true);
+        setIsSwarmRunning(true);
+        setCurrentUserTask(initialTask);
+        taskHistoryRef.current = [];
+        swarmIterationCounter.current = 0;
+        swarmAgentIdCounter.current = 3;
+        setUserInput('');
+        setInfo(`🚀 Starting swarm task: "${initialTask}"`);
+        setError(null);
+
+        const initialAgents: AgentWorker[] = Array.from({ length: 3 }, (_, i) => ({
+            id: `agent-${i + 1}`,
+            status: 'idle',
+            lastAction: 'Awaiting instructions',
+            error: null,
+            result: null,
+        }));
+        setAgentSwarm(initialAgents);
+        
+        // Use useEffect to kick off the cycle once the initial state is set
+    }, []);
+
+    useEffect(() => {
+        if (isSwarmRunning && agentSwarm.length > 0 && agentSwarm.every(a => a.status !== 'working')) {
+            runSwarmCycle();
+        }
+    }, [isSwarmRunning, agentSwarm, runSwarmCycle]);
+
 
     const handleSubmit = useCallback(async () => {
         if (!userInput.trim()) {
@@ -657,8 +710,8 @@ The JSON object must have this exact format:
             return;
         }
 
-        if (operatingMode === OperatingMode.Task) {
-            await processTask(userInput);
+        if (operatingMode === OperatingMode.Swarm) {
+            await startSwarmTask(userInput);
             return;
         }
 
@@ -682,38 +735,97 @@ The JSON object must have this exact format:
         } else {
             await processRequest(userInput, false);
         }
-    }, [userInput, processRequest, executeAction, operatingMode, processTask]);
+    }, [userInput, processRequest, executeAction, operatingMode, startSwarmTask]);
 
-    // New robust autonomous loop
+    // Create a ref to hold all dependencies for the autonomous loop.
+    // This prevents the loop's useEffect from re-firing on every state change.
+    const autonomousLoopDependencies = useRef({
+        logToAutonomousPanel,
+        autonomousActionLimit,
+        autonomousActionCount,
+        findToolByName,
+        selectedModel,
+        apiConfig,
+        temperature,
+        tools,
+        processRequest,
+        setAutonomousActionCount,
+        setLastActionDate,
+    });
+
+    // Keep the ref updated with the latest state and functions.
+    useEffect(() => {
+        autonomousLoopDependencies.current = {
+            logToAutonomousPanel,
+            autonomousActionLimit,
+            autonomousActionCount,
+            findToolByName,
+            selectedModel,
+            apiConfig,
+            temperature,
+            tools,
+            processRequest,
+            setAutonomousActionCount,
+            setLastActionDate,
+        };
+    }, [
+        logToAutonomousPanel,
+        autonomousActionLimit,
+        autonomousActionCount,
+        findToolByName,
+        selectedModel,
+        apiConfig,
+        temperature,
+        tools,
+        processRequest,
+        setAutonomousActionCount,
+        setLastActionDate,
+    ]);
+    
+    // The autonomous loop. It now ONLY depends on the on/off switch.
     useEffect(() => {
         if (!isAutonomousLoopRunning) {
             return;
         }
 
         const autonomousRunner = async () => {
-            logToAutonomousPanel("▶️ Starting autonomous loop...");
-            // FIX: Initialize with null. The loop is self-contained and shouldn't
-            // depend on the last action taken outside of it. This prevents re-triggering.
+            const { logToAutonomousPanel: initialLog } = autonomousLoopDependencies.current;
+            initialLog("▶️ Starting autonomous loop...");
+            
             let lastCycleResult: EnrichedAIResponse | null = null;
 
             while (isRunningRef.current) {
+                // Get the latest dependencies on each iteration from the ref.
+                const {
+                    logToAutonomousPanel,
+                    autonomousActionLimit,
+                    autonomousActionCount,
+                    findToolByName,
+                    selectedModel,
+                    apiConfig,
+                    temperature,
+                    tools,
+                    processRequest,
+                    setAutonomousActionCount,
+                    setLastActionDate,
+                } = autonomousLoopDependencies.current;
+
                 logToAutonomousPanel("🌀 Starting new cycle...");
                 
-                // Check daily limit at the start of each cycle
+                // Use a local variable for this cycle's count to handle the daily reset correctly.
+                let currentCountForThisCycle = autonomousActionCount;
                 const today = new Date().toDateString();
                 const lastDate = localStorage.getItem('lastActionDate') || '';
-                let currentCount = parseInt(localStorage.getItem('autonomousActionCount') || '0', 10);
-                let currentLimit = parseInt(localStorage.getItem('autonomousActionLimit') || '20', 10);
                 
                 if (lastDate !== today) {
                     logToAutonomousPanel("☀️ New day detected, resetting autonomous action counter.");
-                    currentCount = 0;
+                    currentCountForThisCycle = 0;
                     setAutonomousActionCount(0);
                     setLastActionDate(today);
                 }
                 
-                if (currentLimit !== -1 && currentCount >= currentLimit) {
-                    logToAutonomousPanel(`🛑 Daily limit of ${currentLimit} actions reached. Stopping loop.`);
+                if (autonomousActionLimit !== -1 && currentCountForThisCycle >= autonomousActionLimit) {
+                    logToAutonomousPanel(`🛑 Daily limit of ${autonomousActionLimit} actions reached. Stopping loop.`);
                     setIsAutonomousLoopRunning(false);
                     break;
                 }
@@ -730,7 +842,7 @@ The JSON object must have this exact format:
                         error: lastCycleResult.executionError
                     }, null, 2) : null;
                     
-                    const remainingActions = currentLimit === -1 ? Infinity : currentLimit - currentCount;
+                    const remainingActions = autonomousActionLimit === -1 ? Infinity : autonomousActionLimit - currentCountForThisCycle;
 
                     const { goal } = await aiService.generateGoal(
                         goalGenTool.implementationCode, selectedModel, apiConfig, temperature, tools, remainingActions, lastActionResultString
@@ -756,15 +868,15 @@ The JSON object must have this exact format:
             }
 
             if (!isRunningRef.current) {
-                logToAutonomousPanel("⏹️ Autonomous loop stopped.");
+                // Get the final logger in case it was updated.
+                const { logToAutonomousPanel: finalLog } = autonomousLoopDependencies.current;
+                finalLog("⏹️ Autonomous loop stopped.");
             }
         };
 
         autonomousRunner();
-    // FIX: Removed 'lastResponse' from the dependency array. The loop's state
-    // is now self-contained within the autonomousRunner function, preventing the
-    // useEffect hook from re-firing after each action and launching concurrent loops.
-    }, [isAutonomousLoopRunning, logToAutonomousPanel, autonomousActionLimit, findToolByName, selectedModel, apiConfig, temperature, tools, processRequest, setAutonomousActionCount, setLastActionDate, setIsAutonomousLoopRunning]);
+    // The ONLY dependency is the on/off switch, which prevents the race condition.
+    }, [isAutonomousLoopRunning]);
     
     const handleToggleAutonomousLoop = () => {
         if(operatingMode !== OperatingMode.Autonomous) {
@@ -805,10 +917,12 @@ The JSON object must have this exact format:
         proposedAction, handleApproveAction, handleRejectAction,
         isAutonomousLoopRunning, handleToggleAutonomousLoop, autonomousLog, handleClearLog,
         isTaskLoopRunning, handleStopTask,
+        agentSwarm, isSwarmRunning, handleStopSwarm,
     };
 
     const isHuggingFaceModel = selectedModel.provider === ModelProvider.HuggingFace;
     const showRemoteApiConfig = !isHuggingFaceModel && ['GoogleAI', 'OpenAI_API', 'Ollama'].includes(selectedModel.provider);
+    const showSwarmPanel = operatingMode === OperatingMode.Swarm && agentSwarm.length > 0;
 
     return (
         <div className="min-h-screen bg-gray-900 text-white flex flex-col p-4 sm:p-6 lg:p-8">
@@ -823,11 +937,17 @@ The JSON object must have this exact format:
                    <UIToolRunner tool={getUITool('Autonomous Action Limiter')} props={uiProps} />
                 </div>
                 
-                {(operatingMode === OperatingMode.Autonomous || operatingMode === OperatingMode.Task && (isTaskLoopRunning || autonomousLog.length > 0)) && (
+                 {operatingMode === OperatingMode.Autonomous && (
                     <div className="w-full max-w-7xl mx-auto">
                         <UIToolRunner tool={getUITool('Autonomous Control Panel')} props={uiProps} />
                     </div>
                 )}
+                 {showSwarmPanel && (
+                    <div className="w-full max-w-7xl mx-auto">
+                        <UIToolRunner tool={getUITool('Agent Swarm Display')} props={uiProps} />
+                    </div>
+                )}
+
 
                 <div className="flex flex-col gap-4 mt-8">
                   <UIToolRunner tool={getUITool('AI Model Selector')} props={uiProps} />

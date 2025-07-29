@@ -34,26 +34,24 @@ export const agentControlsTools: LLMTool[] = [
       name: 'Operating Mode Selector',
       description: "Controls the agent's level of autonomy.",
       category: 'UI Component',
-      version: 3,
+      version: 4,
       parameters: [
         { name: 'operatingMode', type: 'string', description: 'The current operating mode.', required: true },
         { name: 'setOperatingMode', type: 'string', description: 'Function to change the operating mode.', required: true },
         { name: 'isLoading', type: 'boolean', description: 'Whether the app is currently processing.', required: true },
         { name: 'proposedAction', type: 'object', description: 'Any pending action requires user approval.', required: false },
         { name: 'isAutonomousLoopRunning', type: 'boolean', description: 'Whether the autonomous loop is running.', required: true },
-        { name: 'isTaskLoopRunning', type: 'boolean', description: 'Whether the task loop is running.', required: true },
+        { name: 'isSwarmRunning', type: 'boolean', description: 'Whether the swarm is running.', required: true },
       ],
       implementationCode: `
         const modes = [
           { id: 'COMMAND', name: 'Command', description: 'Agent acts only on direct user instructions.' },
           { id: 'ASSIST', name: 'Assist', description: 'Agent suggests actions and requires user approval.' },
-          { id: 'TASK', name: 'Task', description: 'Agent works autonomously to complete the current user task, then stops.' },
-          { id: 'AUTONOMOUS', name: 'Autonomous', description: 'Agent acts on its own to achieve long-term goals.' },
+          { id: 'SWARM', name: 'Swarm', description: 'A resilient agent collective works on a single task.' },
+          { id: 'AUTONOMOUS', name: 'Autonomous', description: 'A single agent acts on its own to achieve long-term goals.' },
         ];
         
-        // This is imported from types.ts, but we need it available in the scope of the dynamic component
-        const OperatingMode = { Command: 'COMMAND', Assist: 'ASSIST', Task: 'TASK', Autonomous: 'AUTONOMOUS' };
-        const isLoopRunning = isAutonomousLoopRunning || isTaskLoopRunning;
+        const isLoopRunning = isAutonomousLoopRunning || isSwarmRunning;
 
         return (
           <div className="bg-slate-800/50 border border-slate-700/80 rounded-lg p-4 h-full flex flex-col">
@@ -345,6 +343,78 @@ export const agentControlsTools: LLMTool[] = [
               >
                 {isLoading ? 'Executing...' : 'Approve'}
               </button>
+          </div>
+        </div>
+      );
+    `
+  },
+    {
+    id: 'agent_swarm_display',
+    name: 'Agent Swarm Display',
+    description: 'Displays the status of all agents in the swarm.',
+    category: 'UI Component',
+    version: 1,
+    parameters: [
+      { name: 'agentSwarm', type: 'array', description: 'The array of agent workers.', required: true },
+      { name: 'isSwarmRunning', type: 'boolean', description: 'Whether the swarm task is active.', required: true },
+      { name: 'handleStopSwarm', type: 'string', description: 'Function to stop the swarm task.', required: true },
+    ],
+    implementationCode: `
+      const getStatusStyles = (status) => {
+        switch (status) {
+          case 'working': return { bg: 'bg-blue-900/50', border: 'border-blue-500', text: 'text-blue-300', icon: '⚙️' };
+          case 'succeeded': return { bg: 'bg-green-900/50', border: 'border-green-500', text: 'text-green-300', icon: '✅' };
+          case 'failed': return { bg: 'bg-orange-900/50', border: 'border-orange-500', text: 'text-orange-300', icon: '⚠️' };
+          case 'terminated': return { bg: 'bg-red-900/70', border: 'border-red-600', text: 'text-red-400', icon: '❌' };
+          case 'idle':
+          default:
+            return { bg: 'bg-gray-800/60', border: 'border-gray-600', text: 'text-gray-400', icon: '💤' };
+        }
+      };
+
+      return (
+        <div className="bg-slate-800/50 border border-slate-700/80 rounded-lg p-4 mt-4">
+          <div className="flex flex-col sm:flex-row justify-between sm:items-center gap-3 mb-4">
+              <div>
+                  <h3 className="text-md font-semibold text-slate-200">Agent Swarm Monitor</h3>
+                  <p className="text-sm text-slate-400">Observing the agent collective as they work on the task.</p>
+              </div>
+              {isSwarmRunning && (
+                <button
+                    onClick={handleStopSwarm}
+                    className="font-bold py-2 px-4 rounded-lg transition-colors flex-shrink-0 w-full sm:w-auto bg-red-600 hover:bg-red-700 text-white"
+                >
+                    Stop Swarm
+                </button>
+              )}
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            {agentSwarm.map(agent => {
+              const styles = getStatusStyles(agent.status);
+              return (
+                <div key={agent.id} className={\`p-3 rounded-lg border \${styles.bg} \${styles.border} transition-all duration-500\`}>
+                  <div className="flex justify-between items-center mb-2">
+                    <h4 className="font-bold text-white">{agent.id.charAt(0).toUpperCase() + agent.id.slice(1)}</h4>
+                    <span className={\`text-xs font-semibold px-2 py-1 rounded-full \${styles.bg} \${styles.text}\`}>
+                       {styles.icon} {agent.status.toUpperCase()}
+                    </span>
+                  </div>
+                  <div className="text-xs space-y-2">
+                    <p className="text-gray-300 h-10 overflow-hidden">
+                      <span className="font-semibold text-gray-400">Last Action: </span>
+                      {agent.lastAction || 'None'}
+                    </p>
+                    {agent.error && (
+                      <p className="text-red-400 h-10 overflow-hidden">
+                        <span className="font-semibold text-red-500">Error: </span>
+                        {agent.error}
+                      </p>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
           </div>
         </div>
       );

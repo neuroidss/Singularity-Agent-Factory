@@ -6,7 +6,7 @@ export const displayTools: LLMTool[] = [
     name: 'User Input Form',
     description: 'Renders the main textarea for user input and the submit button.',
     category: 'UI Component',
-    version: 4,
+    version: 5,
     parameters: [
         {name: 'userInput', type: 'string', description: 'Current value of the input', required: true},
         {name: 'setUserInput', type: 'string', description: 'Function to update the input value', required: true},
@@ -14,7 +14,7 @@ export const displayTools: LLMTool[] = [
         {name: 'isLoading', type: 'boolean', description: 'Whether the app is processing', required: true},
         { name: 'proposedAction', type: 'object', description: 'Any pending action requires user approval.', required: false },
         { name: 'isAutonomousLoopRunning', type: 'boolean', description: 'Whether the autonomous loop is running.', required: true },
-        { name: 'isTaskLoopRunning', type: 'boolean', description: 'Whether the task loop is running.', required: true },
+        { name: 'isSwarmRunning', type: 'boolean', description: 'Whether the swarm is running.', required: true },
         { name: 'operatingMode', type: 'string', description: 'The current operating mode.', required: true },
     ],
     implementationCode: `
@@ -25,19 +25,21 @@ export const displayTools: LLMTool[] = [
         </svg>
       );
       
-      const OperatingMode = { Command: 'COMMAND', Assist: 'ASSIST', Task: 'TASK', Autonomous: 'AUTONOMOUS' };
-      const isDisabled = isLoading || !!proposedAction || isAutonomousLoopRunning || isTaskLoopRunning;
+      const OperatingMode = { Command: 'COMMAND', Assist: 'ASSIST', Task: 'TASK', Autonomous: 'AUTONOMOUS', Swarm: 'SWARM' };
+      const isDisabled = isLoading || !!proposedAction || isAutonomousLoopRunning || isSwarmRunning;
       
       let buttonText = 'Submit';
       if (isLoading) {
           buttonText = 'Processing...';
       } else if (operatingMode === OperatingMode.Task) {
           buttonText = 'Start Task';
+      } else if (operatingMode === OperatingMode.Swarm) {
+          buttonText = 'Start Swarm Task';
       }
       
       let placeholderText = "Describe a task, create a tool, or change the UI...";
       if(isAutonomousLoopRunning) placeholderText = "Autonomous loop is active...";
-      if(isTaskLoopRunning) placeholderText = "Task is running...";
+      if(isSwarmRunning) placeholderText = "Swarm task is running...";
       if(!!proposedAction) placeholderText = "Waiting for user action on suggestion...";
 
       return (
