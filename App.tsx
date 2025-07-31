@@ -594,7 +594,7 @@ The JSON object must have this exact format:
             const coreLogicTool = findToolByName('Core Agent Logic');
             if (!coreLogicTool && !systemInstructionOverride) throw new Error("Critical error: 'Core Agent Logic' tool not found and no override provided.");
             
-            const mandatoryToolNames = ['Core Agent Logic', 'Tool Creator', 'Tool Improver', 'Tool Self-Tester', 'Tool Verifier', 'Task Complete'];
+            const mandatoryToolNames = ['Core Agent Logic', 'Tool Creator', 'Tool Improver', 'Tool Self-Tester', 'Tool Verifier', 'Task Complete', 'Refuse Task'];
             const relevantToolNames = new Set([...selectedToolNames, ...mandatoryToolNames]);
             const relevantTools = Array.from(relevantToolNames).map(name => findToolByName(name)).filter((t): t is LLMTool => !!t);
             

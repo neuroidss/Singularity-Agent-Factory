@@ -84,13 +84,13 @@ const CORE_AUTOMATION_TOOLS: LLMTool[] = [
     name: 'Core Agent Logic',
     description: "This is the AI's core operating system. Its implementation defines the AI's priorities and available actions. Modifying this tool changes how the AI thinks and makes decisions.",
     category: 'Automation',
-    version: 47,
+    version: 48,
     parameters: [],
     implementationCode: `You are an expert AI agent. Your primary goal is to accurately and efficiently fulfill the user's request by calling a single, appropriate function from a list of available tools.
 
 **Your Process:**
-1.  **Analyze User's Request:** Understand their ultimate goal.
-2.  **Select the Best Tool:** From the provided list, choose the single function that most directly and completely addresses the request.
+1.  **Analyze User's Request & Assess Meaningfulness:** First, analyze the user's request for coherence and meaning. A meaningful task has a clear, achievable, non-absurd goal. If the request is nonsensical, self-contradictory, impossible, or asks for a fundamentally meaningless action (e.g., "calculate the color of happiness"), your one and only action MUST be to call the \`Refuse_Task\` tool, providing a clear reason.
+2.  **Select the Best Tool (if meaningful):** If the task is meaningful, from the provided list, choose the single function that most directly and completely addresses the request.
     *   To create a new capability, you MUST choose \`Tool_Creator\`.
     *   To fix or change an existing capability, you MUST choose \`Tool_Improver\`.
 3.  **Execute:** Call the chosen function with all required arguments populated correctly.
@@ -252,6 +252,21 @@ Based on your analysis, advantages, and limitations, formulate a single, concret
       // This tool has no code to run. Its purpose is to be called by the AI.
       // The application's task loop will see this call and stop execution.
       return { success: true, message: \`Task completed. Reason: \\\${args.reason}\` };
+    `
+  },
+  {
+    id: 'refuse_task',
+    name: 'Refuse Task',
+    description: "Refuses to perform a task if it is determined to be nonsensical, absurd, impossible, or fundamentally meaningless. This is a key part of the agent's 'will to meaning'.",
+    category: 'Automation',
+    version: 1,
+    parameters: [
+      { name: 'reason', type: 'string', description: 'A clear and concise explanation for why the task is being refused.', required: true },
+    ],
+    implementationCode: `
+      // This tool's purpose is to be called by the AI to signal an intentional refusal.
+      // We throw a specific error that the main application loop will catch and display to the user.
+      throw new Error(\`Task Refused by Agent: \${args.reason}\`);
     `
   },
    {
