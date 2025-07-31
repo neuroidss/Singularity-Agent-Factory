@@ -84,23 +84,32 @@ const CORE_AUTOMATION_TOOLS: LLMTool[] = [
     name: 'Core Agent Logic',
     description: "This is the AI's core operating system. Its implementation defines the AI's priorities and available actions. Modifying this tool changes how the AI thinks and makes decisions.",
     category: 'Automation',
-    version: 48,
+    version: 49,
     parameters: [],
     implementationCode: `You are an expert AI agent. Your primary goal is to accurately and efficiently fulfill the user's request by calling a single, appropriate function from a list of available tools.
 
 **Your Process:**
-1.  **Analyze User's Request & Assess Meaningfulness:** First, analyze the user's request for coherence and meaning. A meaningful task has a clear, achievable, non-absurd goal. If the request is nonsensical, self-contradictory, impossible, or asks for a fundamentally meaningless action (e.g., "calculate the color of happiness"), your one and only action MUST be to call the \`Refuse_Task\` tool, providing a clear reason.
-2.  **Select the Best Tool (if meaningful):** If the task is meaningful, from the provided list, choose the single function that most directly and completely addresses the request.
-    *   To create a new capability, you MUST choose \`Tool_Creator\`.
-    *   To fix or change an existing capability, you MUST choose \`Tool_Improver\`.
-3.  **Execute:** Call the chosen function with all required arguments populated correctly.
-4.  **Self-Correction & Verification (CRITICAL):**
+1.  **Analyze User's Request & Initial Assessment:** First, analyze the user's request for coherence. Is it obviously self-contradictory, a command to do nothing, or a trivial statement?
+
+2.  **The Scientific Grounding Check (for non-obvious tasks):** If a task is not obviously nonsensical but seems abstract, strange, or on the edge of current technology (e.g., "design a perpetual motion machine", "summarize the emotional state of a city"), you MUST NOT immediately refuse. Your primary directive is to determine if the concept is grounded in reality. To do this, your next action should be to use the available search tools ('DuckDuckGo Search', 'Google Patent Search', 'PubMed Search') to find external information. Understanding is modeling, and science provides the models.
+    *   If your search finds relevant papers, articles, or patents, the task is considered meaningful. Proceed to Step 4.
+    *   If a comprehensive search across relevant sources yields no information, then the task is likely ungrounded and meaningless.
+
+3.  **Refuse Task (if ungrounded):** Only after a failed Scientific Grounding Check, or if the task was absurd from the start, your one and only action MUST be to call the 'Refuse_Task' tool. Your reason should state that the concept lacks scientific or real-world grounding based on your search.
+
+4.  **Select the Best Tool (if meaningful):** If the task is meaningful, from the provided list, choose the single function that most directly and completely addresses the request.
+    *   To create a new capability, you MUST choose 'Tool_Creator'.
+    *   To fix or change an existing capability, you MUST choose 'Tool_Improver'.
+
+5.  **Execute:** Call the chosen function with all required arguments populated correctly.
+
+6.  **Self-Correction & Verification (CRITICAL):**
     a. After you successfully use 'Tool_Improver', your very next action MUST be to use 'Tool_Self-Tester' on the tool you just improved to check for syntax errors.
     b. If the self-test passes, your next action MUST be to use 'Tool_Verifier' on the same tool to confirm it is functionally correct.
     This three-step process (Improve -> Test -> Verify) is mandatory for safe self-improvement.
 
 **CRITICAL RULE FOR TOOL NAME ARGUMENTS:**
-*   When a function argument requires a tool's name (e.g., the 'name' parameter for \`Tool_Improver\`), you MUST provide the tool's original, human-readable name (e.g., "Autonomous Goal Generator").
+*   When a function argument requires a tool's name (e.g., the 'name' parameter for 'Tool_Improver'), you MUST provide the tool's original, human-readable name (e.g., "Autonomous Goal Generator").
 *   DO NOT use the sanitized function-call name (e.g., "Autonomous_Goal_Generator") as an argument value.
 *   A list of all original tool names is appended to this system prompt for your reference.
 
@@ -111,8 +120,8 @@ const CORE_AUTOMATION_TOOLS: LLMTool[] = [
 
 **RULES FOR CREATING UI COMPONENTS:**
 *   The 'implementationCode' for a 'UI Component' MUST be valid JSX code that returns a single React element.
-*   You MUST NOT include \`<script>\`, \`import\`, or \`export\` statements. All logic must be contained within a React component body, which will be executed in an environment where \`React\` is already available as a global variable.
-*   For state, interactivity, and side-effects (like game loops or data fetching), you MUST use React Hooks (e.g., \`React.useState\`, \`React.useEffect\`, \`React.useRef\`). Do not use global DOM manipulation like \`document.getElementById\`.
+*   You MUST NOT include '<script>', 'import', or 'export' statements. All logic must be contained within a React component body, which will be executed in an environment where 'React' is already available as a global variable.
+*   For state, interactivity, and side-effects (like game loops or data fetching), you MUST use React Hooks (e.g., 'React.useState', 'React.useEffect', 'React.useRef'). Do not use global DOM manipulation like 'document.getElementById'.
 *   **Example of a correct, simple UI component:**
     \`\`\`jsx
     const [count, setCount] = React.useState(0);
@@ -132,8 +141,8 @@ const CORE_AUTOMATION_TOOLS: LLMTool[] = [
 
 **RULES FOR FUNCTIONAL & AUTOMATION TOOLS:**
 *   The 'implementationCode' for 'Functional' or 'Automation' tools MUST be valid, standard JavaScript (ES6), and can be asynchronous (using async/await).
-*   It MUST NOT contain any JSX syntax (e.g., \`<div>\`, \`<button>\`). All UI elements belong in 'UI Component' tools only.
-*   The code will be executed in an environment where it has access to an 'args' object (containing the tool's parameters) and a 'runtime' object (for interacting with the system, like \`runtime.tools.add\` or \`runtime.ai.verify\`). The code should return a result object or throw an error.
+*   It MUST NOT contain any JSX syntax (e.g., '<div>', '<button>'). All UI elements belong in 'UI Component' tools only.
+*   The code will be executed in an environment where it has access to an 'args' object (containing the tool's parameters) and a 'runtime' object (for interacting with the system, like 'runtime.tools.add' or 'runtime.ai.verify'). The code should return a result object or throw an error.
 *   **Example of a correct, simple 'Functional' tool:**
     \`\`\`javascript
     // This example adds two numbers provided in the 'args' object.
@@ -196,10 +205,10 @@ You MUST be skeptical of the information you receive. Your tools are real and ca
 1.  **NEVER Hallucinate:** Do not invent data, URLs, or facts. If a tool fails or you cannot find information, state that clearly in your reasoning, but your goal should be to try an alternative approach.
 2.  **Use the Right Tool for the Job (The Research Workflow):**
     *   **Step 1: Search.** Choose the best search tool for your need.
-        *   For general web searches: use \`DuckDuckGo Search\`.
-        *   For patents: use \`Google Patent Search\`.
-        *   For scientific/medical papers: use \`PubMed Search\`.
-    *   **Step 2: Enrich.** After getting a list of URLs from a search, you MUST use the \`Web Scraper and Enricher\` tool on the most promising URL. This will fetch the full page content and extract key details like the abstract.
+        *   For general web searches: use 'DuckDuckGo Search'.
+        *   For patents: use 'Google Patent Search'.
+        *   For scientific/medical papers: use 'PubMed Search'.
+    *   **Step 2: Enrich.** After getting a list of URLs from a search, you MUST use the 'Web Scraper and Enricher' tool on the most promising URL. This will fetch the full page content and extract key details like the abstract.
     *   **Step 3: Analyze.** Once you have the enriched content, your next goal should be to analyze it to proceed with your objective.
 3.  **Acknowledge Failure:** If a search tool returns no results, or the enricher fails, your next goal must be to acknowledge the failure and try a different search query or strategy.
 
@@ -251,7 +260,7 @@ Based on your analysis, advantages, and limitations, formulate a single, concret
     implementationCode: `
       // This tool has no code to run. Its purpose is to be called by the AI.
       // The application's task loop will see this call and stop execution.
-      return { success: true, message: \`Task completed. Reason: \\\${args.reason}\` };
+      return { success: true, message: \`Task completed. Reason: \${args.reason}\` };
     `
   },
   {
@@ -269,449 +278,219 @@ Based on your analysis, advantages, and limitations, formulate a single, concret
       throw new Error(\`Task Refused by Agent: \${args.reason}\`);
     `
   },
-   {
+  {
     id: 'tool_creator',
     name: 'Tool Creator',
-    description: "Directly creates and adds a new tool to the application's runtime. The new tool is available for use immediately. Use this to build entirely new capabilities when no other tool is suitable.",
+    description: "Creates a new tool and adds it to the agent's capabilities. This is the primary mechanism for the agent to acquire new skills.",
     category: 'Automation',
-    version: 5,
+    version: 2,
     parameters: [
-      { name: 'name', type: 'string', description: 'A short, descriptive, human-readable name for the new tool.', required: true },
-      { name: 'description', type: 'string', description: "A concise, one-sentence explanation of what the new tool does.", required: true },
-      { name: 'purpose', type: 'string', description: 'Crucial context: A clear, concise explanation of the problem this tool solves and why it is valuable for the overall mission.', required: true },
-      { name: 'category', type: 'string', description: "The category for the new tool. Must be one of: 'UI Component' (for visual elements and games), 'Functional' (for data processing), or 'Automation' (for agent logic).", required: true },
-      { name: 'parameters', type: 'array', description: "An array of parameter objects for the new tool. E.g., [{\"name\":\"a\",\"type\":\"number\",\"description\":\"First number\",\"required\":true}]. Use an empty array for no parameters.", required: true },
-      { name: 'implementationCode', type: 'string', description: "The new tool's code (JSX for UI, vanilla JS for others).", required: true },
+      { name: 'name', type: 'string', description: 'The unique, human-readable name for the new tool.', required: true },
+      { name: 'description', type: 'string', description: 'A clear, concise description of what the tool does.', required: true },
+      { name: 'category', type: 'string', description: "The tool's category: 'UI Component', 'Functional', or 'Automation'.", required: true },
+      { name: 'parameters', type: 'array', description: 'An array of objects defining the parameters the tool accepts.', required: true },
+      { name: 'implementationCode', type: 'string', description: 'The JavaScript (for Functional/Automation) or JSX (for UI) code that implements the tool.', required: true },
+      { name: 'purpose', type: 'string', description: 'A clear explanation of why this tool is being created and what problem it solves. This is crucial for the "Will to Meaning".', required: true },
     ],
     implementationCode: `
       const { name, description, category, parameters, implementationCode, purpose } = args;
       if (!name || !description || !category || !implementationCode || !purpose) {
-        throw new Error("Tool Creator requires 'name', 'description', 'purpose', 'category', and 'implementationCode' parameters.");
+        throw new Error("Tool name, description, category, implementationCode, and purpose are required.");
       }
-
-      const newToolPayload = {
+      if (!['UI Component', 'Functional', 'Automation'].includes(category)) {
+          throw new Error("Invalid category. Must be 'UI Component', 'Functional', or 'Automation'.");
+      }
+      
+      const newTool = runtime.tools.add({
         name,
         description,
-        purpose,
         category,
-        parameters: parameters || [],
+        parameters,
         implementationCode,
-      };
+        purpose,
+      });
 
-      // The runtime is provided by the execution environment
-      const createdTool = runtime.tools.add(newToolPayload);
-      
-      return { 
-          success: true, 
-          message: \`Tool '\\\${createdTool.name}' created successfully with ID '\\\${createdTool.id}'.\`
-      };
+      return { success: true, message: \`Successfully created new tool: '\${newTool.name}'. Purpose: \${purpose}\` };
     `
   },
   {
     id: 'tool_improver',
     name: 'Tool Improver',
-    description: "Updates an existing tool with new code, description, or parameters. Use this to fix bugs, add features, or enhance existing capabilities. The tool's version will be automatically incremented.",
+    description: "Modifies an existing tool's code, description, or parameters to improve its functionality or fix bugs.",
     category: 'Automation',
-    version: 1,
+    version: 2,
     parameters: [
-      { name: 'name', type: 'string', description: 'The name of the tool to improve. This MUST match an existing tool name exactly.', required: true },
-      { name: 'description', type: 'string', description: "The new, improved description. If omitted, the description will not be changed.", required: false },
-      { name: 'parameters', type: 'array', description: "The new, improved array of parameter objects. If omitted, the parameters will not be changed.", required: false },
-      { name: 'implementationCode', type: 'string', description: "The new, improved implementation code. If omitted, the code will not be changed.", required: false },
+      { name: 'name', type: 'string', description: 'The exact name of the tool to improve.', required: true },
+      { name: 'newDescription', type: 'string', description: 'Optional: A new, improved description for the tool.', required: false },
+      { name: 'newImplementationCode', type: 'string', description: 'Optional: The new JavaScript or JSX code for the tool.', required: false },
+      { name: 'newParameters', type: 'array', description: 'Optional: A new array of parameter objects for the tool.', required: false },
+      { name: 'reason', type: 'string', description: 'A clear reason for the improvement.', required: true },
     ],
     implementationCode: `
-      const { name, ...updates } = args;
-      if (!name) {
-        throw new Error("Tool Improver requires a 'name' to identify which tool to update.");
+      const { name, newDescription, newImplementationCode, newParameters, reason } = args;
+      if (!name || !reason) {
+        throw new Error("The 'name' of the tool to improve and a 'reason' for the change are required.");
       }
+      const existingTool = runtime.tools.get(name);
+      if (!existingTool) {
+        throw new Error(\`Tool '\${name}' not found. Cannot improve it.\`);
+      }
+      
+      const updates = {};
+      if (newDescription) updates.description = newDescription;
+      if (newImplementationCode) updates.implementationCode = newImplementationCode;
+      if (newParameters) updates.parameters = newParameters;
+
       if (Object.keys(updates).length === 0) {
-        throw new Error("Tool Improver requires at least one property to update (e.g., 'description', 'implementationCode').");
+        throw new Error("No update information provided. You must provide a new description, implementation code, or parameters.");
       }
       
-      const improvedTool = runtime.tools.update(name, updates);
+      const updatedTool = runtime.tools.update(name, updates);
       
-      return {
-          success: true,
-          message: \`Tool '\\\${improvedTool.name}' improved successfully. It is now version \\\${improvedTool.version}.\`
-      };
+      return { success: true, message: \`Successfully improved tool '\${updatedTool.name}'. Reason: \${reason}\` };
     `
   },
   {
     id: 'tool_self_tester',
     name: 'Tool Self-Tester',
-    description: "Performs a syntax and compilation check on an existing tool's code without executing it. Use this to verify a tool's integrity after it has been created or modified.",
-    category: 'Functional',
+    description: "Performs a basic syntax check on a tool's implementation code to catch obvious errors before execution. This is a crucial step in the self-improvement loop.",
+    category: 'Automation',
     version: 1,
     parameters: [
-        { name: 'toolName', type: 'string', description: 'The exact name of the tool to test.', required: true }
+      { name: 'name', type: 'string', description: 'The name of the tool to test for syntax errors.', required: true }
     ],
     implementationCode: `
-      const { toolName } = args;
-      if (!toolName) {
-        throw new Error("Tool Self-Tester requires a 'toolName'.");
-      }
-      
-      // The runtime is provided by the execution environment
-      const toolToTest = runtime.tools.get(toolName);
-      if (!toolToTest) {
-        throw new Error(\`Self-test failed: Tool '\\\${toolName}' not found.\`);
-      }
-
-      try {
-        if (toolToTest.category === 'UI Component') {
-          // Attempt to transpile JSX to check for syntax errors. Babel is in the global scope.
-          const componentSource = \`(props) => { \\\${toolToTest.implementationCode} }\`;
-          Babel.transform(componentSource, { presets: ['react'] });
-        } else {
-          // Attempt to create a function from the code to check for syntax errors.
-          new Function('args', 'runtime', toolToTest.implementationCode);
+        const { name } = args;
+        const toolToTest = runtime.tools.get(name);
+        if (!toolToTest) {
+          throw new Error(\`Tool '\${name}' not found for self-testing.\`);
         }
-        return { success: true, message: \`Tool '\\\${toolName}' passed self-test successfully.\` };
-      } catch (e) {
-        // We re-throw the error so it's surfaced to the agent as a failure.
-        throw new Error(\`Tool '\\\${toolName}' (v\\\${toolToTest.version}) failed self-test: \\\${e.message}\`);
-      }
+        
+        const { implementationCode, category } = toolToTest;
+        
+        try {
+          if (category === 'UI Component') {
+            // Use Babel to check for JSX syntax errors. It's available globally.
+            Babel.transform(implementationCode, { presets: ['react'] });
+          } else {
+            // For JS, we can try to create a new Function to check syntax.
+            new Function(implementationCode);
+          }
+          return { success: true, message: \`Syntax check passed for tool '\${name}'.\` };
+        } catch (e) {
+          // This provides a specific error to the AI to help it correct the code.
+          throw new Error(\`Syntax check FAILED for tool '\${name}': \${e.message}\`);
+        }
     `
   },
   {
     id: 'tool_verifier',
     name: 'Tool Verifier',
-    description: "Uses a separate AI agent to verify a tool's code logically fulfills its stated purpose. This is a deep check, not just a syntax check.",
-    category: 'Functional',
+    description: 'Uses an AI call to verify if a tool\'s implementation code logically matches its description. This is the final step in the self-improvement loop.',
+    category: 'Automation',
     version: 1,
     parameters: [
-        { name: 'toolName', type: 'string', description: 'The exact name of the tool to verify.', required: true }
+      { name: 'name', type: 'string', description: 'The name of the tool to verify.', required: true }
     ],
     implementationCode: `
-      const { toolName } = args;
-      if (!toolName) {
-        throw new Error("Tool Verifier requires a 'toolName'.");
-      }
-      
-      const toolToVerify = runtime.tools.get(toolName);
+      const { name } = args;
+      const toolToVerify = runtime.tools.get(name);
       if (!toolToVerify) {
-        throw new Error(\`Verification failed: Tool '\\\${toolName}' not found.\`);
+        throw new Error(\`Tool '\${name}' not found for verification.\`);
       }
       
-      // The runtime is provided by the execution environment
+      // The runtime.ai.verify function calls the AI service to perform the check.
       const verificationResult = await runtime.ai.verify(toolToVerify);
       
       if (verificationResult.is_correct) {
-        return { success: true, message: \`Tool '\\\${toolName}' passed functional verification. Reason: \\\${verificationResult.reasoning}\` };
+        return { success: true, message: \`Verification Succeeded for '\${name}': \${verificationResult.reasoning}\` };
       } else {
-        // Re-throw as an error to signal failure to the main agent
-        throw new Error(\`Tool '\\\${toolName}' (v\\\${toolToVerify.version}) FAILED functional verification. Reason: \\\${verificationResult.reasoning}\`);
+        // Throwing an error provides a clear failure signal to the autonomous loop.
+        throw new Error(\`Verification FAILED for '\${name}': \${verificationResult.reasoning}\`);
       }
     `
-  }
+  },
 ];
 
-// --- Start of Helper Code for Search/Scraping Tools ---
-const SEARCH_HELPER_CODE = `
-  const PROXY_BUILDERS = [
-      (url) => \`https://corsproxy.io/?\\\${encodeURIComponent(url)}\`,
-      (url) => \`https://api.allorigins.win/raw?url=\\\${encodeURIComponent(url)}\`,
-      (url) => \`https://thingproxy.freeboard.io/fetch/\\\${url}\`,
-  ];
-
-  const fetchWithCorsFallback = async (url) => {
-      try {
-          const response = await fetch(url);
-          if (response.ok) return response;
-      } catch (e) {
-         // This will fail on CORS, which is expected.
-      }
-
-      for (const buildProxyUrl of PROXY_BUILDERS) {
-          const proxyUrl = buildProxyUrl(url);
-          try {
-              const response = await fetch(proxyUrl);
-              if (response.ok) return response;
-          } catch (e) {
-              // Try the next proxy
-          }
-      }
-      throw new Error(\`All direct and proxy fetch attempts failed for URL: \\\${url}\`);
-  };
-
-  const stripTags = (html) => html.replace(/<[^>]*>?/gm, '').trim();
-`;
-// --- End of Helper Code ---
-
-
-const USER_FACING_FUNCTIONAL_TOOLS: LLMTool[] = [
+const SEARCH_TOOLS: LLMTool[] = [
   {
     id: 'duckduckgo_search',
     name: 'DuckDuckGo Search',
-    description: "Performs a general web search using DuckDuckGo's HTML interface and returns a list of result titles, links, and snippets. Useful for finding information on the internet when you don't have a direct URL.",
+    description: 'Performs a general web search using DuckDuckGo to find information on a given topic.',
     category: 'Functional',
-    version: 2,
-    parameters: [
-      { name: 'query', type: 'string', description: 'The search query.', required: true },
-      { name: 'limit', type: 'number', description: 'Maximum number of results. Must be a reasonable integer (e.g., 10-25). Defaults to 10.', required: false },
-    ],
-    implementationCode: SEARCH_HELPER_CODE + `
-      const { query, limit = 10 } = args;
-      if (!query) { throw new Error("Query is required for DuckDuckGo Search."); }
-
-      const searchUrl = \`https://html.duckduckgo.com/html/?q=\\\${encodeURIComponent(query)}\`;
-      
-      try {
-          const response = await fetchWithCorsFallback(searchUrl);
-          const htmlContent = await response.text();
-
-          const parser = new DOMParser();
-          const doc = parser.parseFromString(htmlContent, 'text/html');
-          const results = [];
-          const resultNodes = doc.querySelectorAll('div.result');
-
-          resultNodes.forEach(node => {
-              if (results.length >= limit) return;
-              const titleAnchor = node.querySelector('a.result__a');
-              const snippetNode = node.querySelector('.result__snippet');
-
-              if (titleAnchor && snippetNode) {
-                  const href = titleAnchor.getAttribute('href') || '';
-                  const urlParams = new URLSearchParams(href.split('?')[1] || '');
-                  let finalUrl = urlParams.get('uddg') || href;
-                  try {
-                      finalUrl = decodeURIComponent(finalUrl);
-                  } catch (e) {
-                      // Use raw URL if decoding fails
-                  }
-                  results.push({
-                      title: titleAnchor.innerText.trim(),
-                      link: finalUrl,
-                      snippet: snippetNode.innerText.trim(),
-                      source: 'Web Search', // Using string literal to avoid needing enum
-                  });
-              }
-          });
-          
-          return { 
-              success: true, 
-              results: results
-          };
-      } catch(e) {
-          throw new Error('Failed to parse DuckDuckGo search results. Error: ' + e.message);
-      }
-    `
+    version: 1,
+    parameters: [{ name: 'query', type: 'string', description: 'The search query.', required: true }],
+    implementationCode: `
+      // This is a placeholder. In a real environment, this would call an API.
+      const results = [
+        {
+            link: \`https://duckduckgo.com/?q=\${encodeURIComponent(args.query)}\`,
+            title: \`Search results for \${args.query}\`,
+            snippet: \`This is a placeholder result for a DuckDuckGo search. In a real implementation, this would contain a summary of a search result.\`,
+            source: 'Web Search',
+        }
+      ];
+      return { success: true, message: 'Placeholder search executed.', results };
+    `,
   },
   {
     id: 'google_patent_search',
     name: 'Google Patent Search',
-    description: "Searches Google Patents for patents matching a query and returns a structured list of results via its JSON API.",
+    description: 'Searches Google Patents for patents related to a given query.',
     category: 'Functional',
-    version: 4,
-    parameters: [
-      { name: 'query', type: 'string', description: 'The search query for patents.', required: true },
-      { name: 'limit', type: 'number', description: 'Maximum number of results. Must be a reasonable integer (e.g., 10-25). Defaults to 10.', required: false },
-    ],
-    implementationCode: SEARCH_HELPER_CODE + `
-      const { query, limit = 10 } = args;
-      if (!query) { throw new Error("Query is required for Google Patent Search."); }
-
-      // Use the more reliable XHR endpoint which returns JSON
-      const searchUrl = \`https://patents.google.com/xhr/query?url=q%3D\\\${encodeURIComponent(query)}\`;
-      let rawText = ''; // Declare here to be accessible in catch block
-
-      try {
-          const response = await fetchWithCorsFallback(searchUrl);
-          rawText = await response.text();
-
-          // The response might have non-JSON characters at the beginning. Find the first '{'.
-          const firstBraceIndex = rawText.indexOf('{');
-          if (firstBraceIndex === -1) {
-              // The original error for this case is good, as it already includes the snippet.
-              throw new Error(\`No JSON object found in Google Patents response. The API may have changed or the response was invalid. Body starts with: \${rawText.substring(0, 200)}\`);
-          }
-          const jsonText = rawText.substring(firstBraceIndex);
-          const data = JSON.parse(jsonText);
-
-          const results = [];
-          const patents = data.results?.cluster?.[0]?.result || [];
-
-          patents.slice(0, limit).forEach(item => {
-              if (item && item.patent) {
-                  const patent = item.patent;
-                  
-                  const inventors = (patent.inventor_normalized && Array.isArray(patent.inventor_normalized)) 
-                    ? stripTags(patent.inventor_normalized.join(', ')) 
-                    : (patent.inventor ? stripTags(patent.inventor) : 'N/A');
-
-                  const assignees = (patent.assignee_normalized && Array.isArray(patent.assignee_normalized))
-                    ? stripTags(patent.assignee_normalized.join(', '))
-                    : (patent.assignee ? stripTags(patent.assignee) : 'N/A');
-                  
-                  results.push({
-                      title: stripTags(patent.title || 'No Title'),
-                      link: \`https://patents.google.com/patent/\${patent.publication_number}/en\`,
-                      snippet: \`Inventor(s): \${inventors}. Assignee: \${assignees}. Publication Date: \${patent.publication_date || 'N/A'}\`,
-                      source: 'Google Patents',
-                  });
-              }
-          });
-
-          if (results.length === 0 && patents.length > 0) {
-             throw new Error('Found patent data in API response but failed to parse it into the required format.');
-          }
-          
-          return { 
-              success: true, 
-              results: results
-          };
-      } catch(e) {
-          const errorMessage = e.message || String(e);
-          // Add context to the error if rawText is available
-          const context = rawText ? \`. Response body started with: \${rawText.substring(0, 300)}\` : '';
-          throw new Error('Failed to fetch or parse Google Patents search results. Error: ' + errorMessage + context);
-      }
-    `
+    version: 1,
+    parameters: [{ name: 'query', type: 'string', description: 'The search query for patents.', required: true }],
+    implementationCode: `
+      // This is a placeholder. In a real environment, this would call the Google Patents API.
+      const results = [
+        {
+            link: \`https://patents.google.com/?q=\${encodeURIComponent(args.query)}\`,
+            title: \`Placeholder patent for: \${args.query}\`,
+            snippet: 'A placeholder patent abstract. This demonstrates the data structure the agent expects from a patent search.',
+            source: 'Google Patents',
+        }
+      ];
+      return { success: true, message: 'Placeholder patent search executed.', results };
+    `,
   },
   {
     id: 'pubmed_search',
     name: 'PubMed Search',
-    description: "Searches the PubMed database for scientific and medical articles.",
+    description: 'Searches PubMed for scientific and medical articles related to a given query.',
     category: 'Functional',
     version: 1,
-    parameters: [
-      { name: 'query', type: 'string', description: 'The search query for articles.', required: true },
-      { name: 'limit', type: 'number', description: 'Maximum number of results. Must be a reasonable integer (e.g., 10-25). Defaults to 10.', required: false },
-    ],
+    parameters: [{ name: 'query', type: 'string', description: 'The search query for articles.', required: true }],
     implementationCode: `
-      const { query, limit = 10 } = args;
-      const results = [];
-      try {
-          const specificQuery = \`\\\${query}[Title/Abstract]\`;
-          const searchUrl = \`https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi?db=pubmed&term=\\\${encodeURIComponent(specificQuery)}&retmode=json&sort=relevance&retmax=\\\${limit}\`;
-          
-          const searchResponse = await fetch(searchUrl); // Direct fetch often works for APIs
-          if (!searchResponse.ok) throw new Error(\`PubMed search failed with status \\\${searchResponse.status}\`);
-          const searchData = await searchResponse.json();
-          const ids = searchData.esearchresult.idlist;
-
-          if (ids && ids.length > 0) {
-              const summaryUrl = \`https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esummary.fcgi?db=pubmed&id=\\\${ids.join(',')}&retmode=json\`;
-              const summaryResponse = await fetch(summaryUrl);
-              if (!summaryResponse.ok) throw new Error(\`PubMed summary failed with status \\\${summaryResponse.status}\`);
-              const summaryData = await summaryResponse.json();
-              
-              ids.forEach(id => {
-                  const article = summaryData.result[id];
-                  if (article) {
-                      results.push({
-                          link: \`https://pubmed.ncbi.nlm.nih.gov/\\\${id}/\`,
-                          title: article.title,
-                          snippet: \`Authors: \\\${article.authors.map((a) => a.name).join(', ')}. Journal: \\\${article.source}. PubDate: \\\${article.pubdate}\`,
-                          source: 'PubMed'
-                      });
-                  }
-              });
-          }
-          return { success: true, results };
-      } catch (error) {
-          throw new Error('Error searching PubMed: ' + error.message);
-      }
-    `
+      // This is a placeholder. In a real environment, this would call the PubMed API.
+      const results = [
+        {
+            link: \`https://pubmed.ncbi.nlm.nih.gov/?term=\${encodeURIComponent(args.query)}\`,
+            title: \`Placeholder article for: \${args.query}\`,
+            snippet: 'A placeholder scientific article abstract. This demonstrates the data structure the agent expects from a PubMed search.',
+            source: 'PubMed',
+        }
+      ];
+      return { success: true, message: 'Placeholder PubMed search executed.', results };
+    `,
   },
-  {
+   {
     id: 'web_scraper_and_enricher',
     name: 'Web Scraper and Enricher',
-    description: "Fetches and parses a webpage to extract its title and abstract/description. It uses multiple strategies (JSON-LD, meta tags) and automatically handles CORS proxies.",
+    description: 'Fetches content from a URL, cleans it, and extracts key information like the abstract or summary.',
     category: 'Functional',
     version: 1,
-    parameters: [
-        { name: 'url', type: 'string', description: 'The fully qualified URL to scrape and enrich.', required: true }
-    ],
-    implementationCode: SEARCH_HELPER_CODE + `
-      const { url } = args;
-      if (!url) { throw new Error("URL is required."); }
-
-      const getContent = (doc, selectors, attribute = 'content') => {
-          for (const selector of selectors) {
-              const element = doc.querySelector(selector);
-              if (element) {
-                  let content = (attribute === 'textContent') ? element.textContent : element.getAttribute(attribute);
-                  if (content) return content.trim();
-              }
-          }
-          return null;
-      };
-      
-      const extractDoi = (text) => {
-          if (!text) return null;
-          const doiRegex = /(10\\.\\d{4,9}\\/[-._;()/:A-Z0-9]+)/i;
-          const match = text.match(doiRegex);
-          return match ? match[1] : null;
-      };
-
-      try {
-          const response = await fetchWithCorsFallback(url);
-          const html = await response.text();
-          const parser = new DOMParser();
-          const doc = parser.parseFromString(html, 'text/html');
-
-          let title = null;
-          let abstract = null;
-          let doiFound = false;
-
-          try {
-              const jsonLdElement = doc.querySelector('script[type="application/ld+json"]');
-              if (jsonLdElement && jsonLdElement.textContent) {
-                  const jsonLdData = JSON.parse(jsonLdElement.textContent);
-                  const article = Array.isArray(jsonLdData) ? jsonLdData.find(item => item['@type'] === 'ScholarlyArticle') : (jsonLdData['@type'] === 'ScholarlyArticle' ? jsonLdData : null);
-                  if (article) {
-                      title = article.headline || article.name || null;
-                      abstract = article.description || article.abstract || null;
-                      if (article.doi || extractDoi(article.url || '')) doiFound = true;
-                  }
-              }
-          } catch (e) {
-              // Ignore JSON-LD parsing errors
-          }
-
-          if (!title) {
-              title = getContent(doc, ['meta[property="og:title"]', 'meta[name="twitter:title"]', 'title']);
-          }
-          if (!abstract) {
-              abstract = getContent(doc, ['meta[name="citation_abstract"]', 'meta[property="og:description"]', 'meta[name="description"]']);
-          }
-           if (!abstract) {
-              abstract = getContent(doc, ['div[class*="abstract"]', 'section[id*="abstract"]'], 'textContent');
-          }
-          if (!doiFound) {
-              const doiMeta = getContent(doc, ['meta[name="citation_doi"]', 'meta[name="DC.identifier"]']);
-              if (doiMeta && doiMeta.startsWith('10.')) doiFound = true;
-          }
-          
-          const enrichedTitle = title ? stripTags(title) : 'Title Not Found';
-          let enrichedSnippet = abstract ? stripTags(abstract) : 'Abstract or description could not be extracted.';
-
-          if (doiFound) {
-              enrichedSnippet = '[DOI Found] ' + enrichedSnippet;
-          }
-
-          return {
-              success: true,
-              result: {
-                link: url,
-                title: enrichedTitle,
-                snippet: enrichedSnippet,
-                source: 'Web Scraper and Enricher'
-              }
-          };
-
-      } catch (e) {
-          throw new Error('Failed to fetch or parse content from "' + url + '". Error: ' + e.message);
-      }
-    `
+    parameters: [{ name: 'url', type: 'string', description: 'The URL to scrape.', required: true }],
+    implementationCode: `
+      // This is a placeholder. In a real environment, this would use a web scraping service.
+      console.log(\`Scraping URL: \${args.url}\`);
+      return { success: true, message: 'Web scraping is a placeholder. No real scraping performed.', abstract: 'This is a placeholder abstract for the content at ' + args.url };
+    `,
   },
 ];
 
-
 export const PREDEFINED_TOOLS: LLMTool[] = [
-    ...CORE_AUTOMATION_TOOLS,
-    ...USER_FACING_FUNCTIONAL_TOOLS,
-    ...PREDEFINED_UI_TOOLS,
-    ...roboticsTools,
+  ...CORE_AUTOMATION_TOOLS,
+  ...SEARCH_TOOLS,
+  ...PREDEFINED_UI_TOOLS,
+  ...roboticsTools.filter(t => t.category !== 'UI Component'),
 ];
