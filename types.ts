@@ -31,6 +31,11 @@ export interface ToolParameter {
   required: boolean;
 }
 
+export interface WorkflowStep {
+  toolName: string;
+  arguments: Record<string, any>;
+}
+
 export interface LLMTool {
   id:string;
   name:string;

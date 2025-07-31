@@ -16,6 +16,9 @@ const buildOpenAITools = (tools: LLMTool[]) => {
                 type: param.type,
                 description: param.description,
             };
+            if (param.type === 'array' && (param.name === 'parameters' || param.name === 'steps')) {
+                properties[param.name].items = { type: 'object' };
+            }
             if (param.required) {
                 required.push(param.name);
             }
@@ -132,7 +135,7 @@ export const generateGoal = async (
     apiConfig: APIConfig,
     allTools: LLMTool[],
     autonomousActionLimit: number,
-    lastActionResult: string | null
+    actionContext: string | null
 ): Promise<{ goal: string, rawResponse: string }> => {
     if (typeof systemInstruction !== 'string' || !systemInstruction.trim()) {
         throw new Error("The system instruction for goal generation is missing or empty. The 'Autonomous Goal Generator' tool may have been corrupted.");
@@ -140,9 +143,9 @@ export const generateGoal = async (
     const lightweightTools = allTools.map(t => ({ name: t.name, description: t.description, version: t.version }));
     const toolsForPrompt = JSON.stringify(lightweightTools, null, 2);
 
-    const lastActionText = lastActionResult || "No action has been taken yet.";
+    const contextText = actionContext || "No action has been taken yet.";
     const instructionWithContext = systemInstruction
-        .replace('{{LAST_ACTION_RESULT}}', lastActionText)
+        .replace('{{ACTION_HISTORY}}', contextText)
         .replace('{{ACTION_LIMIT}}', String(autonomousActionLimit));
 
     const fullSystemInstruction = `${instructionWithContext}\n\nHere is the current list of all available tools:\n${toolsForPrompt}`;
@@ -223,6 +226,54 @@ export const verifyToolFunctionality = async (
         return {
             is_correct: parsed.is_correct || false,
             reasoning: parsed.reasoning || "AI did not provide a reason.",
+            rawResponse: rawResponse
+        };
+
+    } catch (error) {
+        throw generateDetailedError(error, apiConfig.openAIBaseUrl);
+    }
+};
+
+export const critiqueAction = async (
+    systemInstruction: string,
+    modelId: string,
+    temperature: number,
+    apiConfig: APIConfig,
+): Promise<{ is_optimal: boolean, suggestion: string, rawResponse: string }> => {
+    if (typeof systemInstruction !== 'string' || !systemInstruction.trim()) {
+        throw new Error("The system instruction for action critique is missing or empty.");
+    }
+
+    const body = {
+        model: modelId,
+        messages: [
+            { role: 'system', content: systemInstruction },
+            { role: 'user', content: "Please critique the proposed action as instructed." },
+        ],
+        temperature,
+        response_format: { type: "json_object" },
+    };
+
+    try {
+        const response = await fetch(`${apiConfig.openAIBaseUrl}/chat/completions`, {
+            method: 'POST',
+            headers: getAPIHeaders(apiConfig),
+            body: JSON.stringify(body),
+        });
+
+        if (!response.ok) await handleAPIError(response);
+        
+        const jsonResponse = await response.json();
+        const rawResponse = jsonResponse.choices[0].message.content;
+        
+        if (!rawResponse) {
+            return { is_optimal: false, suggestion: "AI returned an empty response during critique.", rawResponse: "{}" };
+        }
+        
+        const parsed = JSON.parse(rawResponse);
+        return {
+            is_optimal: parsed.is_optimal || false,
+            suggestion: parsed.suggestion || "AI did not provide a suggestion.",
             rawResponse: rawResponse
         };
 

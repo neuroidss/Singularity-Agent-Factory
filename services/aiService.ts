@@ -1,4 +1,4 @@
-import { ModelProvider, type AIModel, type APIConfig, type AIResponse, type LLMTool, type EnrichedAIResponse } from '../types';
+import { ModelProvider, type AIModel, type APIConfig, type AIResponse, type LLMTool, type EnrichedAIResponse, AIToolCall } from '../types';
 import * as geminiService from './geminiService';
 import * as openAIService from './openAIService';
 import * as ollamaService from './ollamaService';
@@ -38,21 +38,21 @@ export const generateGoal = async (
     temperature: number,
     allTools: LLMTool[],
     autonomousActionLimit: number,
-    lastActionResult: string | null,
+    actionContext: string | null,
 ): Promise<{ goal: string, rawResponse: string }> => {
     switch (model.provider) {
         case ModelProvider.GoogleAI:
-            return geminiService.generateGoal(systemInstruction, model.id, temperature, apiConfig, allTools, autonomousActionLimit, lastActionResult);
+            return geminiService.generateGoal(systemInstruction, model.id, temperature, apiConfig, allTools, autonomousActionLimit, actionContext);
         case ModelProvider.OpenAI_API:
             if (!apiConfig.openAIBaseUrl) throw new Error("OpenAI-Compatible Base URL is not configured.");
             const modelIdToUse = model.id === 'custom-openai' && apiConfig.openAIModelId ? apiConfig.openAIModelId : model.id;
-            return openAIService.generateGoal(systemInstruction, modelIdToUse, temperature, apiConfig, allTools, autonomousActionLimit, lastActionResult);
+            return openAIService.generateGoal(systemInstruction, modelIdToUse, temperature, apiConfig, allTools, autonomousActionLimit, actionContext);
         case ModelProvider.Ollama:
             if (!apiConfig.ollamaHost) throw new Error("Ollama Host is not configured.");
-            return ollamaService.generateGoal(systemInstruction, model.id, temperature, apiConfig, allTools, autonomousActionLimit, lastActionResult);
+            return ollamaService.generateGoal(systemInstruction, model.id, temperature, apiConfig, allTools, autonomousActionLimit, actionContext);
         case ModelProvider.HuggingFace:
             const onProgressStub = (msg: string) => console.log(`[HF GoalGen]: ${msg}`);
-            return huggingFaceService.generateGoal(systemInstruction, model.id, temperature, apiConfig, allTools, onProgressStub, autonomousActionLimit, lastActionResult);
+            return huggingFaceService.generateGoal(systemInstruction, model.id, temperature, apiConfig, allTools, onProgressStub, autonomousActionLimit, actionContext);
         default:
             throw new Error(`Goal generation not supported for model provider: ${model.provider}`);
     }
@@ -81,6 +81,37 @@ export const verifyToolFunctionality = async (
             throw new Error(`Tool verification not supported for model provider: ${model.provider}`);
     }
 };
+
+export const critiqueAction = async (
+    systemInstruction: string,
+    model: AIModel,
+    apiConfig: APIConfig,
+    temperature: number,
+): Promise<{ is_optimal: boolean, suggestion: string, rawResponse: string }> => {
+     switch (model.provider) {
+        case ModelProvider.GoogleAI:
+            return geminiService.critiqueAction(systemInstruction, model.id, temperature, apiConfig);
+        case ModelProvider.OpenAI_API:
+             if (!apiConfig.openAIBaseUrl) throw new Error("OpenAI-Compatible Base URL is not configured.");
+            const modelIdToUse = model.id === 'custom-openai' && apiConfig.openAIModelId ? apiConfig.openAIModelId : model.id;
+            return openAIService.critiqueAction(systemInstruction, modelIdToUse, temperature, apiConfig);
+        case ModelProvider.Ollama:
+             if (!apiConfig.ollamaHost) throw new Error("Ollama Host is not configured.");
+            return ollamaService.critiqueAction(systemInstruction, model.id, temperature, apiConfig);
+        case ModelProvider.HuggingFace:
+            const onProgressStub = (msg: string) => console.log(`[HF ActionCritique]: ${msg}`);
+             return huggingFaceService.critiqueAction(systemInstruction, model.id, temperature, apiConfig, onProgressStub);
+        default:
+            // This provides a safe default if a new provider is added without this feature.
+            console.warn(`Action Critique not implemented for ${model.provider}, defaulting to optimal.`);
+            return Promise.resolve({
+                is_optimal: true,
+                suggestion: `Action critique is not implemented for ${model.provider}, so the action was approved by default.`,
+                rawResponse: "{}",
+            });
+    }
+};
+
 
 export const generateResponse = async (
     userInput: string,

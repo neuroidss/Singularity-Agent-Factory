@@ -1,5 +1,5 @@
 import { GoogleGenAI, Type, FunctionDeclaration, GenerateContentResponse } from "@google/genai";
-import type { AIResponse, LLMTool, APIConfig, ToolParameter, EnrichedAIResponse } from "../types";
+import type { AIResponse, LLMTool, APIConfig, ToolParameter, EnrichedAIResponse, AIToolCall } from "../types";
 
 const getAIClient = (apiConfig: APIConfig): GoogleGenAI => {
     // Prioritize the key from the UI configuration.
@@ -54,20 +54,12 @@ const buildGeminiTools = (tools: LLMTool[]): { functionDeclarations: FunctionDec
                 // This is the special case that fixes the bug.
                 // The API requires a schema for items within an array.
                 // We'll define the schema for the 'parameters' argument used in Tool Creator/Improver.
-                if (param.name === 'parameters') {
+                if (param.name === 'parameters' || param.name === 'steps' || param.name === 'proposed_action') {
                     properties[param.name] = {
                         type: Type.ARRAY,
                         description: param.description,
                         items: {
                             type: Type.OBJECT,
-                            description: "Schema for a single tool parameter.",
-                            properties: {
-                                name: { type: Type.STRING, description: "The parameter's name." },
-                                type: { type: Type.STRING, description: "The parameter's type: 'string', 'number', 'boolean', etc." },
-                                description: { type: Type.STRING, description: 'A concise description of the parameter.' },
-                                required: { type: Type.BOOLEAN, description: 'Whether the parameter is required.' }
-                            },
-                            required: ['name', 'type', 'description', 'required']
                         }
                     };
                 } else {
@@ -79,7 +71,13 @@ const buildGeminiTools = (tools: LLMTool[]): { functionDeclarations: FunctionDec
                         items: { type: Type.STRING }
                     };
                 }
-            } else {
+            } else if (param.type === 'object') {
+                 properties[param.name] = {
+                    type: Type.OBJECT,
+                    description: param.description,
+                };
+            }
+            else {
                 properties[param.name] = {
                     type: mapTypeToGemini(param.type),
                     description: param.description,
@@ -130,8 +128,9 @@ const parseNativeToolCall = (response: GenerateContentResponse, toolNameMap: Map
     if (textPart && textPart.text) {
         let textContent = textPart.text.trim();
         
-        // Remove markdown backticks if present
-        const markdownMatch = textContent.match(/```(?:tool_code|tool_call|python)?\s*([\s\S]+?)\s*```/);
+        // Remove markdown backticks if present. Using RegExp constructor to avoid parser issues.
+        const markdownRegex = new RegExp("```(?:tool_code|tool_call|python)?\\s*([\\s\\S]+?)\\s*```");
+        const markdownMatch = textContent.match(markdownRegex);
         if (markdownMatch && markdownMatch[1]) {
             textContent = markdownMatch[1].trim();
         }
@@ -161,7 +160,7 @@ const parseNativeToolCall = (response: GenerateContentResponse, toolNameMap: Map
                 // This replaces python-style kwargs assignment with JS-style object properties.
                 // e.g., "name='foo', code='bar'" becomes "name:'foo', code:'bar'"
                 const jsObjectContent = jsSafeArgsString.replace(/([a-zA-Z0-9_]+)=/g, '$1:');
-                const argsParser = new Function(`return {${jsObjectContent}}`);
+                const argsParser = new Function(`return {\${jsObjectContent}}`);
                 const args = argsParser();
 
                 return {
@@ -238,7 +237,7 @@ export const selectTools = async (
     } catch (error) {
         console.error("Error in Gemini Service (selectTools):", error);
         const errorDetails = (error as any).message || (error as any).toString();
-        const responseText = (error as any).response?.text?.();
+        const responseText = (error as any).response?.text;
         const finalMessage = `AI tool selection failed: ${errorDetails}${responseText ? `\nResponse: ${responseText}` : ''}`;
         
         const processingError = new Error(finalMessage) as any;
@@ -254,7 +253,7 @@ export const generateGoal = async (
     apiConfig: APIConfig,
     allTools: LLMTool[],
     autonomousActionLimit: number,
-    lastActionResult: string | null,
+    actionContext: string | null,
 ): Promise<{ goal: string, rawResponse: string }> => {
     if (typeof systemInstruction !== 'string' || !systemInstruction.trim()) {
         throw new Error("The system instruction for goal generation is missing or empty. The 'Autonomous Goal Generator' tool may have been corrupted.");
@@ -263,14 +262,10 @@ export const generateGoal = async (
     const lightweightTools = allTools.map(t => ({ name: t.name, description: t.description, version: t.version }));
     const toolsForPrompt = JSON.stringify(lightweightTools, null, 2);
 
-    // This is now a generic context placeholder. The calling function will format the content.
-    const lastActionText = lastActionResult || "No action has been taken yet.";
+    const contextText = actionContext || "No actions have been taken yet in this session.";
     
-    // Replace placeholders. It's assumed the calling function has prepared the systemInstruction
-    // with the correct placeholders like {{LAST_ACTION_RESULT}} or {{ACTION_HISTORY}}.
     const instructionWithContext = systemInstruction
-        .replace('{{LAST_ACTION_RESULT}}', lastActionText)
-        .replace('{{ACTION_HISTORY}}', lastActionText) // Also replace the history placeholder if present
+        .replace('{{ACTION_HISTORY}}', contextText)
         .replace('{{ACTION_LIMIT}}', String(autonomousActionLimit));
 
     const fullSystemInstruction = `${instructionWithContext}\n\nHere is the current list of all available tools:\n${toolsForPrompt}`;
@@ -312,7 +307,7 @@ export const generateGoal = async (
     } catch (error) {
         console.error("Error in Gemini Service (generateGoal):", error);
         const errorDetails = (error as any).message || (error as any).toString();
-        const responseText = (error as any).response?.text?.();
+        const responseText = (error as any).response?.text;
         const finalMessage = `AI goal generation failed: ${errorDetails}${responseText ? `\nResponse: ${responseText}` : ''}`;
         
         const processingError = new Error(finalMessage) as any;
@@ -320,6 +315,69 @@ export const generateGoal = async (
         throw processingError;
     }
 };
+
+export const critiqueAction = async (
+    systemInstruction: string,
+    modelId: string,
+    temperature: number,
+    apiConfig: APIConfig,
+): Promise<{ is_optimal: boolean, suggestion: string, rawResponse: string }> => {
+    if (typeof systemInstruction !== 'string' || !systemInstruction.trim()) {
+        throw new Error("The system instruction for action critique is missing or empty.");
+    }
+    const ai = getAIClient(apiConfig);
+
+    const responseSchema = {
+        type: Type.OBJECT,
+        properties: {
+            is_optimal: {
+                type: Type.BOOLEAN,
+                description: "True if the action is logical, efficient, and correct."
+            },
+            suggestion: {
+                type: Type.STRING,
+                description: "A concise, actionable suggestion for improvement, or a brief justification if optimal."
+            }
+        },
+        required: ['is_optimal', 'suggestion']
+    };
+
+    try {
+        const response = await ai.models.generateContent({
+            model: modelId,
+            contents: "Please critique the proposed action as instructed.", 
+            config: {
+                systemInstruction: systemInstruction,
+                temperature: temperature,
+                responseMimeType: "application/json",
+                responseSchema: responseSchema,
+            },
+        });
+
+        const rawResponse = response.text;
+        if (!rawResponse) {
+            return { is_optimal: false, suggestion: "AI returned an empty response during critique.", rawResponse: "{}" };
+        }
+        
+        const parsed = JSON.parse(rawResponse);
+        return {
+            is_optimal: parsed.is_optimal || false,
+            suggestion: parsed.suggestion || "AI did not provide a suggestion.",
+            rawResponse: rawResponse
+        };
+
+    } catch (error) {
+        console.error("Error in Gemini Service (critiqueAction):", error);
+        const errorDetails = (error as any).message || (error as any).toString();
+        const responseText = (error as any).response?.text;
+        const finalMessage = `AI action critique failed: ${errorDetails}${responseText ? `\nResponse: ${responseText}` : ''}`;
+        
+        const processingError = new Error(finalMessage) as any;
+        processingError.rawAIResponse = JSON.stringify(error, null, 2);
+        throw processingError;
+    }
+};
+
 
 export const verifyToolFunctionality = async (
     systemInstruction: string,
@@ -374,7 +432,7 @@ export const verifyToolFunctionality = async (
     } catch (error) {
         console.error("Error in Gemini Service (verifyToolFunctionality):", error);
         const errorDetails = (error as any).message || (error as any).toString();
-        const responseText = (error as any).response?.text?.();
+        const responseText = (error as any).response?.text;
         const finalMessage = `AI tool verification failed: ${errorDetails}${responseText ? `\nResponse: ${responseText}` : ''}`;
         
         const processingError = new Error(finalMessage) as any;
@@ -430,7 +488,7 @@ export const generateResponse = async (
         console.error("Error in Gemini Service (native tool mode):", error);
         // Try to get a more specific error message from the response if it exists
         const errorDetails = (error as any).message || (error as any).toString();
-        const responseText = (error as any).response?.text?.();
+        const responseText = (error as any).response?.text;
         const finalMessage = `AI processing failed: ${errorDetails}${responseText ? `\nResponse: ${responseText}` : ''}`;
         
         const processingError = new Error(finalMessage) as any;

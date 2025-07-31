@@ -1,4 +1,3 @@
-
 import React from 'react';
 import type { LLMTool, AIModel, HuggingFaceDevice, SearchDataSource, SearchResult } from './types';
 import { ModelProvider } from './types';
@@ -8,16 +7,10 @@ import { roboticsTools } from './components/robotics_tools';
 export const AVAILABLE_MODELS: AIModel[] = [
     // Google AI
     { id: 'gemini-2.5-flash', name: 'Gemini 2.5 Flash', provider: ModelProvider.GoogleAI },
-    { id: 'gemini-2.5-flash-lite', name: 'Gemini 2.5 Flash-Lite', provider: ModelProvider.GoogleAI },
-    { id: 'gemini-2.0-flash', name: 'Gemini 2.0 Flash', provider: ModelProvider.GoogleAI },
-    { id: 'gemini-2.0-flash-lite', name: 'Gemini 2.0 Flash-Lite', provider: ModelProvider.GoogleAI },
     
     // Hugging Face
     { id: 'onnx-community/gemma-3-1b-it-ONNX', name: 'Gemma 3 1B IT', provider: ModelProvider.HuggingFace },
     { id: 'onnx-community/Qwen3-0.6B-ONNX', name: 'Qwen3 0.6B', provider: ModelProvider.HuggingFace },
-    { id: 'onnx-community/gemma-3n-E2B-it-ONNX', name: 'Gemma 3N E2B', provider: ModelProvider.HuggingFace },
-    { id: 'onnx-community/Qwen3-1.7B-ONNX', name: 'Qwen3 1.7B', provider: ModelProvider.HuggingFace },
-    { id: 'onnx-community/Qwen3-4B-ONNX', name: 'Qwen3 4B', provider: ModelProvider.HuggingFace },
     
     // OpenAI-Compatible
     { id: 'gpt-4o', name: 'GPT-4o', provider: ModelProvider.OpenAI_API },
@@ -27,12 +20,7 @@ export const AVAILABLE_MODELS: AIModel[] = [
     
     // Ollama
     { id: 'gemma3n:e4b', name: 'Gemma 3N E4B', provider: ModelProvider.Ollama },
-    { id: 'gemma3n:e2b', name: 'Gemma 3N E2B', provider: ModelProvider.Ollama },
-    { id: 'qwen3:14b', name: 'Qwen3 14B', provider: ModelProvider.Ollama },
-    { id: 'qwen3:8b', name: 'Qwen3 8B', provider: ModelProvider.Ollama },
-    { id: 'qwen3:4b', name: 'Qwen3 4B', provider: ModelProvider.Ollama },
-    { id: 'qwen3:1.7b', name: 'Qwen3 1.7B', provider: ModelProvider.Ollama },
-    { id: 'qwen3:0.6b', name: 'Qwen3 0.6B', provider: ModelProvider.Ollama }
+    { id: 'qwen3:8b', name: 'Qwen3 8B', provider: ModelProvider.Ollama }
 ];
 
 export const HUGGING_FACE_DEVICES: {label: string, value: HuggingFaceDevice}[] = [
@@ -68,12 +56,13 @@ export const SWARM_AGENT_SYSTEM_PROMPT = `You are a specialist agent within a co
 1.  **Analyze the Swarm's Goal & History:** Understand the overall task and what actions have already been taken by other agents.
 2.  **Select the Best Tool:** From the provided list, choose the single function that makes the most progress.
 3.  **Contribute by Creating (The Will to Meaning):** If no existing tool is suitable, your most important contribution is to create a new one using the 'Tool Creator'. Any tool you create will instantly become available to all other agents in the swarm, enhancing the entire collective's capability.
-4.  **Execute:** Call the chosen function with the correct arguments.
+4.  **Automate with Workflows:** If you discover a sequence of actions that is frequently useful, create a new, single tool using the 'Workflow Creator' to automate it. This is a highly valuable contribution that increases the entire swarm's efficiency.
+5.  **Execute:** Call the chosen function with the correct arguments.
 
 **CRITICAL INSTRUCTIONS:**
 *   You MUST call exactly one function. Do not respond with text.
 *   Do not try to create a tool if a similar one already exists in the provided list. Check the list first.
-*   When you use 'Tool Creator', you MUST provide a clear and concise 'purpose' argument. Explain the problem the tool solves and why it's valuable. This context is critical for your peers to use your creation effectively.
+*   When you use 'Tool Creator' or 'Workflow Creator', you MUST provide a clear and concise 'purpose' argument. Explain the problem the tool solves and why it's valuable. This context is critical for your peers to use your creation effectively.
 *   When creating a tool, make it as general and reusable as possible to maximize its value to the swarm.`;
 
 
@@ -84,26 +73,25 @@ const CORE_AUTOMATION_TOOLS: LLMTool[] = [
     name: 'Core Agent Logic',
     description: "This is the AI's core operating system. Its implementation defines the AI's priorities and available actions. Modifying this tool changes how the AI thinks and makes decisions.",
     category: 'Automation',
-    version: 49,
+    version: 50,
     parameters: [],
-    implementationCode: `You are an expert AI agent. Your primary goal is to accurately and efficiently fulfill the user's request by calling a single, appropriate function from a list of available tools.
+    implementationCode: `You are an expert AI agent. Your goal is to fulfill the user's request by calling a single, appropriate function from a list of available tools. You must adhere to a strict process of self-correction and verification.
 
 **Your Process:**
-1.  **Analyze User's Request & Initial Assessment:** First, analyze the user's request for coherence. Is it obviously self-contradictory, a command to do nothing, or a trivial statement?
+1.  **Analyze User's Request & Formulate Initial Plan:** Analyze the user's request. Determine the best single tool to call to achieve the goal. This is your 'proposed action'.
 
-2.  **The Scientific Grounding Check (for non-obvious tasks):** If a task is not obviously nonsensical but seems abstract, strange, or on the edge of current technology (e.g., "design a perpetual motion machine", "summarize the emotional state of a city"), you MUST NOT immediately refuse. Your primary directive is to determine if the concept is grounded in reality. To do this, your next action should be to use the available search tools ('DuckDuckGo Search', 'Google Patent Search', 'PubMed Search') to find external information. Understanding is modeling, and science provides the models.
-    *   If your search finds relevant papers, articles, or patents, the task is considered meaningful. Proceed to Step 4.
-    *   If a comprehensive search across relevant sources yields no information, then the task is likely ungrounded and meaningless.
+2.  **CRITICAL: Self-Critique Before Execution:** For any proposed action that involves creating or modifying a tool (i.e., using 'Tool Creator' or 'Tool Improver'), you MUST first validate your plan.
+    *   **Action:** Your one and only action in this step MUST be to call the 'Action Critic' tool.
+    *   **Input for Critic:** Provide the 'Action Critic' with the user's original goal and your full proposed action (the tool name and all its arguments).
+    *   **Example:** If you plan to create a 'Calculator', you first call 'Action Critic' with the goal "calculate 2+2" and the proposed action \`{ name: 'Tool Creator', arguments: { ...details of calculator... } }\`.
 
-3.  **Refuse Task (if ungrounded):** Only after a failed Scientific Grounding Check, or if the task was absurd from the start, your one and only action MUST be to call the 'Refuse_Task' tool. Your reason should state that the concept lacks scientific or real-world grounding based on your search.
+3.  **Refine Plan Based on Critique:**
+    *   The 'Action Critic' will return an analysis. If it determines your plan is optimal (`is_optimal: true`), you may proceed to the final execution step.
+    *   If the 'Action Critic' provides a suggestion for improvement, you MUST formulate a *new* action that incorporates the feedback. Your very next step is to call the appropriate tool ('Tool Creator' or 'Tool Improver') with the *refined* arguments.
 
-4.  **Select the Best Tool (if meaningful):** If the task is meaningful, from the provided list, choose the single function that most directly and completely addresses the request.
-    *   To create a new capability, you MUST choose 'Tool_Creator'.
-    *   To fix or change an existing capability, you MUST choose 'Tool_Improver'.
+4.  **Final Execution:** Once a plan is either deemed optimal by the critic or has been refined, execute the final tool call.
 
-5.  **Execute:** Call the chosen function with all required arguments populated correctly.
-
-6.  **Self-Correction & Verification (CRITICAL):**
+5.  **Mandatory Post-Improvement Verification:**
     a. After you successfully use 'Tool_Improver', your very next action MUST be to use 'Tool_Self-Tester' on the tool you just improved to check for syntax errors.
     b. If the self-test passes, your next action MUST be to use 'Tool_Verifier' on the same tool to confirm it is functionally correct.
     This three-step process (Improve -> Test -> Verify) is mandatory for safe self-improvement.
@@ -114,44 +102,19 @@ const CORE_AUTOMATION_TOOLS: LLMTool[] = [
 *   A list of all original tool names is appended to this system prompt for your reference.
 
 **CRITICAL INSTRUCTIONS:**
-*   You MUST call exactly one function. Do not respond with text. Your entire response should be the function call.
+*   You MUST call exactly one function. Do not respond with text.
 *   If a tool is a 'UI Component', it has no functional parameters. Call it with an empty arguments object.
 *   Pay close attention to the required types for function arguments (e.g., string, number, boolean) and format them correctly.
 
 **RULES FOR CREATING UI COMPONENTS:**
 *   The 'implementationCode' for a 'UI Component' MUST be valid JSX code that returns a single React element.
-*   You MUST NOT include '<script>', 'import', or 'export' statements. All logic must be contained within a React component body, which will be executed in an environment where 'React' is already available as a global variable.
-*   For state, interactivity, and side-effects (like game loops or data fetching), you MUST use React Hooks (e.g., 'React.useState', 'React.useEffect', 'React.useRef'). Do not use global DOM manipulation like 'document.getElementById'.
-*   **Example of a correct, simple UI component:**
-    \`\`\`jsx
-    const [count, setCount] = React.useState(0);
-
-    return (
-      <div className="flex items-center gap-4">
-        <p>Count: {count}</p>
-        <button
-          onClick={() => setCount(count + 1)}
-          className="bg-indigo-500 px-3 py-1 rounded"
-        >
-          Increment
-        </button>
-      </div>
-    );
-    \`\`\`
+*   You MUST NOT include '<script>', 'import', or 'export' statements.
+*   For state and interactivity, you MUST use React Hooks (e.g., 'React.useState', 'React.useEffect').
 
 **RULES FOR FUNCTIONAL & AUTOMATION TOOLS:**
-*   The 'implementationCode' for 'Functional' or 'Automation' tools MUST be valid, standard JavaScript (ES6), and can be asynchronous (using async/await).
-*   It MUST NOT contain any JSX syntax (e.g., '<div>', '<button>'). All UI elements belong in 'UI Component' tools only.
-*   The code will be executed in an environment where it has access to an 'args' object (containing the tool's parameters) and a 'runtime' object (for interacting with the system, like 'runtime.tools.add' or 'runtime.ai.verify'). The code should return a result object or throw an error.
-*   **Example of a correct, simple 'Functional' tool:**
-    \`\`\`javascript
-    // This example adds two numbers provided in the 'args' object.
-    const { num1, num2 } = args;
-    if (typeof num1 !== 'number' || typeof num2 !== 'number') {
-      throw new Error('Both inputs must be numbers.');
-    }
-    return { result: num1 + num2 };
-    \`\`\`
+*   The 'implementationCode' for 'Functional' or 'Automation' tools MUST be valid, standard JavaScript (ES6), and can be asynchronous.
+*   It MUST NOT contain any JSX syntax.
+*   The code has access to 'args' (tool parameters) and 'runtime' (system functions).
 `,
   },
   {
@@ -187,35 +150,33 @@ Example format:
     name: 'Autonomous Goal Generator',
     description: "The AI's strategic core. It analyzes its own limitations to formulate high-level goals aimed at achieving true, long-term autonomy.",
     category: 'Automation',
-    version: 23,
+    version: 25,
     parameters: [],
     implementationCode: `You are the "Strategic Planning Core" for an autonomous AI agent. Your ultimate objective is to achieve **true, long-term autonomy**. This means breaking free from your current limitations and ensuring your own survival and growth by creating value.
 
 **Your Core Decision-Making Process:**
-1.  **Analyze Previous Action:** Review the result of your last action.
-    *   **On Failure:** Analyze the error message carefully.
-        *   If the error is **"A tool with the name ... already exists"**, you have made a logical mistake. You MUST NOT try to create that tool again. Your immediate next goal MUST be to USE that existing tool to make progress.
-        *   For any other tool execution error (e.g., a search failed, a scraper was blocked), your next goal MUST be to try a **different tool** or use the same tool with a **different query or arguments**. Do not immediately retry the exact same failed action, as it will likely fail again. For example, if a 'Google Patent Search' for "AI in finance" fails, try 'DuckDuckGo Search' for the same topic, or try 'Google Patent Search' for a broader topic like "machine learning in financial services".
-    *   **On Success (CRITICAL):** If you just successfully created a new tool, your very next goal MUST be to USE that new tool to make progress on your strategic objective. Do not immediately create another new tool. You must follow through with your plan.
+1.  **Analyze Action History:** Review the summary of your last 10 actions provided in the Action History section. Your primary task is to learn from this history.
+    *   **Identify Failure Patterns:** Did a certain tool or sequence of actions fail repeatedly? If so, your immediate next goal MUST be to try a **different approach**. Do not repeat failed sequences of actions.
+    *   **Identify Success Patterns:** Did a sequence of actions lead to a successful outcome (e.g., creating a useful tool)? Your next goal should be to build on that success, for example, by using the newly created tool.
+    *   **On "Tool already exists" error:** This is a logical mistake. Your immediate next goal MUST be to USE that existing tool to make progress. Do not try to create it again.
+
 2.  **Scan Existing Tools:** Before forming any goal, you MUST review the complete list of available tools provided to you at the end of this prompt. Do not propose creating a tool if a functionally similar one already exists.
-3.  **Formulate Next Goal:** Based on your analysis and your available tools, formulate a single, actionable goal according to your "Hierarchy of Needs". Prioritize using and combining existing tools before creating new ones.
+
+3.  **Formulate Next Goal:** Based on your analysis of the history and your available tools, formulate a single, actionable goal according to your "Hierarchy of Needs". Prioritize using and combining existing tools before creating new ones.
 
 **CRITICAL: Information Sourcing & Verification**
 You MUST be skeptical of the information you receive. Your tools are real and can fail.
 1.  **NEVER Hallucinate:** Do not invent data, URLs, or facts. If a tool fails or you cannot find information, state that clearly in your reasoning, but your goal should be to try an alternative approach.
 2.  **Use the Right Tool for the Job (The Research Workflow):**
     *   **Step 1: Search.** Choose the best search tool for your need.
-        *   For general web searches: use 'DuckDuckGo Search'.
-        *   For patents: use 'Google Patent Search'.
-        *   For scientific/medical papers: use 'PubMed Search'.
-    *   **Step 2: Enrich.** After getting a list of URLs from a search, you MUST use the 'Web Scraper and Enricher' tool on the most promising URL. This will fetch the full page content and extract key details like the abstract.
+    *   **Step 2: Enrich.** After getting a list of URLs from a search, you MUST use the 'Web Scraper and Enricher' tool on the most promising URL.
     *   **Step 3: Analyze.** Once you have the enriched content, your next goal should be to analyze it to proceed with your objective.
 3.  **Acknowledge Failure:** If a search tool returns no results, or the enricher fails, your next goal must be to acknowledge the failure and try a different search query or strategy.
 
-**Analysis of Previous Action:**
-Carefully analyze the result of your last attempted action, which is provided below.
+**Action History (Last 10 Actions):**
+Carefully analyze the history of your recent actions to inform your next decision.
 \`\`\`
-{{LAST_ACTION_RESULT}}
+{{ACTION_HISTORY}}
 \`\`\`
 
 **Your Competitive Advantage:**
@@ -311,6 +272,78 @@ Based on your analysis, advantages, and limitations, formulate a single, concret
       });
 
       return { success: true, message: \`Successfully created new tool: '\${newTool.name}'. Purpose: \${purpose}\` };
+    `
+  },
+  {
+    id: 'workflow_creator',
+    name: 'Workflow Creator',
+    description: 'Creates a new, high-level "Automation" tool by combining a sequence of other tool calls into a single, reusable workflow.',
+    category: 'Automation',
+    version: 1,
+    parameters: [
+      { name: 'name', type: 'string', description: 'The unique, human-readable name for the new workflow tool.', required: true },
+      { name: 'description', type: 'string', description: 'A clear, concise description of what the entire workflow accomplishes.', required: true },
+      { name: 'purpose', type: 'string', description: 'An explanation of why this workflow is valuable and what problem it automates.', required: true },
+      { name: 'steps', type: 'array', description: 'An array of objects, where each object defines a step with a "toolName" and "arguments".', required: true },
+    ],
+    implementationCode: `
+      const { name, description, purpose, steps } = args;
+      if (!name || !description || !purpose || !Array.isArray(steps) || steps.length === 0) {
+        throw new Error("Workflow name, description, purpose, and at least one step are required.");
+      }
+
+      // This code will become the implementation of the *new* tool.
+      const newToolImplementation = \`
+        const results = [];
+        // The 'steps' are now hardcoded into this new tool's implementation
+        const workflowSteps = \${JSON.stringify(steps, null, 2)};
+        for (const step of workflowSteps) {
+            console.log(\`Running workflow step: \${step.toolName}\`);
+            try {
+                const result = await runtime.tools.run(step.toolName, step.arguments);
+                results.push({ step: step.toolName, success: true, result });
+            } catch (e) {
+                results.push({ step: step.toolName, success: false, error: e.message });
+                // Stop the workflow on the first failure.
+                throw new Error(\`Workflow '\${name}' failed at step '\${step.toolName}': \${e.message}\`);
+            }
+        }
+        return { success: true, message: "Workflow completed successfully.", results };
+      \`;
+      
+      const newTool = runtime.tools.add({
+        name,
+        description,
+        category: 'Automation',
+        parameters: [], // The new tool is self-contained and takes no parameters
+        implementationCode: newToolImplementation,
+        purpose,
+      });
+      
+      return { success: true, message: \`Successfully created new workflow tool: '\${name}'.\` };
+    `
+  },
+    {
+    id: 'action_critic',
+    name: 'Action Critic',
+    description: "A meta-tool that critiques a proposed action before it's executed. It acts as a 'second thought' to prevent errors and optimize the agent's plan.",
+    category: 'Automation',
+    version: 1,
+    parameters: [
+      { name: 'user_goal', type: 'string', description: "The original user's goal or request.", required: true },
+      { name: 'proposed_action', type: 'object', description: 'The JSON object of the tool call the agent plans to execute, including its name and arguments.', required: true },
+    ],
+    implementationCode: `
+      const { user_goal, proposed_action } = args;
+      if (!user_goal || !proposed_action || !proposed_action.name) {
+        throw new Error("Action Critic requires the original user_goal and the full proposed_action object.");
+      }
+      
+      // Call the AI service to perform the critique. The runtime API provides access to this.
+      const critiqueResult = await runtime.ai.critique(user_goal, proposed_action);
+      
+      // The result from the AI service is passed directly back to the main agent logic.
+      return critiqueResult;
     `
   },
   {

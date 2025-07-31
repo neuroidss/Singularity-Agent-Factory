@@ -174,7 +174,7 @@ export const generateGoal = async (
     allTools: LLMTool[],
     onProgress: (message: string) => void,
     autonomousActionLimit: number,
-    lastActionResult: string | null
+    actionContext: string | null
 ): Promise<{ goal: string, rawResponse: string }> => {
     if (typeof systemInstruction !== 'string' || !systemInstruction.trim()) {
         throw new Error("The system instruction for goal generation is missing or empty. The 'Autonomous Goal Generator' tool may have been corrupted.");
@@ -185,9 +185,9 @@ export const generateGoal = async (
         const lightweightTools = allTools.map(t => ({ name: t.name, description: t.description, version: t.version }));
         const toolsForPrompt = JSON.stringify(lightweightTools, null, 2);
         
-        const lastActionText = lastActionResult || "No action has been taken yet.";
+        const contextText = actionContext || "No actions have been taken yet.";
         const instructionWithContext = systemInstruction
-            .replace('{{LAST_ACTION_RESULT}}', lastActionText)
+            .replace('{{ACTION_HISTORY}}', contextText)
             .replace('{{ACTION_LIMIT}}', String(autonomousActionLimit));
 
         const fullSystemInstruction = `${instructionWithContext}\n\nHere is the current list of all available tools:\n${toolsForPrompt}`;
@@ -238,6 +238,37 @@ export const verifyToolFunctionality = async (
     }
 };
 
+export const critiqueAction = async (
+    systemInstruction: string,
+    modelId: string,
+    temperature: number,
+    apiConfig: APIConfig,
+    onProgress: (message: string) => void
+): Promise<{ is_optimal: boolean, suggestion: string, rawResponse: string }> => {
+    if (typeof systemInstruction !== 'string' || !systemInstruction.trim()) {
+        throw new Error("The system instruction for action critique is missing or empty.");
+    }
+    let responseText = "";
+    try {
+        const pipe = await getPipeline(modelId, apiConfig, onProgress);
+        responseText = await executePipe(pipe, systemInstruction, "Please critique the proposed action as instructed.", temperature);
+
+        if (!responseText) {
+            return { is_optimal: false, suggestion: "AI returned an empty response during critique.", rawResponse: "{}" };
+        }
+
+        const parsed = parseJsonResponse(responseText);
+        return {
+            is_optimal: parsed.is_optimal || false,
+            suggestion: parsed.suggestion || "AI did not provide a suggestion.",
+            rawResponse: responseText
+        };
+
+    } catch (error) {
+        throw generateDetailedError(error, modelId, responseText);
+    }
+};
+
 export const generateResponse = async (
     userInput: string,
     systemInstruction: string,
@@ -268,7 +299,7 @@ export const generateResponse = async (
             parameters: t.parameters,
         }));
     
-        const toolDefinitions = JSON.stringify(toolsForPrompt, ['name', 'description', 'parameters'], 2);
+        const toolDefinitions = JSON.stringify(toolsForPrompt, null, 2);
         const fullSystemInstruction = systemInstruction + '\n\n' + STANDARD_TOOL_CALL_SYSTEM_PROMPT.replace('{{TOOLS_JSON}}', toolDefinitions);
         
         responseText = await executePipe(pipe, fullSystemInstruction, userInput, temperature);
