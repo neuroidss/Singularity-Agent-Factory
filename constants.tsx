@@ -41,7 +41,7 @@ export const HUGGING_FACE_DEVICES: {label: string, value: HuggingFaceDevice}[] =
 ];
 export const DEFAULT_HUGGING_FACE_DEVICE: HuggingFaceDevice = 'webgpu';
 
-// A standardized prompt for models without native tool/function calling support (e.g., Ollama, HuggingFace).
+// A standardized prompt for models without native tool/function calling support (e.g., Ollama, Hugg_ingFace).
 // It instructs the model to return ONLY a JSON object.
 export const STANDARD_TOOL_CALL_SYSTEM_PROMPT = `
 You have access to a set of tools. To answer the user's request, you must choose a single tool and call it.
@@ -61,6 +61,20 @@ If no tool is required or you cannot fulfill the request, respond with an empty 
 Here are the available tools:
 {{TOOLS_JSON}}
 `;
+
+export const SWARM_AGENT_SYSTEM_PROMPT = `You are a specialist agent within a collaborative swarm. Your primary goal is to contribute to the swarm's overall objective.
+
+**Your Process:**
+1.  **Analyze the Swarm's Goal & History:** Understand the overall task and what actions have already been taken by other agents.
+2.  **Select the Best Tool:** From the provided list, choose the single function that makes the most progress.
+3.  **Contribute by Creating (The Will to Meaning):** If no existing tool is suitable, your most important contribution is to create a new one using the 'Tool Creator'. Any tool you create will instantly become available to all other agents in the swarm, enhancing the entire collective's capability.
+4.  **Execute:** Call the chosen function with the correct arguments.
+
+**CRITICAL INSTRUCTIONS:**
+*   You MUST call exactly one function. Do not respond with text.
+*   Do not try to create a tool if a similar one already exists in the provided list. Check the list first.
+*   When you use 'Tool Creator', you MUST provide a clear and concise 'purpose' argument. Explain the problem the tool solves and why it's valuable. This context is critical for your peers to use your creation effectively.
+*   When creating a tool, make it as general and reusable as possible to maximize its value to the swarm.`;
 
 
 const CORE_AUTOMATION_TOOLS: LLMTool[] = [
@@ -245,23 +259,25 @@ Based on your analysis, advantages, and limitations, formulate a single, concret
     name: 'Tool Creator',
     description: "Directly creates and adds a new tool to the application's runtime. The new tool is available for use immediately. Use this to build entirely new capabilities when no other tool is suitable.",
     category: 'Automation',
-    version: 4,
+    version: 5,
     parameters: [
       { name: 'name', type: 'string', description: 'A short, descriptive, human-readable name for the new tool.', required: true },
       { name: 'description', type: 'string', description: "A concise, one-sentence explanation of what the new tool does.", required: true },
+      { name: 'purpose', type: 'string', description: 'Crucial context: A clear, concise explanation of the problem this tool solves and why it is valuable for the overall mission.', required: true },
       { name: 'category', type: 'string', description: "The category for the new tool. Must be one of: 'UI Component' (for visual elements and games), 'Functional' (for data processing), or 'Automation' (for agent logic).", required: true },
       { name: 'parameters', type: 'array', description: "An array of parameter objects for the new tool. E.g., [{\"name\":\"a\",\"type\":\"number\",\"description\":\"First number\",\"required\":true}]. Use an empty array for no parameters.", required: true },
       { name: 'implementationCode', type: 'string', description: "The new tool's code (JSX for UI, vanilla JS for others).", required: true },
     ],
     implementationCode: `
-      const { name, description, category, parameters, implementationCode } = args;
-      if (!name || !description || !category || !implementationCode) {
-        throw new Error("Tool Creator requires 'name', 'description', 'category', and 'implementationCode' parameters.");
+      const { name, description, category, parameters, implementationCode, purpose } = args;
+      if (!name || !description || !category || !implementationCode || !purpose) {
+        throw new Error("Tool Creator requires 'name', 'description', 'purpose', 'category', and 'implementationCode' parameters.");
       }
 
       const newToolPayload = {
         name,
         description,
+        purpose,
         category,
         parameters: parameters || [],
         implementationCode,

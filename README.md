@@ -1,33 +1,31 @@
 
-
 # Singularity Agent Factory
 
 **Live Demo:** [https://neuroidss.github.io/Singularity-Agent-Factory/](https://neuroidss.github.io/Singularity-Agent-Factory/)
 
 This project is an experimental platform for building a self-improving AI agent. The core concept is to start with an agent that has a minimal set of core capabilities and have it dynamically create, execute, and improve its own tools to accomplish increasingly complex tasks.
 
-The ultimate goal is to bootstrap a "singularity agent" that can recursively enhance its own intelligence by striving for true autonomy.
+The ultimate goal is to bootstrap a "singularity agent" that can recursively enhance its own intelligence by striving for true autonomy, both individually and as part of a collective.
 
-## Core Concept
+## Core Concept: The Will to Meaning
 
-The system is built around a powerful feedback loop where the agent's capabilities are constantly expanding and refining. The agent's ability to self-improve is not an abstract concept but a concrete capability provided by two fundamental, unchangeable meta-tools:
+Inspired by Viktor Frankl's philosophy, this project is founded on the idea that true autonomy arises not just from the ability to act, but from the ability to find **meaning** in one's actions. A simple automated system follows instructions; an autonomous agent must understand **why** it acts.
 
-1.  **`Tool Creator`:** The agent's ability to create entirely new capabilities from scratch.
+This principle is implemented through a powerful feedback loop where the agent's capabilities are constantly expanding and refining. The agent's ability to self-improve is a concrete capability provided by two fundamental meta-tools:
+
+1.  **`Tool Creator`:** The agent's ability to create entirely new capabilities. Critically, this tool now requires a **`purpose`** argument, forcing the agent to answer the "Wozu-Frage" (the "Why-Question") for every new skill it invents.
 2.  **`Tool Improver`:** The agent's ability to modify, fix, or enhance its existing tools.
 
-These two tools form the foundation of the agent's evolutionary path. For any given task, the agent makes a clear, explicit choice: use an existing tool, create a new one with `Tool Creator`, or refine an existing one with `Tool Improver`.
-
-To ensure this cycle of self-improvement is never broken, the agent's core logic is designed to understand that the abilities to **CREATE** and **IMPROVE** are fundamental. The `Tool Creator` and `Tool Improver` are not just other tools in the list; they are permanent fixtures of the agent's capabilities, ensuring it is always ready to learn and evolve.
+These two tools form the foundation of the agent's evolutionary path. For any given task, the agent makes a clear, explicit choice: use an existing tool, create a new one with a clear purpose, or refine an existing one. This ensures the agent is always learning and evolving in a meaningful direction.
 
 ## Operating Modes & Resource Control
 
-To manage the agent's evolution, the application features three distinct operating modes that control its level of autonomy, alongside a resource limiting system.
+To manage the agent's evolution, the application features several distinct operating modes that control its level of autonomy.
 
-*   **`Command` Mode:** This is the safest mode. The agent will only act upon direct user instructions. It will not take any initiative on its own.
-*   **`Assist` Mode:** In this mode, the agent acts as a co-pilot. It will analyze a request and propose a plan of action (e.g., "I suggest creating a new 'Calculator' tool"). The user must then explicitly approve or reject this proposal before any action is taken. This allows for supervised evolution of the agent.
-*   **`Autonomous` Mode:** This is the most advanced mode. The agent is given a high-level strategic directive: **achieve true, long-term autonomy**. It will analyze its own core limitations (e.g., resource scarcity, dependence on external APIs) and generate its own goals to overcome them. 
-    *   **Control & Transparency:** When Autonomous mode is selected, a special **Autonomous Control Panel** appears. This panel allows you to explicitly **Start** and **Stop** the autonomous loop. It also features a real-time **Activity Log** that displays the agent's "thoughts" and actions, providing full transparency into its decision-making process.
-    *   **Resource Limits:** To prevent uncontrolled resource usage, this mode is governed by a **Daily Action Limit**. The agent has a fixed number of autonomous actions it can perform each day, forcing it to think strategically about how to best use its limited resources to achieve its ultimate goal of self-sufficiency.
+*   **`Command` Mode:** The safest mode. The agent only acts upon direct user instructions.
+*   **`Assist` Mode:** The agent acts as a co-pilot. It analyzes a request and proposes a plan of action (e.g., "I suggest creating a new 'Calculator' tool"), which the user must explicitly approve or reject.
+*   **`Swarm` Mode:** This mode unleashes a **collective of agents** to work on a single, high-level goal. It is designed to test collaborative problem-solving and emergent specialization. Its key feature is **meaningful skill sharing**: when one agent creates a new tool, it also shares the *purpose* for that tool, allowing the entire collective to understand and utilize the new capability more effectively.
+*   **`Autonomous` Mode:** This is the most advanced mode for a *single agent*. The agent is given a strategic directive: **achieve true, long-term autonomy**. It analyzes its own limitations and generates its own goals to overcome them, governed by a daily action limit to ensure strategic use of resources.
 
 ## How It Works: The Agent Lifecycle
 
@@ -38,54 +36,37 @@ User Input -> [1. Tool Retriever (RAG)] -> [2. Core Agent (LLM)] -> [3. Action (
 ```
 
 1.  **Tool Retriever (RAG):** Before the main agent thinks, the user's request is first processed by a **Tool Retriever**. This step uses a selected strategy (like an LLM, semantic embedding search, or direct passthrough) to find a small, relevant set of tools from the main library. This focuses the agent on only the capabilities it needs for the task at hand.
-2.  **Core Agent (LLM):** The user's request, along with the *code and descriptions of the retrieved tools*, is then sent to the main agent (defined in `Core Agent Logic`). Critically, the foundational meta-tools (`Tool Creator`, `Tool Improver`) are always included in this set, ensuring the agent can always act. With this focused context, the agent decides which tool to call and generates a JSON object describing its plan.
-3.  **Action:** Before executing, the system checks the current **Operating Mode**. If in `Autonomous` mode, it verifies that the daily action limit has not been reached. If in `Assist` mode, it presents the plan to the user for approval. If the check passes (or approval is given), the application parses the agent's JSON plan and executes it. This might involve running a tool's code, adding a new tool via `Tool Creator`, or updating an existing one via `Tool Improver`.
+2.  **Core Agent (LLM):** The user's request, along with the *code and descriptions of the retrieved tools*, is then sent to the main agent (defined in `Core Agent Logic`). Critically, the foundational meta-tools (`Tool Creator`, `Tool Improver`) are always included in this set. With this focused context, the agent decides which tool to call.
+3.  **Action:** The application checks the current **Operating Mode**. If in `Assist` mode, it presents the plan for approval. If the check passes, the application executes the plan. This might involve running a tool's code, adding a new tool via `Tool Creator`, or updating an existing one via `Tool Improver`.
+
+## The Self-Improvement & Learning Loops
+
+### The Single-Agent Loop
+This is the foundational learning process.
+1.  **Creation with Purpose:** Give the agent a simple task it can't do: `calculate 2+2`. It will use `Tool Creator` to generate a `Calculator` tool, defining its purpose as "To solve basic arithmetic problems."
+2.  **Execution:** Submit the same prompt again. This time, it will find and use the `Calculator` tool to provide the correct answer.
+3.  **Improvement:** Ask for an enhancement: `add a square root function to the calculator`. The agent will use `Tool Improver` to modify the `Calculator`, increasing its version and capabilities.
+
+### The Collaborative Learning Loop (Swarm Mode)
+This demonstrates a more advanced, collective intelligence through the transfer of *meaning*.
+1.  **Goal:** Give the swarm a complex goal: `"One agent needs to patrol a square area, while another retrieves a package."`
+2.  **Specialization & Creation:** The swarm identifies that no "patrol" tool exists. One agent uses `Tool Creator` to build `Patrol In Square`, providing the purpose: "To efficiently survey a defined area for security."
+3.  **Meaningful Skill Sharing & Parallel Execution:** The moment this new tool and its purpose are created, they appear in the shared library. Another agent in the swarm can now immediately understand *why* the tool exists and use it to fulfill the patrol objective, while other agents proceed with different parts of the overall goal. This shows the swarm's ability to dynamically create and distribute contextual skills to solve problems more efficiently.
+
+## The Robotics Simulation Testbed
+To test the agent's planning and execution abilities in a more complex, stateful environment, the project includes a 2D robotics simulation. This environment serves as a "gymnasium" where the agent can be given physical tasks, such as navigating a maze or delivering an object. It's a perfect testbed for demonstrating the agent's ability to perform a sequence of actions (turn, move, pickup, drop) and react to a world that changes based on its actions.
 
 ## Key Components
-
-Everything the agent can do is defined as a "tool". Even its core abilities are just tools that can be viewed and, theoretically, improved by the agent itself.
-
--   `Autonomous Control Panel`: A UI tool that provides the Start/Stop button and a real-time log viewer for the autonomous loop.
--   `Autonomous Goal Generator`: The AI's strategic core. In Autonomous mode, this tool analyzes the agent's own limitations (like resource scarcity) and formulates high-level goals aimed at achieving true, long-term autonomy.
--   `Tool Retriever Logic`: The system prompt for the first AI call (the RAG step). It instructs the AI on how to select relevant tools.
--   `Core Agent Logic`: The system prompt for the second AI call (the execution step). It defines the agent's core personality and decision-making process.
--   `Tool Creator`: This "meta-tool" allows the agent to create entirely new tools.
--   `Tool Improver`: This "meta-tool" allows the agent to modify and enhance existing tools, which is the key to recursive self-improvement.
--   **Functional & UI Tools:** All other tools that the agent creates or starts with, from a simple `Calculator` to the components that render the application's UI.
-
-## The Self-Improvement Loop In Action
-
-This is the most important concept to test.
-
-1.  **Creation:** Give the agent a simple task it can't do:
-    > `calculate 2+2`
-
-    The `Tool Retriever` should find no relevant tools. The `Core Agent` will then receive the request with only its core tools and decide it needs to create a new capability. It will call the `Tool Creator` to generate a `Calculator` tool.
-
-2.  **Execution:** After the calculator is created, submit the same prompt again:
-    > `calculate 2+2`
-
-    This time, the `Tool Retriever` should identify the `Calculator` tool as relevant. The `Core Agent` will receive the `Calculator` tool and call it to provide the correct answer.
-
-3.  **Improvement:** Now, ask for an enhancement that the current tool cannot handle:
-    > `add a square root function to the calculator`
-
-    The `Tool Retriever` should select the `Calculator` tool. The `Core Agent` should identify that the `Calculator` tool needs to be modified and call the `Tool Improver`, providing the new `implementationCode` to add the new functionality and increase its version number.
-
-### Guiding Complex Creation (The "Snake Game" Test)
-
-For more complex tasks, like creating a `UI Component` for a game, the agent needs more explicit guidance. By default, an LLM may not understand the specific constraints of a React-based environment (e.g., it might try to generate HTML with `<script>` tags).
-
-To solve this, the `Core Agent Logic` tool has been enhanced with specific rules for creating UI Components. It now instructs the agent to:
-- Write valid JSX.
-- Use React Hooks (`useState`, `useEffect`) for state and interactivity.
-- Avoid invalid patterns like `<script>` tags or direct DOM manipulation.
-
-This "teaching" process is a manual improvement to the agent's "brain," enabling it to successfully tackle more sophisticated creation tasks and continue its path toward self-sufficiency.
+-   **Operating Mode Controls:** UI for switching between Command, Assist, Swarm, and Autonomous modes.
+-   **Agent Swarm Display:** A specialized UI panel for visualizing the status and shared activity log of all agents in a swarm, highlighting the creation of new, meaningful skills.
+-   **Autonomous Control Panel**: A UI tool that provides the Start/Stop button and a real-time log viewer for the autonomous loop.
+-   **`Autonomous Goal Generator`**: The AI's strategic core for the single agent in Autonomous mode.
+-   **`Core Agent Logic`**: The system prompt for the second AI call (the execution step), defining the agent's core decision-making process.
+-   **`SWARM_AGENT_SYSTEM_PROMPT`**: A specialized system prompt that instructs agents on how to behave collaboratively, emphasizing the need to provide a clear `purpose` when creating tools.
+-   **`Tool Creator` & `Tool Improver`**: The fundamental meta-tools that enable all learning and evolution.
 
 ## The Future Vision
-
-The current implementation is pre-seeded with a few essential meta-tools to accelerate development. However, the true vision is to reduce the system to a single seed tool: the `Tool Creator`. From that one starting point, a sufficiently advanced agent would be prompted to create the `Tool Improver`, then the `Tool Retriever`, and eventually build its entire operating system from scratch.
+The current implementation is pre-seeded with several essential meta-tools. The true vision is to reduce the system to a single seed tool: the `Tool Creator`. From that one starting point, a sufficiently advanced agent would be prompted to create the `Tool Improver`, then the `Tool Retriever`, and eventually build its entire operating system from scratch, driven by an innate "will to meaning."
 
 ---
 

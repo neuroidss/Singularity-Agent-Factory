@@ -38,6 +38,9 @@ export interface LLMTool {
   category: ToolCategory;
   version: number;
   parameters: ToolParameter[];
+  // A new field to store the AI's reasoning for creating the tool,
+  // aligning with Viktor Frankl's "Will to Meaning".
+  purpose?: string;
   // For 'UI Component' tools, this is a string of JSX.
   // For other tools, it's the body of a function.
   implementationCode: string;

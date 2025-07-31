@@ -1,7 +1,7 @@
 
 import React, { useState, useCallback, useMemo, useEffect, useRef } from 'react';
 import * as aiService from './services/aiService';
-import { PREDEFINED_TOOLS, AVAILABLE_MODELS, DEFAULT_HUGGING_FACE_DEVICE } from './constants';
+import { PREDEFINED_TOOLS, AVAILABLE_MODELS, DEFAULT_HUGGING_FACE_DEVICE, SWARM_AGENT_SYSTEM_PROMPT } from './constants';
 import type { LLMTool, EnrichedAIResponse, DebugInfo, AIResponse, APIConfig, AIModel, NewToolPayload, AIToolCall, ToolSelectionCallInfo, AgentExecutionCallInfo, AgentWorker, AgentStatus, RobotState, EnvironmentObject } from './types';
 import { UIToolRunner } from './components/UIToolRunner';
 import { ModelProvider, OperatingMode, ToolRetrievalStrategy } from './types';
@@ -202,6 +202,11 @@ const App: React.FC = () => {
     // Persistence for new settings
     useEffect(() => {
         localStorage.setItem('operatingMode', operatingMode);
+        if (operatingMode === OperatingMode.Swarm) {
+             setUserInput(`The swarm's goal is to deliver the package. First, create a tool that allows the robot to move in a square of a given size. Then, use that new tool to have one agent patrol a 3x3 square while another agent goes for the package.`);
+        } else {
+            setUserInput('');
+        }
     }, [operatingMode]);
     useEffect(() => {
         localStorage.setItem('autonomousActionCount', String(autonomousActionCount));
@@ -513,7 +518,7 @@ The JSON object must have this exact format:
         setLastResponse(null);
     }, []);
 
-    const processRequest = useCallback(async (prompt: string, isAutonomous: boolean = false): Promise<EnrichedAIResponse | null> => {
+    const processRequest = useCallback(async (prompt: string, isAutonomous: boolean = false, systemInstructionOverride?: string): Promise<EnrichedAIResponse | null> => {
         setIsLoading(true);
         setError(null);
         setInfo(null);
@@ -587,13 +592,13 @@ The JSON object must have this exact format:
 
             // --- STEP 2: Agent Execution ---
             const coreLogicTool = findToolByName('Core Agent Logic');
-            if (!coreLogicTool) throw new Error("Critical error: 'Core Agent Logic' tool not found.");
+            if (!coreLogicTool && !systemInstructionOverride) throw new Error("Critical error: 'Core Agent Logic' tool not found and no override provided.");
             
             const mandatoryToolNames = ['Core Agent Logic', 'Tool Creator', 'Tool Improver', 'Tool Self-Tester', 'Tool Verifier', 'Task Complete'];
             const relevantToolNames = new Set([...selectedToolNames, ...mandatoryToolNames]);
             const relevantTools = Array.from(relevantToolNames).map(name => findToolByName(name)).filter((t): t is LLMTool => !!t);
             
-            const agentSystemInstruction = coreLogicTool.implementationCode;
+            const agentSystemInstruction = systemInstructionOverride || coreLogicTool!.implementationCode;
             const agentTools = relevantTools.filter(t => t.name !== 'Core Agent Logic' && t.name !== 'Tool Retriever Logic');
 
             // NEW: Augment the system instruction with the list of tool names
@@ -649,8 +654,11 @@ The JSON object must have this exact format:
                 logToAutonomousPanel(`⚙️ Executing: ${aiResponse.toolCall.name}...`);
                 const executionResult = await executeAction(aiResponse.toolCall);
                  if (isAutonomous) {
+                    const isToolCreation = executionResult.toolCall?.name === 'Tool Creator' && executionResult.executionResult?.success;
                     const resultSummary = executionResult.executionError 
                         ? `❌ Execution Failed: ${executionResult.executionError}`
+                        : isToolCreation
+                        ? `💡 Agent created tool: '${executionResult.toolCall.arguments.name}' (Purpose: ${executionResult.toolCall.arguments.purpose})`
                         : `✅ Execution Succeeded. Result: ${JSON.stringify(executionResult.executionResult?.message || executionResult.executionResult || 'OK')}`;
                     logToAutonomousPanel(resultSummary);
                 }
@@ -724,12 +732,12 @@ The JSON object must have this exact format:
             setAgentSwarm(prev => prev.map(a => a.id === agent.id ? { ...a, status: 'working', lastAction: 'Thinking about next step...', error: null } : a));
             
             const historyString = taskHistoryRef.current.length > 0
-                ? `The swarm has already performed these actions:\n${JSON.stringify(taskHistoryRef.current, null, 2)}`
+                ? `The swarm has already performed these actions:\n${JSON.stringify(taskHistoryRef.current.map(r => ({ tool: r.toolCall?.name, args: r.toolCall?.arguments, result: r.executionResult, error: r.executionError })), null, 2)}`
                 : "The swarm has not performed any actions yet.";
             
-            const promptForAgent = `The swarm's overall goal is: "${currentUserTask}".\n\n${historyString}\n\nBased on this, what is the single next action to take? If the goal is fully complete, call the "Task Complete" tool.`;
+            const promptForAgent = `The swarm's overall goal is: "${currentUserTask}".\n\n${historyString}\n\nBased on this, what is the single next action for an agent to take? If the goal is fully complete, call the "Task Complete" tool.`;
 
-            const result = await processRequest(promptForAgent, true);
+            const result = await processRequest(promptForAgent, true, SWARM_AGENT_SYSTEM_PROMPT);
 
             if (!isSwarmRunningRef.current) throw new Error("Swarm stopped by user during processing.");
 
@@ -780,6 +788,7 @@ The JSON object must have this exact format:
         setUserInput('');
         setInfo(`🚀 Starting swarm task: "${initialTask}"`);
         setError(null);
+        setAutonomousLog([]);
 
         const initialAgents: AgentWorker[] = Array.from({ length: 3 }, (_, i) => ({
             id: `agent-${i + 1}`,

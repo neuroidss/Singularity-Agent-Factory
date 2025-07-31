@@ -1,3 +1,4 @@
+
 import type { LLMTool } from '../../types';
 
 export const agentControlsTools: LLMTool[] = [
@@ -124,7 +125,7 @@ export const agentControlsTools: LLMTool[] = [
               ></div>
             </div>
              <p className="text-xs text-slate-500 mt-1">
-                {isUnlimited ? 'Running without limits.' : \`Resets daily. Remaining: \${Math.max(0, autonomousActionLimit - autonomousActionCount)}\`}
+                {isUnlimited ? 'Running without limits.' : \`Resets daily. Remaining: \${Math.max(0, autonomousActionLimit - autonomousActionLimit)}\`}
             </p>
           </div>
         );
@@ -238,6 +239,7 @@ export const agentControlsTools: LLMTool[] = [
           if (logText.includes('❌') || logText.includes('⏹️')) return 'text-red-400';
           if (logText.includes('✅')) return 'text-green-400';
           if (logText.includes('🎯') || logText.includes('🚀')) return 'text-yellow-300';
+          if (logText.includes('💡')) return 'text-yellow-300 font-bold bg-yellow-900/30 p-1 rounded';
           return 'text-gray-300';
         };
 
@@ -287,7 +289,7 @@ export const agentControlsTools: LLMTool[] = [
                         className="bg-gray-900/70 p-3 rounded-md h-48 overflow-y-auto font-mono text-xs text-gray-300 border border-gray-700"
                     >
                         {autonomousLog && autonomousLog.length > 0 ? (
-                            <div>
+                            <div className="space-y-1">
                                 {autonomousLog.map((log, index) => (
                                     <p key={index} className="whitespace-pre-wrap leading-relaxed animate-fade-in" style={{animation: 'fadein 0.5s'}}>
                                         <span className={getLogClassName(log)}>{log}</span>
@@ -360,15 +362,26 @@ export const agentControlsTools: LLMTool[] = [
     {
     id: 'agent_swarm_display',
     name: 'Agent Swarm Display',
-    description: 'Displays the status of all agents in the swarm.',
+    description: 'Displays the status of all agents in the swarm and the shared activity log.',
     category: 'UI Component',
-    version: 1,
+    version: 2,
     parameters: [
       { name: 'agentSwarm', type: 'array', description: 'The array of agent workers.', required: true },
       { name: 'isSwarmRunning', type: 'boolean', description: 'Whether the swarm task is active.', required: true },
       { name: 'handleStopSwarm', type: 'string', description: 'Function to stop the swarm task.', required: true },
+      { name: 'autonomousLog', type: 'array', description: 'Array of shared log messages from the swarm.', required: true },
+      { name: 'handleClearLog', type: 'string', description: 'Function to clear the activity log.', required: true },
     ],
     implementationCode: `
+      const logContainerRef = React.useRef(null);
+
+      // Auto-scroll to top when a new log entry is added (since new logs are prepended)
+      React.useEffect(() => {
+          if (logContainerRef.current) {
+              logContainerRef.current.scrollTop = 0;
+          }
+      }, [autonomousLog]);
+
       const getStatusStyles = (status) => {
         switch (status) {
           case 'working': return { bg: 'bg-blue-900/50', border: 'border-blue-500', text: 'text-blue-300', icon: '⚙️' };
@@ -379,6 +392,14 @@ export const agentControlsTools: LLMTool[] = [
           default:
             return { bg: 'bg-gray-800/60', border: 'border-gray-600', text: 'text-gray-400', icon: '💤' };
         }
+      };
+      
+      const getLogClassName = (logText) => {
+          if (logText.includes('❌') || logText.includes('⏹️')) return 'text-red-400';
+          if (logText.includes('✅')) return 'text-green-400';
+          if (logText.includes('🎯') || logText.includes('🚀')) return 'text-yellow-300';
+          if (logText.includes('💡')) return 'text-yellow-300 font-semibold bg-yellow-900/40 p-1 my-1 rounded-md block';
+          return 'text-gray-300';
       };
 
       return (
@@ -425,6 +446,35 @@ export const agentControlsTools: LLMTool[] = [
               );
             })}
           </div>
+
+          <div className="border-t border-slate-700 pt-3 mt-4">
+               <div className="flex justify-between items-center mb-2">
+                  <h4 className="text-sm font-semibold text-slate-300">Shared Activity Log</h4>
+                  <button
+                      onClick={handleClearLog}
+                      className="text-xs text-slate-400 hover:text-white hover:bg-slate-700 px-2 py-1 rounded-md"
+                  >
+                      Clear Log
+                  </button>
+              </div>
+              <div 
+                  ref={logContainerRef}
+                  className="bg-gray-900/70 p-3 rounded-md h-48 overflow-y-auto font-mono text-xs text-gray-300 border border-gray-700"
+              >
+                  {autonomousLog && autonomousLog.length > 0 ? (
+                      <div className="space-y-1">
+                          {autonomousLog.map((log, index) => (
+                              <p key={index} className="whitespace-pre-wrap leading-relaxed animate-fade-in" style={{animation: 'fadein 0.5s'}}>
+                                  <span className={getLogClassName(log)}>{log}</span>
+                              </p>
+                          ))}
+                      </div>
+                  ) : (
+                      <p className="text-slate-500 italic">Log is empty. Start the swarm to see output.</p>
+                  )}
+              </div>
+          </div>
+
         </div>
       );
     `
