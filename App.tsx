@@ -1,3 +1,4 @@
+
 import React, { useState, useCallback, useMemo, useEffect, useRef } from 'react';
 import * as aiService from './services/aiService';
 import { PREDEFINED_TOOLS, AVAILABLE_MODELS, DEFAULT_HUGGING_FACE_DEVICE, SWARM_AGENT_SYSTEM_PROMPT } from './constants';
@@ -414,7 +415,7 @@ ${JSON.stringify(proposedAction, null, 2)}
                             return prev;
                         }
                         
-                        resolve({ success: true, message: \`Moved forward to (${x}, ${y})\`});
+                        resolve({ success: true, message: `Moved forward to (${x}, ${y})`});
                         return { ...prev, x, y };
                     });
                 });
@@ -426,7 +427,7 @@ ${JSON.stringify(proposedAction, null, 2)}
                         : (prev.rotation + 90) % 360;
                     return { ...prev, rotation: newRotation };
                 });
-                return { success: true, message: \`Turned \${direction}.\` };
+                return { success: true, message: `Turned ${direction}.` };
             },
             grip: () => {
                 const packageObj = environmentState.find(obj => obj.type === 'package');
@@ -493,15 +494,15 @@ ${JSON.stringify(proposedAction, null, 2)}
 
         const toolToExecute = findToolByName(toolCall.name);
         if (!toolToExecute) {
-            throw new Error(\`AI returned unknown tool name: \${toolCall.name}\`);
+            throw new Error(`AI returned unknown tool name: ${toolCall.name}`);
         }
 
         enrichedResult.tool = toolToExecute;
 
         if (toolToExecute.category === 'UI Component') {
             setActiveUITool(toolToExecute);
-            infoMessage = \`▶️ Activating tool: "\${toolToExecute.name}"\`;
-            enrichedResult.executionResult = { success: true, summary: \`Displayed UI tool '\${toolToExecute.name}'.\` };
+            infoMessage = `▶️ Activating tool: "${toolToExecute.name}"`;
+            enrichedResult.executionResult = { success: true, summary: `Displayed UI tool '${toolToExecute.name}'.` };
         } else {
             if (!toolCall.arguments) {
                 enrichedResult.executionError = "Execution failed: AI did not provide any arguments for the tool call.";
@@ -510,9 +511,9 @@ ${JSON.stringify(proposedAction, null, 2)}
                     const result = await runToolImplementation(toolToExecute.implementationCode, toolCall.arguments, runtimeApi);
                     enrichedResult.executionResult = result;
                     if (result?.message) {
-                        infoMessage = \`✅ \${result.message}\`;
+                        infoMessage = `✅ ${result.message}`;
                     } else {
-                        infoMessage = \`✅ Tool "\${toolToExecute.name}" executed.\`;
+                        infoMessage = `✅ Tool "${toolToExecute.name}" executed.`;
                     }
                 } catch (execError) {
                     enrichedResult.executionError = execError instanceof Error ? execError.message : String(execError);
@@ -540,7 +541,7 @@ ${JSON.stringify(proposedAction, null, 2)}
         setIsLoading(true);
         setError(null);
         setLastResponse(null);
-        setInfo(\`⚙️ Executing approved action...\`);
+        setInfo(`⚙️ Executing approved action...`);
         
         const actionToExecute = { ...proposedAction };
         setProposedAction(null); // Clear proposal immediately
@@ -589,7 +590,7 @@ ${JSON.stringify(proposedAction, null, 2)}
             // --- STEP 1: Tool Retrieval ---
             let selectedToolNames: string[] = [];
             let toolSelectionDebug: ToolSelectionCallInfo = { strategy: toolRetrievalStrategy, userPrompt: prompt };
-            if (isAutonomous) logToAutonomousPanel(\`🔎 Retrieving tools with strategy: \${toolRetrievalStrategy}...\`);
+            if (isAutonomous) logToAutonomousPanel(`🔎 Retrieving tools with strategy: ${toolRetrievalStrategy}...`);
             
             switch (toolRetrievalStrategy) {
                 case ToolRetrievalStrategy.LLM: {
@@ -631,7 +632,7 @@ ${JSON.stringify(proposedAction, null, 2)}
                     break;
                 }
             }
-             if (isAutonomous) logToAutonomousPanel(\`🛠️ Agent will use these tools: [\${selectedToolNames.join(', ')}]\`);
+             if (isAutonomous) logToAutonomousPanel(`🛠️ Agent will use these tools: [${selectedToolNames.join(', ')}]`);
             setLastDebugInfo(prev => ({ ...prev, toolSelectionCall: toolSelectionDebug }));
 
             // --- STEP 2: Agent Execution ---
@@ -646,11 +647,11 @@ ${JSON.stringify(proposedAction, null, 2)}
             const agentTools = relevantTools.filter(t => t.name !== 'Core Agent Logic' && t.name !== 'Tool Retriever Logic');
 
             // NEW: Augment the system instruction with the list of tool names
-            const toolListForContext = agentTools.map(t => \`- "\${t.name}"\`).join('\n');
-            const augmentedSystemInstruction = \`\${agentSystemInstruction}\n\n---REFERENCE: Original Tool Names---\n\${toolListForContext}\`;
+            const toolListForContext = agentTools.map(t => `- "${t.name}"`).join('\n');
+            const augmentedSystemInstruction = `${agentSystemInstruction}\n\n---REFERENCE: Original Tool Names---\n${toolListForContext}`;
 
             if (isAutonomous) {
-                logToAutonomousPanel(\`🤖 Agent is thinking... Prompt size: \${prompt.length} chars. Tools: \${agentTools.length}.\`);
+                logToAutonomousPanel(`🤖 Agent is thinking... Prompt size: ${prompt.length} chars. Tools: ${agentTools.length}.`);
             } else {
                 setInfo("🤖 Preparing agent with selected tools...");
             }
@@ -679,7 +680,7 @@ ${JSON.stringify(proposedAction, null, 2)}
 
             if(!aiResponse.toolCall) {
                 const noToolMessage = "The AI did not select a tool to execute. Please try rephrasing your request.";
-                if (isAutonomous) logToAutonomousPanel(\`⚠️ \${noToolMessage}\`);
+                if (isAutonomous) logToAutonomousPanel(`⚠️ ${noToolMessage}`);
                 setInfo(noToolMessage);
                 return null;
             }
@@ -694,16 +695,16 @@ ${JSON.stringify(proposedAction, null, 2)}
                 });
                 return proposalResponse;
             } else {
-                 if (isAutonomous) logToAutonomousPanel(\`💡 Agent decided to call: \${aiResponse.toolCall.name} with args: \${JSON.stringify(aiResponse.toolCall.arguments)}\`);
-                logToAutonomousPanel(\`⚙️ Executing: \${aiResponse.toolCall.name}...\`);
+                 if (isAutonomous) logToAutonomousPanel(`💡 Agent decided to call: ${aiResponse.toolCall.name} with args: ${JSON.stringify(aiResponse.toolCall.arguments)}`);
+                logToAutonomousPanel(`⚙️ Executing: ${aiResponse.toolCall.name}...`);
                 const executionResult = await executeAction(aiResponse.toolCall);
                  if (isAutonomous) {
                     const isToolCreation = executionResult.toolCall?.name === 'Tool Creator' && executionResult.executionResult?.success;
                     const resultSummary = executionResult.executionError 
-                        ? \`❌ Execution Failed: \${executionResult.executionError}\`
+                        ? `❌ Execution Failed: ${executionResult.executionError}`
                         : isToolCreation
-                        ? \`💡 Agent created tool: '\${executionResult.toolCall.arguments.name}' (Purpose: \${executionResult.toolCall.arguments.purpose})\`
-                        : \`✅ Execution Succeeded. Result: \${JSON.stringify(executionResult.executionResult?.message || executionResult.executionResult || 'OK')}\`;
+                        ? `💡 Agent created tool: '${executionResult.toolCall.arguments.name}' (Purpose: ${executionResult.toolCall.arguments.purpose})`
+                        : `✅ Execution Succeeded. Result: ${JSON.stringify(executionResult.executionResult?.message || executionResult.executionResult || 'OK')}`;
                     logToAutonomousPanel(resultSummary);
                 }
                 return executionResult;
@@ -712,7 +713,7 @@ ${JSON.stringify(proposedAction, null, 2)}
         } catch (err) {
             const errorMessage = err instanceof Error ? err.message : "An unexpected error occurred.";
             setError(errorMessage);
-            if(isAutonomous) logToAutonomousPanel(\`❌ Error: \${errorMessage}\`);
+            if(isAutonomous) logToAutonomousPanel(`❌ Error: ${errorMessage}`);
             const rawAIResponse = (err as any).rawAIResponse;
 
             setLastDebugInfo(prev => {
@@ -776,10 +777,10 @@ ${JSON.stringify(proposedAction, null, 2)}
             setAgentSwarm(prev => prev.map(a => a.id === agent.id ? { ...a, status: 'working', lastAction: 'Thinking about next step...', error: null } : a));
             
             const historyString = taskHistoryRef.current.length > 0
-                ? \`The swarm has already performed these actions:\n\${JSON.stringify(taskHistoryRef.current.map(r => ({ tool: r.toolCall?.name, args: r.toolCall?.arguments, result: r.executionResult, error: r.executionError })), null, 2)}\`
+                ? `The swarm has already performed these actions:\n${JSON.stringify(taskHistoryRef.current.map(r => ({ tool: r.toolCall?.name, args: r.toolCall?.arguments, result: r.executionResult, error: r.executionError })), null, 2)}`
                 : "The swarm has not performed any actions yet.";
             
-            const promptForAgent = \`The swarm's overall goal is: "\${currentUserTask}".\n\n\${historyString}\n\nBased on this, what is the single next action for an agent to take? If the goal is fully complete, call the "Task Complete" tool.\`;
+            const promptForAgent = `The swarm's overall goal is: "${currentUserTask}".\n\n${historyString}\n\nBased on this, what is the single next action for an agent to take? If the goal is fully complete, call the "Task Complete" tool.`;
 
             const result = await processRequest(promptForAgent, true, SWARM_AGENT_SYSTEM_PROMPT);
 
@@ -787,11 +788,11 @@ ${JSON.stringify(proposedAction, null, 2)}
 
             if (result) {
                 taskHistoryRef.current.push(result);
-                const actionSummary = result.toolCall ? \`Called '\${result.toolCall.name}'\` : 'No action taken';
+                const actionSummary = result.toolCall ? `Called '${result.toolCall.name}'` : 'No action taken';
                 setAgentSwarm(prev => prev.map(a => a.id === agent.id ? { ...a, status: 'succeeded', lastAction: actionSummary, result: result.executionResult } : a));
                 
                 if (result.toolCall?.name === 'Task Complete') {
-                    setInfo(\`✅ Task Completed by Agent \${agent.id}: \${result.executionResult?.message || 'Finished!'}\`);
+                    setInfo(`✅ Task Completed by Agent ${agent.id}: ${result.executionResult?.message || 'Finished!'}`);
                     setIsSwarmRunning(false);
                     setIsLoading(false);
                     return;
@@ -804,10 +805,10 @@ ${JSON.stringify(proposedAction, null, 2)}
             // Terminate the failing agent and spawn a new one
             setAgentSwarm(prev => {
                 const terminatedStatus: AgentStatus = 'terminated';
-                const failedSwarm = prev.map(a => a.id === agent.id ? { ...a, status: terminatedStatus, error: errorMessage, lastAction: \`FAILED: \${a.lastAction}\` } : a);
+                const failedSwarm = prev.map(a => a.id === agent.id ? { ...a, status: terminatedStatus, error: errorMessage, lastAction: `FAILED: ${a.lastAction}` } : a);
                 swarmAgentIdCounter.current++;
                 const newAgent: AgentWorker = {
-                    id: \`agent-\${swarmAgentIdCounter.current}\`,
+                    id: `agent-${swarmAgentIdCounter.current}`,
                     status: 'idle',
                     lastAction: 'Newly spawned',
                     error: null,
@@ -830,12 +831,12 @@ ${JSON.stringify(proposedAction, null, 2)}
         swarmIterationCounter.current = 0;
         swarmAgentIdCounter.current = 3;
         setUserInput('');
-        setInfo(\`🚀 Starting swarm task: "\${initialTask}"\`);
+        setInfo(`🚀 Starting swarm task: "${initialTask}"`);
         setError(null);
         setAutonomousLog([]);
 
         const initialAgents: AgentWorker[] = Array.from({ length: 3 }, (_, i) => ({
-            id: \`agent-\${i + 1}\`,
+            id: `agent-${i + 1}`,
             status: 'idle',
             lastAction: 'Awaiting instructions',
             error: null,
@@ -873,11 +874,11 @@ ${JSON.stringify(proposedAction, null, 2)}
                 const [, toolName, paramsJson] = match;
                 const toolCall: AIToolCall = { name: toolName, arguments: JSON.parse(paramsJson) };
                 await executeAction(toolCall);
-                setInfo(\`⚡️ Direct Execution\`);
+                setInfo(`⚡️ Direct Execution`);
                 setLastDebugInfo(null);
                 setUserInput('');
             } catch (err) {
-                setError(err instanceof Error ? \`Direct execution failed: \${err.message}\` : "An unexpected error occurred during direct execution.");
+                setError(err instanceof Error ? `Direct execution failed: ${err.message}` : "An unexpected error occurred during direct execution.");
             } finally {
                 setIsLoading(false);
             }
@@ -975,7 +976,7 @@ ${JSON.stringify(proposedAction, null, 2)}
                 }
                 
                 if (autonomousActionLimit !== -1 && currentCountForThisCycle >= autonomousActionLimit) {
-                    logToAutonomousPanel(\`🛑 Daily limit of \${autonomousActionLimit} actions reached. Stopping loop.\`);
+                    logToAutonomousPanel(`🛑 Daily limit of ${autonomousActionLimit} actions reached. Stopping loop.`);
                     setIsAutonomousLoopRunning(false);
                     break;
                 }
@@ -1001,7 +1002,7 @@ ${JSON.stringify(proposedAction, null, 2)}
                     );
                     
                     if (goal && goal !== "No action needed.") {
-                        logToAutonomousPanel(\`🎯 New Goal: \${goal}\`);
+                        logToAutonomousPanel(`🎯 New Goal: ${goal}`);
                         const result = await processRequest(goal, true);
                         if (result) {
                           // Add to history and keep it capped at 10
@@ -1016,7 +1017,7 @@ ${JSON.stringify(proposedAction, null, 2)}
                 } catch (err) {
                     const errorMessage = err instanceof Error ? err.message : "An unexpected error occurred in autonomous cycle.";
                     setError(errorMessage);
-                    logToAutonomousPanel(\`❌ Error in autonomous cycle: \${errorMessage}\`);
+                    logToAutonomousPanel(`❌ Error in autonomous cycle: ${errorMessage}`);
                 }
                 
                 if (!isRunningRef.current) break;
@@ -1047,15 +1048,15 @@ ${JSON.stringify(proposedAction, null, 2)}
         const tool = tools.find(t => t.name === name);
         if (tool && tool.category === 'UI Component') return tool;
         return {
-            id: 'ui_tool_not_found', name: \`UI Tool Not Found\`, description: \`A UI tool with the name '\${name}' could not be found.\`,
+            id: 'ui_tool_not_found', name: `UI Tool Not Found`, description: `A UI tool with the name '${name}' could not be found.`,
             category: 'UI Component', version: 1, parameters: [],
-            implementationCode: \`
+            implementationCode: `
               return (
                 <div className="p-4 bg-red-900/50 border-2 border-dashed border-red-500 rounded-lg text-red-300">
-                  <p className="font-bold">UI Tool Missing: '\${name}'</p>
+                  <p className="font-bold">UI Tool Missing: '${name}'</p>
                 </div>
               );
-            \`
+            `
         } as LLMTool;
     };
 

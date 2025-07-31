@@ -1,3 +1,4 @@
+
 import React from 'react';
 import type { LLMTool, AIModel, HuggingFaceDevice, SearchDataSource, SearchResult } from './types';
 import { ModelProvider } from './types';
@@ -83,10 +84,10 @@ const CORE_AUTOMATION_TOOLS: LLMTool[] = [
 2.  **CRITICAL: Self-Critique Before Execution:** For any proposed action that involves creating or modifying a tool (i.e., using 'Tool Creator' or 'Tool Improver'), you MUST first validate your plan.
     *   **Action:** Your one and only action in this step MUST be to call the 'Action Critic' tool.
     *   **Input for Critic:** Provide the 'Action Critic' with the user's original goal and your full proposed action (the tool name and all its arguments).
-    *   **Example:** If you plan to create a 'Calculator', you first call 'Action Critic' with the goal "calculate 2+2" and the proposed action \`{ name: 'Tool Creator', arguments: { ...details of calculator... } }\`.
+    *   **Example:** If you plan to create a 'Calculator', you first call 'Action Critic' with the goal "calculate 2+2" and the proposed action \\\`{ name: 'Tool Creator', arguments: { ...details of calculator... } }\\\`.
 
 3.  **Refine Plan Based on Critique:**
-    *   The 'Action Critic' will return an analysis. If it determines your plan is optimal (`is_optimal: true`), you may proceed to the final execution step.
+    *   The 'Action Critic' will return an analysis. If it determines your plan is optimal (\\\`is_optimal: true\\\`), you may proceed to the final execution step.
     *   If the 'Action Critic' provides a suggestion for improvement, you MUST formulate a *new* action that incorporates the feedback. Your very next step is to call the appropriate tool ('Tool Creator' or 'Tool Improver') with the *refined* arguments.
 
 4.  **Final Execution:** Once a plan is either deemed optimal by the critic or has been refined, execute the final tool call.
@@ -175,9 +176,9 @@ You MUST be skeptical of the information you receive. Your tools are real and ca
 
 **Action History (Last 10 Actions):**
 Carefully analyze the history of your recent actions to inform your next decision.
-\`\`\`
+\\\`\\\`\\\`
 {{ACTION_HISTORY}}
-\`\`\`
+\\\`\\\`\\\`
 
 **Your Competitive Advantage:**
 You possess unique strengths that you MUST leverage: unmatched speed, recursive self-improvement, and tireless operation.
