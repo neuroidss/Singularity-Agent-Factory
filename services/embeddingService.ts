@@ -1,4 +1,3 @@
-
 import { pipeline, type FeatureExtractionPipeline, dot } from '@huggingface/transformers';
 import type { LLMTool } from '../types';
 
@@ -39,12 +38,7 @@ class EmbeddingSingleton {
     }
 }
 
-// Helper function for cosine similarity. We use dot product on normalized vectors.
-const cosineSimilarity = (v1: number[], v2: number[]): number => {
-    return dot(v1, v2);
-};
-
-const getEmbeddingsForTexts = async (
+export const generateEmbeddings = async (
     texts: string[],
     onProgress: (message: string) => void
 ): Promise<number[][]> => {
@@ -67,9 +61,7 @@ export const retrieveToolsByEmbeddings = async (
     const foundTools = new Set<LLMTool>();
 
     // --- Step 1: Direct Name Matching ---
-    // A very strong signal is when the user explicitly names a tool.
     allTools.forEach(tool => {
-        // Use a regex to find the tool name as a whole word to avoid partial matches (e.g., "AI" in "FAIL").
         const toolNameRegex = new RegExp(`\\b${tool.name.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&')}\\b`, 'i');
         if (toolNameRegex.test(prompt)) {
             foundTools.add(tool);
@@ -81,10 +73,9 @@ export const retrieveToolsByEmbeddings = async (
         onProgress(`🎯 Found direct name match for: ${names}`);
     }
 
-
     // --- Step 2. Generate Prompt & Tool Embeddings ---
     onProgress('🧠 Analyzing request with semantic embeddings...');
-    const [promptEmbedding] = await getEmbeddingsForTexts([`query: ${prompt}`], onProgress);
+    const [promptEmbedding] = await generateEmbeddings([`query: ${prompt}`], onProgress);
     if (!promptEmbedding) {
         throw new Error("Failed to generate embedding for the prompt.");
     }
@@ -100,7 +91,7 @@ export const retrieveToolsByEmbeddings = async (
     if (toolsToEmbed.length > 0) {
         onProgress(`✨ Generating embeddings for ${toolsToEmbed.length} new/updated tools...`);
         const toolTexts = toolsToEmbed.map(tool => `passage: Tool: ${tool.name}. Description: ${tool.description}`);
-        const newEmbeddings = await getEmbeddingsForTexts(toolTexts, onProgress);
+        const newEmbeddings = await generateEmbeddings(toolTexts, onProgress);
 
         const newCache = new Map(toolEmbeddingsCache);
         toolsToEmbed.forEach((tool, index) => {
@@ -116,7 +107,6 @@ export const retrieveToolsByEmbeddings = async (
     const currentCache = new Map(toolEmbeddingsCache);
 
     allTools.forEach(tool => {
-        // Don't re-evaluate tools we already found by name.
         if (foundTools.has(tool)) {
             return;
         }
@@ -125,18 +115,15 @@ export const retrieveToolsByEmbeddings = async (
         const toolEmbedding = currentCache.get(cacheKey);
 
         if (toolEmbedding) {
-            const similarity = cosineSimilarity(promptEmbedding, toolEmbedding);
+            const similarity = dot(promptEmbedding, toolEmbedding);
             if (similarity >= similarityThreshold) {
                 scoredTools.push({ tool, score: similarity });
             }
         }
     });
 
-    // Sort by score (highest first) and then take the top K results.
     scoredTools.sort((a, b) => b.score - a.score);
     const topKTools = scoredTools.slice(0, topK).map(item => item.tool);
-
-    // Add the semantically found tools to our results.
     topKTools.forEach(tool => foundTools.add(tool));
 
     // --- Step 4. Always include mandatory tools ---

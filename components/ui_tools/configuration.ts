@@ -206,12 +206,11 @@ export const configurationTools: LLMTool[] = [
     name: 'Tool Retrieval Strategy Selector',
     description: 'Allows the user to select the strategy for how the agent retrieves relevant tools.',
     category: 'UI Component',
-    version: 3,
+    version: 4,
     parameters: [
       { name: 'toolRetrievalStrategy', type: 'string', description: 'The current strategy being used.', required: true },
       { name: 'setToolRetrievalStrategy', type: 'string', description: 'Function to update the strategy.', required: true },
       { name: 'isLoading', type: 'boolean', description: 'Whether the app is currently processing.', required: true },
-      { name: 'info', type: 'string', description: 'The current info message, for status checking.', required: false },
     ],
     implementationCode: `
       // Enums are not available in this scope, so we define a plain object.
@@ -226,8 +225,6 @@ export const configurationTools: LLMTool[] = [
         { id: ToolRetrievalStrategy.Embedding, name: 'Embedding Filter', description: 'Semantic search via embeddings. Finds tools by meaning.' },
         { id: ToolRetrievalStrategy.Direct, name: 'Direct', description: 'All tools are sent to AI. Fastest but uses large context.' },
       ];
-
-      const isEmbeddingBusy = info && (info.includes('embedding') || info.includes('Embedding'));
 
       return (
         <div className="w-full max-w-2xl mx-auto mt-4">
@@ -252,14 +249,6 @@ export const configurationTools: LLMTool[] = [
                         >
                             <div className="flex items-center justify-center gap-2">
                                 <span className="text-sm font-semibold">{strategy.name}</span>
-                                {strategy.id === 'EMBEDDING' && isEmbeddingBusy && (
-                                    <div className="w-4 h-4">
-                                        <svg className="animate-spin h-full w-full text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                                            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-                                            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                                        </svg>
-                                    </div>
-                                )}
                             </div>
                             <p className="text-xs text-gray-300 peer-checked:text-indigo-200">{strategy.description}</p>
                         </label>

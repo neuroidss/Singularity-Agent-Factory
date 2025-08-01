@@ -1,5 +1,5 @@
 import { GoogleGenAI, Type, FunctionDeclaration, GenerateContentResponse } from "@google/genai";
-import type { AIResponse, LLMTool, APIConfig, ToolParameter, EnrichedAIResponse, AIToolCall } from "../types";
+import type { AIResponse, LLMTool, APIConfig, ToolParameter, EnrichedAIResponse, AIToolCall, RobotState, EnvironmentObject } from "../types";
 
 const getAIClient = (apiConfig: APIConfig): GoogleGenAI => {
     // Prioritize the key from the UI configuration.
@@ -246,7 +246,37 @@ export const selectTools = async (
     }
 };
 
+const getRobotStateString = (robotState: RobotState, environmentState: EnvironmentObject[]): string => {
+    const { x, y, rotation, hasPackage } = robotState;
+    const packageObj = environmentState.find(obj => obj.type === 'package');
+    const goalObj = environmentState.find(obj => obj.type === 'goal');
+    
+    let direction = 'Unknown';
+    if (rotation === 0) direction = 'North (Up)';
+    if (rotation === 90) direction = 'East (Right)';
+    if (rotation === 180) direction = 'South (Down)';
+    if (rotation === 270) direction = 'West (Left)';
+    
+    let stateString = `Robot is at coordinates (${x}, ${y}) facing ${direction}. `;
+    stateString += `Robot is ${hasPackage ? 'currently carrying the package' : 'not carrying the package'}. `;
+
+    if (packageObj) {
+        stateString += `The package is at (${packageObj.x}, ${packageObj.y}). `;
+    } else {
+        if (!hasPackage) {
+            stateString += 'The package has been delivered or does not exist. ';
+        }
+    }
+    
+    if (goalObj) {
+        stateString += `The delivery goal is at (${goalObj.x}, ${goalObj.y}).`;
+    }
+
+    return stateString.trim();
+};
+
 export const generateGoal = async (
+    userInput: string,
     systemInstruction: string,
     modelId: string,
     temperature: number,
@@ -254,6 +284,8 @@ export const generateGoal = async (
     allTools: LLMTool[],
     autonomousActionLimit: number,
     actionContext: string | null,
+    robotState: RobotState,
+    environmentState: EnvironmentObject[],
 ): Promise<{ goal: string, rawResponse: string }> => {
     if (typeof systemInstruction !== 'string' || !systemInstruction.trim()) {
         throw new Error("The system instruction for goal generation is missing or empty. The 'Autonomous Goal Generator' tool may have been corrupted.");
@@ -263,10 +295,12 @@ export const generateGoal = async (
     const toolsForPrompt = JSON.stringify(lightweightTools, null, 2);
 
     const contextText = actionContext || "No actions have been taken yet in this session.";
+    const robotStateString = getRobotStateString(robotState, environmentState);
     
     const instructionWithContext = systemInstruction
         .replace('{{ACTION_HISTORY}}', contextText)
-        .replace('{{ACTION_LIMIT}}', String(autonomousActionLimit));
+        .replace('{{ACTION_LIMIT}}', String(autonomousActionLimit))
+        .replace('{{ROBOT_STATE}}', robotStateString);
 
     const fullSystemInstruction = `${instructionWithContext}\n\nHere is the current list of all available tools:\n${toolsForPrompt}`;
 
@@ -284,8 +318,7 @@ export const generateGoal = async (
     try {
         const response = await ai.models.generateContent({
             model: modelId,
-            // No user prompt, the system instruction has everything.
-            contents: "What should I do next?", 
+            contents: userInput, 
             config: {
                 systemInstruction: fullSystemInstruction,
                 temperature: temperature,
@@ -493,6 +526,43 @@ export const generateResponse = async (
         
         const processingError = new Error(finalMessage) as any;
         processingError.rawAIResponse = rawResponseForDebug || JSON.stringify(error, null, 2);
+        throw processingError;
+    }
+};
+
+
+export const generateText = async (
+    userInput: string,
+    systemInstruction: string,
+    modelId: string,
+    temperature: number,
+    apiConfig: APIConfig,
+): Promise<string> => {
+    if (typeof systemInstruction !== 'string' || !systemInstruction.trim()) {
+        throw new Error("The system instruction for text generation is missing or empty.");
+    }
+    const ai = getAIClient(apiConfig);
+
+    try {
+        const response = await ai.models.generateContent({
+            model: modelId,
+            contents: userInput,
+            config: {
+                systemInstruction: systemInstruction,
+                temperature: temperature,
+            },
+        });
+        
+        return response.text;
+
+    } catch (error) {
+        console.error("Error in Gemini Service (generateText):", error);
+        const errorDetails = (error as any).message || (error as any).toString();
+        const responseText = (error as any).response?.text;
+        const finalMessage = `AI text generation failed: ${errorDetails}${responseText ? `\nResponse: ${responseText}` : ''}`;
+        
+        const processingError = new Error(finalMessage) as any;
+        processingError.rawAIResponse = JSON.stringify(error, null, 2);
         throw processingError;
     }
 };

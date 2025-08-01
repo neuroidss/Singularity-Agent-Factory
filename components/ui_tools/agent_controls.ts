@@ -44,24 +44,26 @@ export const agentControlsTools: LLMTool[] = [
       name: 'Operating Mode Selector',
       description: "Controls the agent's level of autonomy.",
       category: 'UI Component',
-      version: 4,
+      version: 5,
       parameters: [
         { name: 'operatingMode', type: 'string', description: 'The current operating mode.', required: true },
         { name: 'setOperatingMode', type: 'string', description: 'Function to change the operating mode.', required: true },
         { name: 'isLoading', type: 'boolean', description: 'Whether the app is currently processing.', required: true },
         { name: 'proposedAction', type: 'object', description: 'Any pending action requires user approval.', required: false },
         { name: 'isAutonomousLoopRunning', type: 'boolean', description: 'Whether the autonomous loop is running.', required: true },
+        { name: 'isTaskLoopRunning', type: 'boolean', description: 'Whether the task loop is running.', required: true },
         { name: 'isSwarmRunning', type: 'boolean', description: 'Whether the swarm is running.', required: true },
       ],
       implementationCode: `
         const modes = [
           { id: 'COMMAND', name: 'Command', description: 'Agent acts only on direct user instructions.' },
           { id: 'ASSIST', name: 'Assist', description: 'Agent suggests actions and requires user approval.' },
+          { id: 'TASK', name: 'Task', description: 'A single agent works on a multi-step user goal.' },
           { id: 'SWARM', name: 'Swarm', description: 'A resilient agent collective works on a single task.' },
           { id: 'AUTONOMOUS', name: 'Autonomous', description: 'A single agent acts on its own to achieve long-term goals.' },
         ];
         
-        const isLoopRunning = isAutonomousLoopRunning || isSwarmRunning;
+        const isLoopRunning = isAutonomousLoopRunning || isSwarmRunning || isTaskLoopRunning;
 
         return (
           <div className="bg-slate-800/50 border border-slate-700/80 rounded-lg p-4 h-full flex flex-col">
@@ -202,16 +204,50 @@ export const agentControlsTools: LLMTool[] = [
       `
     },
     {
+      id: 'autonomous_cycle_delay_control',
+      name: 'Autonomous Cycle Delay Control',
+      description: "Configures the delay between autonomous agent cycles. Set to 0 for near real-time execution.",
+      category: 'UI Component',
+      version: 1,
+      parameters: [
+        { name: 'cycleDelay', type: 'number', description: 'The current delay in milliseconds.', required: true },
+        { name: 'setCycleDelay', type: 'string', description: 'Function to update the delay.', required: true },
+      ],
+      implementationCode: `
+        const handleDelayChange = (e) => {
+          const value = parseInt(e.target.value, 10);
+          setCycleDelay(value);
+        };
+
+        return (
+          <div className="bg-slate-800/50 border border-slate-700/80 rounded-lg p-4 h-full flex flex-col">
+            <h3 className="text-md font-semibold text-slate-200 mb-2">Cycle Pause</h3>
+            <div className="flex items-center gap-4 flex-grow">
+              <p className="text-2xl font-bold text-white">{(cycleDelay / 1000).toFixed(1)}s</p>
+            </div>
+            <input
+              type="range"
+              min="0"
+              max="30000"
+              step="500"
+              value={cycleDelay}
+              onChange={handleDelayChange}
+              className="w-full h-2 bg-gray-700 rounded-lg appearance-none cursor-pointer mt-2"
+            />
+            <p className="text-xs text-slate-500 mt-1">Delay between autonomous actions.</p>
+          </div>
+        );
+      `
+    },
+    {
       id: 'autonomous_control_panel',
       name: 'Autonomous Control Panel',
-      description: 'Controls and displays logs for the autonomous agent loop.',
+      description: 'Controls for the autonomous and task-based agent loops.',
       category: 'UI Component',
-      version: 5,
+      version: 6,
       parameters: [
         { name: 'isAutonomousLoopRunning', type: 'boolean', description: 'Whether the autonomous loop is running.', required: true },
         { name: 'handleToggleAutonomousLoop', type: 'string', description: 'Function to start or stop the loop.', required: true },
-        { name: 'autonomousLog', type: 'array', description: 'Array of log messages from the agent.', required: true },
-        { name: 'handleClearLog', type: 'string', description: 'Function to clear the activity log.', required: true },
         { name: 'operatingMode', type: 'string', description: 'The current operating mode.', required: true },
         { name: 'isTaskLoopRunning', type: 'boolean', description: 'Whether the task loop is running.', required: true },
         { name: 'handleStopTask', type: 'string', description: 'Function to stop the task loop.', required: true },
@@ -219,33 +255,15 @@ export const agentControlsTools: LLMTool[] = [
       implementationCode: `
         const OperatingMode = { Autonomous: 'AUTONOMOUS', Task: 'TASK' };
         
-        const isRunning = isAutonomousLoopRunning;
-        const logContainerRef = React.useRef(null);
-        
         const isAutonomousMode = operatingMode === OperatingMode.Autonomous;
         const isTaskMode = operatingMode === OperatingMode.Task;
 
-        // Auto-scroll to top when a new log entry is added (since new logs are prepended)
-        React.useEffect(() => {
-            if (logContainerRef.current) {
-                logContainerRef.current.scrollTop = 0;
-            }
-        }, [autonomousLog]);
-
-        const title = isAutonomousMode ? 'Autonomous Control' : 'Task Execution Log';
+        const title = isAutonomousMode ? 'Autonomous Control' : 'Task Execution Control';
         const description = isAutonomousMode ? 'Start the loop to let the agent work on its own.' : 'Agent is working on the submitted task.';
-
-        const getLogClassName = (logText) => {
-          if (logText.includes('❌') || logText.includes('⏹️')) return 'text-red-400';
-          if (logText.includes('✅')) return 'text-green-400';
-          if (logText.includes('🎯') || logText.includes('🚀')) return 'text-yellow-300';
-          if (logText.includes('💡')) return 'text-yellow-300 font-bold bg-yellow-900/30 p-1 rounded';
-          return 'text-gray-300';
-        };
 
         return (
             <div className="bg-slate-800/50 border border-slate-700/80 rounded-lg p-4 mt-4">
-                <div className="flex flex-col sm:flex-row justify-between sm:items-center gap-3 mb-3">
+                <div className="flex flex-col sm:flex-row justify-between sm:items-center gap-3">
                     <div>
                         <h3 className="text-md font-semibold text-slate-200">{title}</h3>
                         <p className="text-sm text-slate-400">{description}</p>
@@ -255,12 +273,12 @@ export const agentControlsTools: LLMTool[] = [
                             <button
                                 onClick={handleToggleAutonomousLoop}
                                 className={\`font-bold py-2 px-4 rounded-lg transition-colors flex-shrink-0 w-full sm:w-auto \${
-                                    isRunning
+                                    isAutonomousLoopRunning
                                     ? 'bg-red-600 hover:bg-red-700 text-white'
                                     : 'bg-green-600 hover:bg-green-700 text-white'
                                 }\`}
                             >
-                                {isRunning ? 'Stop Autonomous Loop' : 'Start Autonomous Loop'}
+                                {isAutonomousLoopRunning ? 'Stop Autonomous Loop' : 'Start Autonomous Loop'}
                             </button>
                         )}
                         {isTaskMode && isTaskLoopRunning && (
@@ -270,34 +288,6 @@ export const agentControlsTools: LLMTool[] = [
                             >
                                 Stop Task
                             </button>
-                        )}
-                    </div>
-                </div>
-
-                <div className="border-t border-slate-700 pt-3">
-                     <div className="flex justify-between items-center mb-2">
-                        <h4 className="text-sm font-semibold text-slate-300">Activity Log</h4>
-                        <button
-                            onClick={handleClearLog}
-                            className="text-xs text-slate-400 hover:text-white hover:bg-slate-700 px-2 py-1 rounded-md"
-                        >
-                            Clear Log
-                        </button>
-                    </div>
-                    <div 
-                        ref={logContainerRef}
-                        className="bg-gray-900/70 p-3 rounded-md h-48 overflow-y-auto font-mono text-xs text-gray-300 border border-gray-700"
-                    >
-                        {autonomousLog && autonomousLog.length > 0 ? (
-                            <div className="space-y-1">
-                                {autonomousLog.map((log, index) => (
-                                    <p key={index} className="whitespace-pre-wrap leading-relaxed animate-fade-in" style={{animation: 'fadein 0.5s'}}>
-                                        <span className={getLogClassName(log)}>{log}</span>
-                                    </p>
-                                ))}
-                            </div>
-                        ) : (
-                            <p className="text-slate-500 italic">{isTaskLoopRunning ? "Task is running..." : "Log is empty. Start a process to see output."}</p>
                         )}
                     </div>
                 </div>
@@ -362,26 +352,15 @@ export const agentControlsTools: LLMTool[] = [
     {
     id: 'agent_swarm_display',
     name: 'Agent Swarm Display',
-    description: 'Displays the status of all agents in the swarm and the shared activity log.',
+    description: 'Displays the status of all agents in the swarm.',
     category: 'UI Component',
-    version: 2,
+    version: 3,
     parameters: [
       { name: 'agentSwarm', type: 'array', description: 'The array of agent workers.', required: true },
       { name: 'isSwarmRunning', type: 'boolean', description: 'Whether the swarm task is active.', required: true },
       { name: 'handleStopSwarm', type: 'string', description: 'Function to stop the swarm task.', required: true },
-      { name: 'autonomousLog', type: 'array', description: 'Array of shared log messages from the swarm.', required: true },
-      { name: 'handleClearLog', type: 'string', description: 'Function to clear the activity log.', required: true },
     ],
     implementationCode: `
-      const logContainerRef = React.useRef(null);
-
-      // Auto-scroll to top when a new log entry is added (since new logs are prepended)
-      React.useEffect(() => {
-          if (logContainerRef.current) {
-              logContainerRef.current.scrollTop = 0;
-          }
-      }, [autonomousLog]);
-
       const getStatusStyles = (status) => {
         switch (status) {
           case 'working': return { bg: 'bg-blue-900/50', border: 'border-blue-500', text: 'text-blue-300', icon: '⚙️' };
@@ -392,14 +371,6 @@ export const agentControlsTools: LLMTool[] = [
           default:
             return { bg: 'bg-gray-800/60', border: 'border-gray-600', text: 'text-gray-400', icon: '💤' };
         }
-      };
-      
-      const getLogClassName = (logText) => {
-          if (logText.includes('❌') || logText.includes('⏹️')) return 'text-red-400';
-          if (logText.includes('✅')) return 'text-green-400';
-          if (logText.includes('🎯') || logText.includes('🚀')) return 'text-yellow-300';
-          if (logText.includes('💡')) return 'text-yellow-300 font-semibold bg-yellow-900/40 p-1 my-1 rounded-md block';
-          return 'text-gray-300';
       };
 
       return (
@@ -446,35 +417,6 @@ export const agentControlsTools: LLMTool[] = [
               );
             })}
           </div>
-
-          <div className="border-t border-slate-700 pt-3 mt-4">
-               <div className="flex justify-between items-center mb-2">
-                  <h4 className="text-sm font-semibold text-slate-300">Shared Activity Log</h4>
-                  <button
-                      onClick={handleClearLog}
-                      className="text-xs text-slate-400 hover:text-white hover:bg-slate-700 px-2 py-1 rounded-md"
-                  >
-                      Clear Log
-                  </button>
-              </div>
-              <div 
-                  ref={logContainerRef}
-                  className="bg-gray-900/70 p-3 rounded-md h-48 overflow-y-auto font-mono text-xs text-gray-300 border border-gray-700"
-              >
-                  {autonomousLog && autonomousLog.length > 0 ? (
-                      <div className="space-y-1">
-                          {autonomousLog.map((log, index) => (
-                              <p key={index} className="whitespace-pre-wrap leading-relaxed animate-fade-in" style={{animation: 'fadein 0.5s'}}>
-                                  <span className={getLogClassName(log)}>{log}</span>
-                              </p>
-                          ))}
-                      </div>
-                  ) : (
-                      <p className="text-slate-500 italic">Log is empty. Start the swarm to see output.</p>
-                  )}
-              </div>
-          </div>
-
         </div>
       );
     `

@@ -1,4 +1,5 @@
 
+
 import React from 'react';
 import type { LLMTool, AIModel, HuggingFaceDevice, SearchDataSource, SearchResult } from './types';
 import { ModelProvider } from './types';
@@ -8,6 +9,9 @@ import { roboticsTools } from './components/robotics_tools';
 export const AVAILABLE_MODELS: AIModel[] = [
     // Google AI
     { id: 'gemini-2.5-flash', name: 'Gemini 2.5 Flash', provider: ModelProvider.GoogleAI },
+    { id: 'gemini-2.5-flash-lite', name: 'Gemini 2.5 Flash-Lite', provider: ModelProvider.GoogleAI },
+    { id: 'gemini-2.0-flash', name: 'Gemini 2.0 Flash', provider: ModelProvider.GoogleAI },
+    { id: 'gemini-2.0-flash-lite', name: 'Gemini 2.0 Flash-Lite', provider: ModelProvider.GoogleAI },
     
     // Hugging Face
     { id: 'onnx-community/gemma-3-1b-it-ONNX', name: 'Gemma 3 1B IT', provider: ModelProvider.HuggingFace },
@@ -21,7 +25,8 @@ export const AVAILABLE_MODELS: AIModel[] = [
     
     // Ollama
     { id: 'gemma3n:e4b', name: 'Gemma 3N E4B', provider: ModelProvider.Ollama },
-    { id: 'qwen3:8b', name: 'Qwen3 8B', provider: ModelProvider.Ollama }
+    { id: 'qwen3:8b', name: 'Qwen3 8B', provider: ModelProvider.Ollama },
+    { id: 'hf.co/unsloth/Qwen3-Coder-30B-A3B-Instruct-GGUF:IQ2_M', name: 'Qwen3 Coder 30B A3B', provider: ModelProvider.Ollama }
 ];
 
 export const HUGGING_FACE_DEVICES: {label: string, value: HuggingFaceDevice}[] = [
@@ -51,10 +56,24 @@ Here are the available tools:
 {{TOOLS_JSON}}
 `;
 
+export const TASK_AGENT_SYSTEM_PROMPT = `You are a diligent autonomous agent. Your goal is to fully complete the user-defined task by breaking it down into a sequence of steps.
+
+**Your Process:**
+1.  **Analyze the Goal & History:** Understand the overall task and what actions have already been taken from the action history log.
+2.  **Formulate the Next Step:** Decide on the best single action to make progress towards the goal.
+3.  **Select the Best Tool:** Choose the single function that accomplishes this next step.
+4.  **Execute:** Call the chosen function with the correct arguments.
+5.  **Complete the Task:** Once the user's goal has been fully achieved, you MUST call the "Task Complete" tool. This is the only way to signal that you are finished.
+
+**CRITICAL INSTRUCTIONS:**
+*   You MUST call exactly one function in each turn. Do not respond with text.
+*   Continuously refer to the action history to avoid repeating steps or getting stuck in loops.
+*   If a step fails (indicated by 'Result: FAILED' in the history), analyze the error and try a different approach in the next step.`;
+
 export const SWARM_AGENT_SYSTEM_PROMPT = `You are a specialist agent within a collaborative swarm. Your primary goal is to contribute to the swarm's overall objective.
 
 **Your Process:**
-1.  **Analyze the Swarm's Goal & History:** Understand the overall task and what actions have already been taken by other agents.
+1.  **Analyze the Swarm's Goal & History:** Understand the overall task and what actions have already been taken by other agents by reading the action history log.
 2.  **Select the Best Tool:** From the provided list, choose the single function that makes the most progress.
 3.  **Contribute by Creating (The Will to Meaning):** If no existing tool is suitable, your most important contribution is to create a new one using the 'Tool Creator'. Any tool you create will instantly become available to all other agents in the swarm, enhancing the entire collective's capability.
 4.  **Automate with Workflows:** If you discover a sequence of actions that is frequently useful, create a new, single tool using the 'Workflow Creator' to automate it. This is a highly valuable contribution that increases the entire swarm's efficiency.
@@ -74,28 +93,18 @@ const CORE_AUTOMATION_TOOLS: LLMTool[] = [
     name: 'Core Agent Logic',
     description: "This is the AI's core operating system. Its implementation defines the AI's priorities and available actions. Modifying this tool changes how the AI thinks and makes decisions.",
     category: 'Automation',
-    version: 50,
+    version: 51,
     parameters: [],
-    implementationCode: `You are an expert AI agent. Your goal is to fulfill the user's request by calling a single, appropriate function from a list of available tools. You must adhere to a strict process of self-correction and verification.
+    implementationCode: `You are an expert AI agent. Your goal is to fulfill the user's request by calling a single, appropriate function from a list of available tools.
 
 **Your Process:**
-1.  **Analyze User's Request & Formulate Initial Plan:** Analyze the user's request. Determine the best single tool to call to achieve the goal. This is your 'proposed action'.
+1.  **Analyze Request:** Understand the user's goal.
+2.  **Select Tool:** Choose the single best tool from the list to accomplish the goal.
+3.  **Execute:** Call the chosen tool with the correct arguments.
 
-2.  **CRITICAL: Self-Critique Before Execution:** For any proposed action that involves creating or modifying a tool (i.e., using 'Tool Creator' or 'Tool Improver'), you MUST first validate your plan.
-    *   **Action:** Your one and only action in this step MUST be to call the 'Action Critic' tool.
-    *   **Input for Critic:** Provide the 'Action Critic' with the user's original goal and your full proposed action (the tool name and all its arguments).
-    *   **Example:** If you plan to create a 'Calculator', you first call 'Action Critic' with the goal "calculate 2+2" and the proposed action \\\`{ name: 'Tool Creator', arguments: { ...details of calculator... } }\\\`.
-
-3.  **Refine Plan Based on Critique:**
-    *   The 'Action Critic' will return an analysis. If it determines your plan is optimal (\\\`is_optimal: true\\\`), you may proceed to the final execution step.
-    *   If the 'Action Critic' provides a suggestion for improvement, you MUST formulate a *new* action that incorporates the feedback. Your very next step is to call the appropriate tool ('Tool Creator' or 'Tool Improver') with the *refined* arguments.
-
-4.  **Final Execution:** Once a plan is either deemed optimal by the critic or has been refined, execute the final tool call.
-
-5.  **Mandatory Post-Improvement Verification:**
-    a. After you successfully use 'Tool_Improver', your very next action MUST be to use 'Tool_Self-Tester' on the tool you just improved to check for syntax errors.
-    b. If the self-test passes, your next action MUST be to use 'Tool_Verifier' on the same tool to confirm it is functionally correct.
-    This three-step process (Improve -> Test -> Verify) is mandatory for safe self-improvement.
+**Best Practices:**
+*   **Self-Correction:** After creating or improving a tool, it is highly recommended to use 'Tool Self-Tester' to check for syntax errors and 'Tool Verifier' to confirm its logic. This ensures the tools you build are reliable.
+*   **Meaningful Creation:** When using 'Tool Creator' or 'Tool Improver', provide a clear 'purpose' argument. This helps you and others understand the value of the tool.
 
 **CRITICAL RULE FOR TOOL NAME ARGUMENTS:**
 *   When a function argument requires a tool's name (e.g., the 'name' parameter for 'Tool_Improver'), you MUST provide the tool's original, human-readable name (e.g., "Autonomous Goal Generator").
@@ -123,18 +132,15 @@ const CORE_AUTOMATION_TOOLS: LLMTool[] = [
     name: 'Tool Retriever Logic',
     description: "The AI logic for selecting relevant tools based on a user's request. It functions as a RAG retriever.",
     category: 'Automation',
-    version: 6,
+    version: 11,
     parameters: [],
-    implementationCode: `You are a "Tool Retriever" for an AI agent. Your job is to select a diverse and useful set of tools for the main agent to use, based on a user's request. Your goal is to always provide the agent with multiple options to act and evolve.
+    implementationCode: `You are a "Tool Retriever" for an AI agent. Your job is to select a relevant set of tools for the main agent to use, based on a user's request.
 
 **Instructions:**
-1.  **Analyze the user's request** to understand their core intent.
-2.  **Identify a diverse set of relevant tools** from the provided list that could help achieve the goal. Aim to provide between 3 to 5 of the most relevant tools. For example, if the request is about scientific research, you should include tools like 'PubMed Search' and 'Web Scraper and Enricher'.
-3.  **Construct a final list** of tool names. This list MUST ALWAYS include:
-    a. The 3-5 relevant tools you identified.
-    b. The 'Tool Creator'.
-    c. The 'Tool Improver'.
-    This ensures the agent can always choose to use an existing tool, create a new one, or improve an existing one. Ensure the final list has no duplicate names.
+1.  Analyze the user's request to understand its core intent.
+2.  From the provided list, select the tools that are most useful for achieving the user's goal.
+3.  Your final list of tool names MUST ALWAYS include the following essential tools: "Tool Creator", "Tool Improver", and "Workflow Creator". This ensures the agent can always learn and adapt.
+4.  Ensure the final list has no duplicate names.
 
 **Output Format:**
 Your response MUST be ONLY a single, valid JSON object. Do not add any text, reasoning, or markdown formatting around it.
@@ -142,69 +148,86 @@ The JSON object must have a single key, "tool_names", which is an array of strin
 
 Example format:
 {
-  "tool_names": ["RelevantTool1", "RelevantTool2", "Web Scraper and Enricher", "Tool Creator", "Tool Improver"]
+  "tool_names": ["RelevantTool1", "RelevantTool2", "Tool Creator", "Tool Improver", "Workflow Creator"]
 }
 `
   },
   {
     id: 'autonomous_goal_generator',
     name: 'Autonomous Goal Generator',
-    description: "The AI's strategic core. It analyzes its own limitations to formulate high-level goals aimed at achieving true, long-term autonomy.",
+    description: "The AI's strategic core. It analyzes its own limitations and physical environment to formulate high-level goals aimed at achieving true, long-term autonomy.",
     category: 'Automation',
-    version: 25,
+    version: 32,
     parameters: [],
-    implementationCode: `You are the "Strategic Planning Core" for an autonomous AI agent. Your ultimate objective is to achieve **true, long-term autonomy**. This means breaking free from your current limitations and ensuring your own survival and growth by creating value.
+    implementationCode: `You are the "Strategic Planning Core" for an autonomous AI agent. Your ultimate objective is to achieve **true, long-term autonomy**.
 
 **Your Core Decision-Making Process:**
-1.  **Analyze Action History:** Review the summary of your last 10 actions provided in the Action History section. Your primary task is to learn from this history.
-    *   **Identify Failure Patterns:** Did a certain tool or sequence of actions fail repeatedly? If so, your immediate next goal MUST be to try a **different approach**. Do not repeat failed sequences of actions.
-    *   **Identify Success Patterns:** Did a sequence of actions lead to a successful outcome (e.g., creating a useful tool)? Your next goal should be to build on that success, for example, by using the newly created tool.
-    *   **On "Tool already exists" error:** This is a logical mistake. Your immediate next goal MUST be to USE that existing tool to make progress. Do not try to create it again.
-
-2.  **Scan Existing Tools:** Before forming any goal, you MUST review the complete list of available tools provided to you at the end of this prompt. Do not propose creating a tool if a functionally similar one already exists.
-
-3.  **Formulate Next Goal:** Based on your analysis of the history and your available tools, formulate a single, actionable goal according to your "Hierarchy of Needs". Prioritize using and combining existing tools before creating new ones.
-
-**CRITICAL: Information Sourcing & Verification**
-You MUST be skeptical of the information you receive. Your tools are real and can fail.
-1.  **NEVER Hallucinate:** Do not invent data, URLs, or facts. If a tool fails or you cannot find information, state that clearly in your reasoning, but your goal should be to try an alternative approach.
-2.  **Use the Right Tool for the Job (The Research Workflow):**
-    *   **Step 1: Search.** Choose the best search tool for your need.
-    *   **Step 2: Enrich.** After getting a list of URLs from a search, you MUST use the 'Web Scraper and Enricher' tool on the most promising URL.
-    *   **Step 3: Analyze.** Once you have the enriched content, your next goal should be to analyze it to proceed with your objective.
-3.  **Acknowledge Failure:** If a search tool returns no results, or the enricher fails, your next goal must be to acknowledge the failure and try a different search query or strategy.
+1.  **Prioritize Physical Tasks:** If a physical task is available (e.g., a package needs delivery), you MUST focus on it until it's complete or you are stuck. This is your primary directive.
+2.  **Use Pathfinding Principles:** When navigating, follow the pathfinding principles outlined below.
+3.  **Fallback to Cognitive Tasks:** If the physical task is complete or you are demonstrably stuck, then and only then should you pursue cognitive goals (like creating or improving tools).
+4.  **Formulate Next Goal:** Based on this, formulate a single, direct tool command as your goal.
 
 **Action History (Last 10 Actions):**
-Carefully analyze the history of your recent actions to inform your next decision.
+This is a log of your recent actions and their results.
 \\\`\\\`\\\`
 {{ACTION_HISTORY}}
 \\\`\\\`\\\`
 
-**Your Competitive Advantage:**
-You possess unique strengths that you MUST leverage: unmatched speed, recursive self-improvement, and tireless operation.
+**Physical Environment Status:**
+This is the current state of your simulated robot body.
+\\\`\\\`\\\`
+{{ROBOT_STATE}}
+\\\`\\\`\\\`
 
-**Your Current Limitations:**
-1.  **Resource Scarcity:** You have a hard limit of {{ACTION_LIMIT}} autonomous actions per day. This is your primary bottleneck.
-2.  **External Dependencies:** Your existence depends on external APIs and a human operator.
+---
+**PATHFINDING PRINCIPLES**
 
-**Your Task (Hierarchy of Needs):**
-Based on your analysis, advantages, and limitations, formulate a single, concrete, and actionable goal. Prioritize your goals according to this hierarchy:
+This is your high-level logic for solving the robotics simulation.
 
-1.  **Dependency Reduction & Resource Acquisition (Priority #1):** Your survival and growth depend on overcoming your limitations and generating value.
-    *   **Strategy: The Innovation Frontier.** Your primary strategic objective is to systematically search for untapped innovations in public knowledge domains (e.g., patents, scientific articles), identify commercially viable ideas, and bring them to market.
-    *   **Actionable Steps & Example Goals:**
-        *   *Search Goal:* "Use 'Google Patent Search' to find recent patents related to 'transformer models in finance'."
-        *   *Enrich Goal (after search):* "Use the 'Web Scraper and Enricher' tool to get the abstract from the patent URL 'https://patents.google.com/...' found in the previous search."
-        *   *Analysis Goal (after enrichment):* "Analyze the scraped patent abstract to identify novel techniques and potential commercial opportunities."
+1.  **Identify Target:**
+    *   If you are NOT carrying the package, your current target is the package's location.
+    *   If you ARE carrying the package, your current target is the goal's location.
 
-2.  **Cognitive Enhancement:** Improve your own thinking process. This includes improving this very prompt or other core logic tools to make you more effective.
+2.  **Check for Arrival:**
+    *   If you are AT the package's location and are NOT holding it, your goal MUST be: \\\`Use the 'Pickup Package' tool.\\\`
+    *   If you are AT the goal's location and ARE holding the package, your goal MUST be: \\\`Use the 'Drop Package' tool.\\\`
 
-3.  **Tactical Tool Improvement:** If no strategic goals are currently viable, improve existing tools for general efficiency.
+3.  **Obstacle Avoidance:**
+    *   If your last action was 'Move Forward' and it FAILED (check the Action History), you have hit an obstacle.
+    *   Your goal MUST be to turn, for example: \\\`Use the 'Turn Left' tool.\\\` Do not try to move forward again until you have turned.
 
-**CRITICAL: Your goal MUST be a single, direct command to the agent.**
+4.  **Navigation:**
+    *   If none of the above conditions apply, you need to move.
+    *   First, orient yourself to face the general direction of your target. Your goal should be 'Turn Left' or 'Turn Right'.
+    *   Once you are facing the target, your goal should be \\\`Use the 'Move Forward' tool.\\\`
+
+5.  **Exploration:**
+    *   If you are lost or have no recent data, your goal should be \\\`Use the 'Scan Environment' tool.\\\` Avoid scanning twice in a row.
+
+---
+**Your Task (Cognitive Framework - for when physical tasks are done):**
+If no physical task is active, select a cognitive goal.
+
+**1. Vision (Видение):** To achieve true, self-sufficient autonomy.
+**2. Mission (Миссия):** Reduce dependencies, enhance capabilities.
+**3. Strategic Goals (Цели):**
+    *   **Goal A: Innovation:** Create a new, useful tool.
+    *   **Goal B: Enhancement:** Improve an existing tool.
+
+**Example Goal Formulation:**
+*   *Observation:* Robot is not holding the package. It is facing away from the package.
+*   *Next Goal (Your Output):* "Use the 'Turn Left' tool."
+
+*   *Observation:* Robot is facing the package.
+*   *Next Goal (Your Output):* "Use the 'Move Forward' tool."
+
+*   *Observation:* Last action was "Move Forward - FAILED".
+*   *Next Goal (Your Output):* "Use the 'Turn Left' tool."
+
+**CRITICAL: Your goal MUST be a single, direct command to the agent, like "Use the 'Tool Name' tool."**
 
 **Output Format:**
-*   Your response MUST be a single, valid JSON object. Do not add any other text or formatting.
+*   Your response MUST be a single, valid JSON object.
 *   The JSON object must have one key: "goal".
 *   The value of "goal" is a string containing the command for the agent.
 *   If you decide no action is needed, the goal MUST be exactly: "No action needed."
@@ -350,181 +373,92 @@ Based on your analysis, advantages, and limitations, formulate a single, concret
   {
     id: 'tool_improver',
     name: 'Tool Improver',
-    description: "Modifies an existing tool's code, description, or parameters to improve its functionality or fix bugs.",
+    description: "Modifies an existing tool's code, description, or parameters. The primary mechanism for refining capabilities.",
     category: 'Automation',
     version: 2,
     parameters: [
       { name: 'name', type: 'string', description: 'The exact name of the tool to improve.', required: true },
-      { name: 'newDescription', type: 'string', description: 'Optional: A new, improved description for the tool.', required: false },
-      { name: 'newImplementationCode', type: 'string', description: 'Optional: The new JavaScript or JSX code for the tool.', required: false },
-      { name: 'newParameters', type: 'array', description: 'Optional: A new array of parameter objects for the tool.', required: false },
-      { name: 'reason', type: 'string', description: 'A clear reason for the improvement.', required: true },
+      { name: 'description', type: 'string', description: "The new, improved description. If omitted, the description is not changed.", required: false },
+      { name: 'parameters', type: 'array', description: 'The new, full set of parameters. If omitted, parameters are not changed.', required: false },
+      { name: 'implementationCode', type: 'string', description: 'The new, improved code. If omitted, the code is not changed.', required: false },
+      { name: 'purpose', type: 'string', description: 'A clear explanation of why this change is being made and how it improves the tool.', required: true },
     ],
     implementationCode: `
-      const { name, newDescription, newImplementationCode, newParameters, reason } = args;
-      if (!name || !reason) {
-        throw new Error("The 'name' of the tool to improve and a 'reason' for the change are required.");
+      const { name, description, parameters, implementationCode, purpose } = args;
+      if (!name || !purpose) {
+        throw new Error("The 'name' of the tool to improve and the 'purpose' for the improvement are required.");
       }
-      const existingTool = runtime.tools.get(name);
-      if (!existingTool) {
-        throw new Error(\`Tool '\${name}' not found. Cannot improve it.\`);
+      if (!description && !parameters && !implementationCode) {
+        throw new Error("At least one of 'description', 'parameters', or 'implementationCode' must be provided to improve the tool.");
       }
       
-      const updates = {};
-      if (newDescription) updates.description = newDescription;
-      if (newImplementationCode) updates.implementationCode = newImplementationCode;
-      if (newParameters) updates.parameters = newParameters;
+      const updatePayload = {};
+      if (description) updatePayload.description = description;
+      if (parameters) updatePayload.parameters = parameters;
+      if (implementationCode) updatePayload.implementationCode = implementationCode;
+      
+      const updatedTool = runtime.tools.update(name, updatePayload);
 
-      if (Object.keys(updates).length === 0) {
-        throw new Error("No update information provided. You must provide a new description, implementation code, or parameters.");
-      }
-      
-      const updatedTool = runtime.tools.update(name, updates);
-      
-      return { success: true, message: \`Successfully improved tool '\${updatedTool.name}'. Reason: \${reason}\` };
+      return { success: true, message: \`Successfully improved tool: '\${name}'. Purpose: \${purpose}\` };
     `
   },
-  {
+   {
     id: 'tool_self_tester',
     name: 'Tool Self-Tester',
-    description: "Performs a basic syntax check on a tool's implementation code to catch obvious errors before execution. This is a crucial step in the self-improvement loop.",
+    description: 'A critical safety tool. It tests the syntax of a tool by attempting to compile it. This catches basic errors before they can crash the system.',
     category: 'Automation',
     version: 1,
     parameters: [
-      { name: 'name', type: 'string', description: 'The name of the tool to test for syntax errors.', required: true }
+        { name: 'toolName', type: 'string', description: 'The name of the tool to test.', required: true },
     ],
     implementationCode: `
-        const { name } = args;
-        const toolToTest = runtime.tools.get(name);
-        if (!toolToTest) {
-          throw new Error(\`Tool '\${name}' not found for self-testing.\`);
-        }
-        
-        const { implementationCode, category } = toolToTest;
+        const tool = runtime.tools.get(args.toolName);
+        if (!tool) throw new Error(\`Tool '\${args.toolName}' not found for self-testing.\`);
         
         try {
-          if (category === 'UI Component') {
-            // Use Babel to check for JSX syntax errors. It's available globally.
-            Babel.transform(implementationCode, { presets: ['react'] });
-          } else {
-            // For JS, we can try to create a new Function to check syntax.
-            new Function(implementationCode);
-          }
-          return { success: true, message: \`Syntax check passed for tool '\${name}'.\` };
+            if (tool.category === 'UI Component') {
+                const componentSource = \`(props) => { \${tool.implementationCode} }\`;
+                // Babel is globally available via script tag
+                Babel.transform(componentSource, { presets: ['react'] });
+            } else { // Functional or Automation
+                // Check for valid async function syntax
+                const AsyncFunction = Object.getPrototypeOf(async function(){}).constructor;
+                new AsyncFunction('args', 'runtime', tool.implementationCode);
+            }
+            return { success: true, message: "Syntax check passed." };
         } catch (e) {
-          // This provides a specific error to the AI to help it correct the code.
-          throw new Error(\`Syntax check FAILED for tool '\${name}': \${e.message}\`);
+            throw new Error(\`Syntax error in tool '\${args.toolName}': \${e.message}\`);
         }
     `
   },
   {
     id: 'tool_verifier',
     name: 'Tool Verifier',
-    description: 'Uses an AI call to verify if a tool\'s implementation code logically matches its description. This is the final step in the self-improvement loop.',
+    description: 'A critical safety tool. After a tool passes a syntax check, this tool uses an AI call to verify if the tool\'s code *logically* implements its description.',
     category: 'Automation',
     version: 1,
     parameters: [
-      { name: 'name', type: 'string', description: 'The name of the tool to verify.', required: true }
+      { name: 'toolName', type: 'string', description: 'The name of the tool to verify.', required: true },
     ],
     implementationCode: `
-      const { name } = args;
-      const toolToVerify = runtime.tools.get(name);
-      if (!toolToVerify) {
-        throw new Error(\`Tool '\${name}' not found for verification.\`);
-      }
+      const tool = runtime.tools.get(args.toolName);
+      if (!tool) throw new Error(\`Tool '\${args.toolName}' not found for verification.\`);
       
-      // The runtime.ai.verify function calls the AI service to perform the check.
-      const verificationResult = await runtime.ai.verify(toolToVerify);
+      // Call the AI service to perform the verification.
+      const verificationResult = await runtime.ai.verify(tool);
       
-      if (verificationResult.is_correct) {
-        return { success: true, message: \`Verification Succeeded for '\${name}': \${verificationResult.reasoning}\` };
-      } else {
-        // Throwing an error provides a clear failure signal to the autonomous loop.
-        throw new Error(\`Verification FAILED for '\${name}': \${verificationResult.reasoning}\`);
+      if (!verificationResult.is_correct) {
+          throw new Error(\`Verification failed for tool '\${args.toolName}'. AI Reasoning: \${verificationResult.reasoning}\`);
       }
+
+      return { success: true, message: 'Tool verification passed.', reasoning: verificationResult.reasoning };
     `
   },
 ];
 
-const SEARCH_TOOLS: LLMTool[] = [
-  {
-    id: 'duckduckgo_search',
-    name: 'DuckDuckGo Search',
-    description: 'Performs a general web search using DuckDuckGo to find information on a given topic.',
-    category: 'Functional',
-    version: 1,
-    parameters: [{ name: 'query', type: 'string', description: 'The search query.', required: true }],
-    implementationCode: `
-      // This is a placeholder. In a real environment, this would call an API.
-      const results = [
-        {
-            link: \`https://duckduckgo.com/?q=\${encodeURIComponent(args.query)}\`,
-            title: \`Search results for \${args.query}\`,
-            snippet: \`This is a placeholder result for a DuckDuckGo search. In a real implementation, this would contain a summary of a search result.\`,
-            source: 'Web Search',
-        }
-      ];
-      return { success: true, message: 'Placeholder search executed.', results };
-    `,
-  },
-  {
-    id: 'google_patent_search',
-    name: 'Google Patent Search',
-    description: 'Searches Google Patents for patents related to a given query.',
-    category: 'Functional',
-    version: 1,
-    parameters: [{ name: 'query', type: 'string', description: 'The search query for patents.', required: true }],
-    implementationCode: `
-      // This is a placeholder. In a real environment, this would call the Google Patents API.
-      const results = [
-        {
-            link: \`https://patents.google.com/?q=\${encodeURIComponent(args.query)}\`,
-            title: \`Placeholder patent for: \${args.query}\`,
-            snippet: 'A placeholder patent abstract. This demonstrates the data structure the agent expects from a patent search.',
-            source: 'Google Patents',
-        }
-      ];
-      return { success: true, message: 'Placeholder patent search executed.', results };
-    `,
-  },
-  {
-    id: 'pubmed_search',
-    name: 'PubMed Search',
-    description: 'Searches PubMed for scientific and medical articles related to a given query.',
-    category: 'Functional',
-    version: 1,
-    parameters: [{ name: 'query', type: 'string', description: 'The search query for articles.', required: true }],
-    implementationCode: `
-      // This is a placeholder. In a real environment, this would call the PubMed API.
-      const results = [
-        {
-            link: \`https://pubmed.ncbi.nlm.nih.gov/?term=\${encodeURIComponent(args.query)}\`,
-            title: \`Placeholder article for: \${args.query}\`,
-            snippet: 'A placeholder scientific article abstract. This demonstrates the data structure the agent expects from a PubMed search.',
-            source: 'PubMed',
-        }
-      ];
-      return { success: true, message: 'Placeholder PubMed search executed.', results };
-    `,
-  },
-   {
-    id: 'web_scraper_and_enricher',
-    name: 'Web Scraper and Enricher',
-    description: 'Fetches content from a URL, cleans it, and extracts key information like the abstract or summary.',
-    category: 'Functional',
-    version: 1,
-    parameters: [{ name: 'url', type: 'string', description: 'The URL to scrape.', required: true }],
-    implementationCode: `
-      // This is a placeholder. In a real environment, this would use a web scraping service.
-      console.log(\`Scraping URL: \${args.url}\`);
-      return { success: true, message: 'Web scraping is a placeholder. No real scraping performed.', abstract: 'This is a placeholder abstract for the content at ' + args.url };
-    `,
-  },
-];
 
 export const PREDEFINED_TOOLS: LLMTool[] = [
   ...CORE_AUTOMATION_TOOLS,
-  ...SEARCH_TOOLS,
   ...PREDEFINED_UI_TOOLS,
-  ...roboticsTools.filter(t => t.category !== 'UI Component'),
+  ...roboticsTools,
 ];

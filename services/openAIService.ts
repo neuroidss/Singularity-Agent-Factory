@@ -1,4 +1,4 @@
-import type { AIResponse, LLMTool, APIConfig, ToolParameter } from "../types";
+import type { AIResponse, LLMTool, APIConfig, ToolParameter, RobotState, EnvironmentObject } from "../types";
 
 // --- Dynamic Tool Generation for OpenAI ---
 
@@ -71,6 +71,35 @@ const generateDetailedError = (error: unknown, url: string): Error => {
     return processingError;
 }
 
+const getRobotStateString = (robotState: RobotState, environmentState: EnvironmentObject[]): string => {
+    const { x, y, rotation, hasPackage } = robotState;
+    const packageObj = environmentState.find(obj => obj.type === 'package');
+    const goalObj = environmentState.find(obj => obj.type === 'goal');
+    
+    let direction = 'Unknown';
+    if (rotation === 0) direction = 'North (Up)';
+    if (rotation === 90) direction = 'East (Right)';
+    if (rotation === 180) direction = 'South (Down)';
+    if (rotation === 270) direction = 'West (Left)';
+    
+    let stateString = `Robot is at coordinates (${x}, ${y}) facing ${direction}. `;
+    stateString += `Robot is ${hasPackage ? 'currently carrying the package' : 'not carrying the package'}. `;
+
+    if (packageObj) {
+        stateString += `The package is at (${packageObj.x}, ${y}). `;
+    } else {
+        if (!hasPackage) {
+            stateString += 'The package has been delivered or does not exist. ';
+        }
+    }
+    
+    if (goalObj) {
+        stateString += `The delivery goal is at (${goalObj.x}, ${goalObj.y}).`;
+    }
+
+    return stateString.trim();
+};
+
 // --- Service Implementations ---
 
 export const selectTools = async (
@@ -129,13 +158,16 @@ export const selectTools = async (
 };
 
 export const generateGoal = async (
+    userInput: string,
     systemInstruction: string,
     modelId: string,
     temperature: number,
     apiConfig: APIConfig,
     allTools: LLMTool[],
     autonomousActionLimit: number,
-    actionContext: string | null
+    actionContext: string | null,
+    robotState: RobotState,
+    environmentState: EnvironmentObject[]
 ): Promise<{ goal: string, rawResponse: string }> => {
     if (typeof systemInstruction !== 'string' || !systemInstruction.trim()) {
         throw new Error("The system instruction for goal generation is missing or empty. The 'Autonomous Goal Generator' tool may have been corrupted.");
@@ -144,9 +176,11 @@ export const generateGoal = async (
     const toolsForPrompt = JSON.stringify(lightweightTools, null, 2);
 
     const contextText = actionContext || "No action has been taken yet.";
+    const robotStateString = getRobotStateString(robotState, environmentState);
     const instructionWithContext = systemInstruction
         .replace('{{ACTION_HISTORY}}', contextText)
-        .replace('{{ACTION_LIMIT}}', String(autonomousActionLimit));
+        .replace('{{ACTION_LIMIT}}', String(autonomousActionLimit))
+        .replace('{{ROBOT_STATE}}', robotStateString);
 
     const fullSystemInstruction = `${instructionWithContext}\n\nHere is the current list of all available tools:\n${toolsForPrompt}`;
 
@@ -154,7 +188,7 @@ export const generateGoal = async (
         model: modelId,
         messages: [
             { role: 'system', content: fullSystemInstruction },
-            { role: 'user', content: "What should I do next?" },
+            { role: 'user', content: userInput },
         ],
         temperature,
         response_format: { type: "json_object" },
@@ -398,6 +432,40 @@ export const generateResponse = async (
             },
         };
 
+    } catch (error) {
+        throw generateDetailedError(error, apiConfig.openAIBaseUrl);
+    }
+};
+
+export const generateText = async (
+    userInput: string,
+    systemInstruction: string,
+    modelId: string,
+    temperature: number,
+    apiConfig: APIConfig
+): Promise<string> => {
+    const body = {
+        model: modelId,
+        messages: [
+            { role: 'system', content: systemInstruction },
+            { role: 'user', content: userInput },
+        ],
+        temperature,
+    };
+
+    try {
+        const response = await fetch(`${apiConfig.openAIBaseUrl}/chat/completions`, {
+            method: 'POST',
+            headers: getAPIHeaders(apiConfig),
+            body: JSON.stringify(body),
+        });
+
+        if (!response.ok) await handleAPIError(response);
+        
+        const jsonResponse = await response.json();
+        const textResponse = jsonResponse.choices[0].message.content;
+        
+        return textResponse || "";
     } catch (error) {
         throw generateDetailedError(error, apiConfig.openAIBaseUrl);
     }

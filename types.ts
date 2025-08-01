@@ -167,3 +167,33 @@ export interface EnvironmentObject {
   y: number;
   type: 'wall' | 'package' | 'goal';
 }
+
+// --- Knowledge Graph Types ---
+export type KnowledgeGraphNodeType = ToolCategory | 'Topic' | 'Gene' | 'Protein' | 'Compound' | 'Pathway' | 'Disease' | 'Hypothesis' | 'KnowledgeGap' | 'Method' | 'Result' | 'Observation' | 'Biomarker' | 'Tool';
+
+
+export interface KnowledgeGraphNode {
+  id: string;
+  label: string;
+  type: KnowledgeGraphNodeType;
+  zone?: 'emerging' | 'fading' | 'connecting';
+  [key: string]: any; // Allow other properties
+}
+
+export interface KnowledgeEdge {
+  source: string;
+  target: string;
+  type?: string;
+  [key: string]: any;
+}
+
+export interface KnowledgeGraph {
+  nodes: KnowledgeGraphNode[];
+  edges: KnowledgeEdge[];
+}
+
+export interface TrendAnalysis {
+    emergingTopics: string[];
+    fadingTopics: string[];
+    connectingTopics: string[];
+}

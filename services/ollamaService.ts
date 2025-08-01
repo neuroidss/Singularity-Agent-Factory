@@ -1,4 +1,4 @@
-import type { AIResponse, LLMTool, APIConfig } from "../types";
+import type { AIResponse, LLMTool, APIConfig, RobotState, EnvironmentObject } from "../types";
 import { STANDARD_TOOL_CALL_SYSTEM_PROMPT } from '../constants';
 
 // --- Constants ---
@@ -92,6 +92,35 @@ const sanitizeForFunctionName = (name: string): string => {
   return name.replace(/[^a-zA-Z0-9_]/g, '_');
 };
 
+const getRobotStateString = (robotState: RobotState, environmentState: EnvironmentObject[]): string => {
+    const { x, y, rotation, hasPackage } = robotState;
+    const packageObj = environmentState.find(obj => obj.type === 'package');
+    const goalObj = environmentState.find(obj => obj.type === 'goal');
+    
+    let direction = 'Unknown';
+    if (rotation === 0) direction = 'North (Up)';
+    if (rotation === 90) direction = 'East (Right)';
+    if (rotation === 180) direction = 'South (Down)';
+    if (rotation === 270) direction = 'West (Left)';
+    
+    let stateString = `Robot is at coordinates (${x}, ${y}) facing ${direction}. `;
+    stateString += `Robot is ${hasPackage ? 'currently carrying the package' : 'not carrying the package'}. `;
+
+    if (packageObj) {
+        stateString += `The package is at (${packageObj.x}, ${packageObj.y}). `;
+    } else {
+        if (!hasPackage) {
+            stateString += 'The package has been delivered or does not exist. ';
+        }
+    }
+    
+    if (goalObj) {
+        stateString += `The delivery goal is at (${goalObj.x}, ${goalObj.y}).`;
+    }
+
+    return stateString.trim();
+};
+
 
 // --- Service Implementations ---
 export const selectTools = async (
@@ -142,13 +171,16 @@ export const selectTools = async (
 };
 
 export const generateGoal = async (
+    userInput: string,
     systemInstruction: string,
     modelId: string,
     temperature: number,
     apiConfig: APIConfig,
     allTools: LLMTool[],
     autonomousActionLimit: number,
-    actionContext: string | null
+    actionContext: string | null,
+    robotState: RobotState,
+    environmentState: EnvironmentObject[]
 ): Promise<{ goal: string, rawResponse: string }> => {
     if (typeof systemInstruction !== 'string' || !systemInstruction.trim()) {
         throw new Error("The system instruction for goal generation is missing or empty. The 'Autonomous Goal Generator' tool may have been corrupted.");
@@ -157,13 +189,15 @@ export const generateGoal = async (
     const toolsForPrompt = JSON.stringify(lightweightTools, null, 2);
 
     const contextText = actionContext || "No actions have been taken yet.";
+    const robotStateString = getRobotStateString(robotState, environmentState);
     const instructionWithContext = systemInstruction
         .replace('{{ACTION_HISTORY}}', contextText)
-        .replace('{{ACTION_LIMIT}}', String(autonomousActionLimit));
+        .replace('{{ACTION_LIMIT}}', String(autonomousActionLimit))
+        .replace('{{ROBOT_STATE}}', robotStateString);
 
     const fullSystemInstruction = `${instructionWithContext}\n\nHere is the current list of all available tools:\n${toolsForPrompt}`;
 
-    const body = createAPIBody(modelId, fullSystemInstruction, "What should I do next?", temperature, 'json');
+    const body = createAPIBody(modelId, fullSystemInstruction, userInput, temperature, 'json');
     let responseText = "";
     
     try {
@@ -334,6 +368,38 @@ export const generateResponse = async (
         onRawResponseChunk(responseText);
         
         return parseToolCallResponse(responseText, toolNameMap);
+
+    } catch (error) {
+         throw generateDetailedError(error, apiConfig.ollamaHost, responseText);
+    }
+};
+
+export const generateText = async (
+    userInput: string,
+    systemInstruction: string,
+    modelId: string,
+    temperature: number,
+    apiConfig: APIConfig,
+): Promise<string> => {
+    if (typeof systemInstruction !== 'string' || !systemInstruction.trim()) {
+        throw new Error("The system instruction for text generation is missing or empty.");
+    }
+    const body = createAPIBody(modelId, systemInstruction, userInput, temperature);
+    let responseText = "";
+    
+    try {
+        const response = await fetch(`${apiConfig.ollamaHost}/api/generate`, {
+            method: 'POST',
+            headers: API_HEADERS,
+            body: JSON.stringify(body),
+        });
+
+        if (!response.ok) await handleAPIError(response);
+        
+        const jsonResponse = await response.json();
+        responseText = jsonResponse.response || "";
+        
+        return responseText;
 
     } catch (error) {
          throw generateDetailedError(error, apiConfig.ollamaHost, responseText);

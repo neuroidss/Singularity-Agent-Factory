@@ -1,5 +1,5 @@
 import { pipeline, type TextGenerationPipeline } from '@huggingface/transformers';
-import type { AIResponse, APIConfig, LLMTool } from '../types';
+import type { AIResponse, APIConfig, LLMTool, RobotState, EnvironmentObject } from '../types';
 import { STANDARD_TOOL_CALL_SYSTEM_PROMPT } from '../constants';
 
 
@@ -24,6 +24,35 @@ const generateDetailedError = (error: unknown, modelId: string, rawResponse?: st
     const processingError = new Error(finalMessage) as any;
     processingError.rawAIResponse = rawResponse || "Failed to get raw response due to a model or network error.";
     return processingError;
+};
+
+const getRobotStateString = (robotState: RobotState, environmentState: EnvironmentObject[]): string => {
+    const { x, y, rotation, hasPackage } = robotState;
+    const packageObj = environmentState.find(obj => obj.type === 'package');
+    const goalObj = environmentState.find(obj => obj.type === 'goal');
+    
+    let direction = 'Unknown';
+    if (rotation === 0) direction = 'North (Up)';
+    if (rotation === 90) direction = 'East (Right)';
+    if (rotation === 180) direction = 'South (Down)';
+    if (rotation === 270) direction = 'West (Left)';
+    
+    let stateString = `Robot is at coordinates (${x}, ${y}) facing ${direction}. `;
+    stateString += `Robot is ${hasPackage ? 'currently carrying the package' : 'not carrying the package'}. `;
+
+    if (packageObj) {
+        stateString += `The package is at (${packageObj.x}, ${packageObj.y}). `;
+    } else {
+        if (!hasPackage) {
+            stateString += 'The package has been delivered or does not exist. ';
+        }
+    }
+    
+    if (goalObj) {
+        stateString += `The delivery goal is at (${goalObj.x}, ${goalObj.y}).`;
+    }
+
+    return stateString.trim();
 };
 
 
@@ -167,6 +196,7 @@ export const selectTools = async (
 };
 
 export const generateGoal = async (
+    userInput: string,
     systemInstruction: string,
     modelId: string,
     temperature: number,
@@ -174,7 +204,9 @@ export const generateGoal = async (
     allTools: LLMTool[],
     onProgress: (message: string) => void,
     autonomousActionLimit: number,
-    actionContext: string | null
+    actionContext: string | null,
+    robotState: RobotState,
+    environmentState: EnvironmentObject[]
 ): Promise<{ goal: string, rawResponse: string }> => {
     if (typeof systemInstruction !== 'string' || !systemInstruction.trim()) {
         throw new Error("The system instruction for goal generation is missing or empty. The 'Autonomous Goal Generator' tool may have been corrupted.");
@@ -186,13 +218,15 @@ export const generateGoal = async (
         const toolsForPrompt = JSON.stringify(lightweightTools, null, 2);
         
         const contextText = actionContext || "No actions have been taken yet.";
+        const robotStateString = getRobotStateString(robotState, environmentState);
         const instructionWithContext = systemInstruction
             .replace('{{ACTION_HISTORY}}', contextText)
-            .replace('{{ACTION_LIMIT}}', String(autonomousActionLimit));
+            .replace('{{ACTION_LIMIT}}', String(autonomousActionLimit))
+            .replace('{{ROBOT_STATE}}', robotStateString);
 
         const fullSystemInstruction = `${instructionWithContext}\n\nHere is the current list of all available tools:\n${toolsForPrompt}`;
 
-        responseText = await executePipe(pipe, fullSystemInstruction, "What should I do next?", temperature);
+        responseText = await executePipe(pipe, fullSystemInstruction, userInput, temperature);
 
         if (!responseText) {
             return { goal: "No action needed.", rawResponse: "{}" };
@@ -310,5 +344,23 @@ export const generateResponse = async (
 
      } catch (error) {
          throw generateDetailedError(error, modelId, responseText);
+    }
+};
+
+export const generateText = async (
+    userInput: string,
+    systemInstruction: string,
+    modelId: string,
+    temperature: number,
+    apiConfig: APIConfig,
+    onProgress: (message: string) => void
+): Promise<string> => {
+    let responseText = "";
+    try {
+        const pipe = await getPipeline(modelId, apiConfig, onProgress);
+        responseText = await executePipe(pipe, systemInstruction, userInput, temperature);
+        return responseText;
+    } catch (error) {
+        throw generateDetailedError(error, modelId, responseText);
     }
 };

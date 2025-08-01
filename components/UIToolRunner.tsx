@@ -1,5 +1,7 @@
 import React, { useMemo } from 'react';
 import type { LLMTool, UIToolRunnerProps } from '../types';
+import KnowledgeGraphView from './ui_tools/KnowledgeGraphView';
+import DebugLogView from './ui_tools/DebugLogView';
 
 // Tell TypeScript about the global Babel object from the script tag in index.html
 declare var Babel: any;
@@ -38,6 +40,14 @@ export const UIToolRunner: React.FC<UIToolRunnerComponentProps> = ({ tool, props
       return () => <div>Error: Tool "{tool.name}" is not a UI Component.</div>;
     }
 
+    // Special case for complex, directly imported components
+    if (tool.name === 'KnowledgeGraphView') {
+        return KnowledgeGraphView;
+    }
+    if (tool.name === 'Debug Log View') {
+        return DebugLogView;
+    }
+
     // Sanitize the code by removing any potential top-level export statements.
     // This makes the runner more robust against AI-generated code that includes exports.
     // Also, ensure implementationCode is a string to prevent crashes.
@@ -59,10 +69,10 @@ export const UIToolRunner: React.FC<UIToolRunnerComponentProps> = ({ tool, props
 
       // Create a "factory" function that, when called, will return our new component.
       // We pass in React to give the transpiled code access to it.
-      const componentFactory = new Function('React', `return ${transformedCode}`);
+      const componentFactory = new Function('React', 'UIToolRunner', `return ${transformedCode}`);
       
       // Execute the factory to get the actual, runnable React component
-      return componentFactory(React);
+      return componentFactory(React, UIToolRunner);
 
     } catch (e) {
       console.error(`Error compiling UI tool '${tool.name}':`, e);
