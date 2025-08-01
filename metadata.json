@@ -1,5 +1,5 @@
 {
-  "name": "Singularity Agent Factory",
+  "name": "Singularity Agent Factory swarm",
   "description": "An AI-powered application that analyzes your project needs and suggests the most suitable Large Language Model (LLM) tools for the job, complete with justifications and relevance scores.",
   "requestFramePermissions": [],
   "prompt": ""

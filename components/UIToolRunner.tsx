@@ -1,6 +1,5 @@
 import React, { useMemo } from 'react';
 import type { LLMTool, UIToolRunnerProps } from '../types';
-import KnowledgeGraphView from './ui_tools/KnowledgeGraphView';
 import DebugLogView from './ui_tools/DebugLogView';
 
 // Tell TypeScript about the global Babel object from the script tag in index.html
@@ -41,37 +40,24 @@ export const UIToolRunner: React.FC<UIToolRunnerComponentProps> = ({ tool, props
     }
 
     // Special case for complex, directly imported components
-    if (tool.name === 'KnowledgeGraphView') { // This is the internal component, not the tool
-        return KnowledgeGraphView;
-    }
     if (tool.name === 'Debug Log View') {
         return DebugLogView;
     }
 
-    // Sanitize the code by removing any potential top-level export statements.
-    // This makes the runner more robust against AI-generated code that includes exports.
-    // Also, ensure implementationCode is a string to prevent crashes.
     const code = tool.implementationCode || '';
     const sanitizedCode = code.replace(/export default .*;?/g, '');
 
-    // The source code of the component function we're creating on the fly.
-    // It takes props and includes the tool's implementation.
     const componentSource = `(props) => {
       const { ${Object.keys(props).join(', ')} } = props;
       ${sanitizedCode}
     }`;
 
     try {
-      // Use Babel to transpile the JSX in our source string into standard JS
       const { code: transformedCode } = Babel.transform(componentSource, {
         presets: ['react']
       });
-
-      // Create a "factory" function that, when called, will return our new component.
-      // We pass in React to give the transpiled code access to it.
-      const componentFactory = new Function('React', 'UIToolRunner', `return ${transformedCode}`);
       
-      // Execute the factory to get the actual, runnable React component
+      const componentFactory = new Function('React', 'UIToolRunner', `return ${transformedCode}`);
       return componentFactory(React, UIToolRunner);
 
     } catch (e) {
@@ -84,7 +70,7 @@ export const UIToolRunner: React.FC<UIToolRunnerComponentProps> = ({ tool, props
         </div>
       );
     }
-  }, [tool.id, tool.version, tool.implementationCode, Object.keys(props).join(',')]); // Use stable dependency key
+  }, [tool.id, tool.version, tool.implementationCode, Object.keys(props).join(',')]);
 
   const fallback = (
     <div className="p-4 bg-yellow-900/50 border-2 border-dashed border-yellow-500 rounded-lg text-yellow-300">

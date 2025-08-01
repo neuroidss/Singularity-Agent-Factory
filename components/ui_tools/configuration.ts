@@ -3,362 +3,145 @@ import type { LLMTool } from '../../types';
 
 export const configurationTools: LLMTool[] = [
   {
-    id: 'api_endpoint_configuration',
-    name: 'API Endpoint Configuration',
-    description: 'Configure endpoints and API keys for different model providers. Settings are saved automatically.',
+    id: 'configuration_panel',
+    name: 'Configuration Panel',
+    description: 'A UI panel for selecting the AI model and configuring API keys and service endpoints.',
     category: 'UI Component',
-    version: 3,
+    version: 2,
     parameters: [
-      { name: 'apiConfig', type: 'object', description: 'The current API configuration object', required: true },
-      { name: 'setApiConfig', type: 'string', description: 'Function to update the API configuration', required: true },
-      { name: 'selectedModelProvider', type: 'string', description: 'The provider of the currently selected model', required: true },
-      { name: 'selectedModelId', type: 'string', description: 'The ID of the currently selected model', required: true },
+      { name: 'apiConfig', type: 'object', description: 'The current API configuration.', required: true },
+      { name: 'setApiConfig', type: 'string', description: 'Function to update the API config.', required: true },
+      { name: 'availableModels', type: 'array', description: 'List of available AI models.', required: true },
+      { name: 'selectedModel', type: 'object', description: 'The currently selected AI model.', required: true },
+      { name: 'setSelectedModel', type: 'string', description: 'Function to update the selected model.', required: true },
     ],
     implementationCode: `
-      const { openAIBaseUrl, openAIAPIKey, ollamaHost, googleAIAPIKey, openAIModelId } = apiConfig;
-      const provider = selectedModelProvider;
-
-      const handleGoogleKeyChange = (e) => {
-        setApiConfig({ ...apiConfig, googleAIAPIKey: e.target.value });
-      };
-      
-      const handleOpenAIUrlChange = (e) => {
-        setApiConfig({ ...apiConfig, openAIBaseUrl: e.target.value });
-      };
-      
-      const handleOpenAIKeyChange = (e) => {
-        setApiConfig({ ...apiConfig, openAIAPIKey: e.target.value });
-      };
-      
-      const handleOllamaHostChange = (e) => {
-        setApiConfig({ ...apiConfig, ollamaHost: e.target.value });
-      };
-      
-      const handleOpenAIModelChange = (e) => {
-        setApiConfig({ ...apiConfig, openAIModelId: e.target.value });
-      };
-
-      const InputField = ({ label, id, value, onChange, placeholder, type = 'text', autoComplete = 'off' }) => (
-        <div>
-          <label htmlFor={id} className="block text-sm font-medium text-gray-400 mb-1">
-            {label}
-          </label>
-          <input
-            type={type}
-            id={id}
-            value={value || ''}
-            onChange={onChange}
-            placeholder={placeholder}
-            autoComplete={autoComplete}
-            className="w-full bg-gray-800 border border-gray-600 rounded-lg p-2.5 text-white focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
-          />
-        </div>
-      );
-
-      return (
-        <div className="w-full max-w-2xl mx-auto mb-4 p-4 bg-gray-800/80 border border-gray-700 rounded-lg">
-          <h3 className="text-md font-semibold text-gray-200 mb-3">API Configuration for {provider}</h3>
-          <form onSubmit={(e) => e.preventDefault()} className="space-y-3">
-            {provider === 'GoogleAI' && (
-                <InputField 
-                  label="Google AI API Key"
-                  id="google-key"
-                  type="password"
-                  value={googleAIAPIKey}
-                  onChange={handleGoogleKeyChange}
-                  placeholder="Enter your Google AI API Key"
-                  autoComplete="new-password"
-                />
-            )}
-            {provider === 'OpenAI_API' && (
-              <>
-                <InputField 
-                  label="OpenAI-Compatible Base URL"
-                  id="openai-url"
-                  value={openAIBaseUrl}
-                  onChange={handleOpenAIUrlChange}
-                  placeholder="e.g., https://api.openai.com/v1"
-                />
-                <InputField 
-                  label="API Key (optional)"
-                  id="openai-key"
-                  type="password"
-                  value={openAIAPIKey}
-                  onChange={handleOpenAIKeyChange}
-                  placeholder="Enter your API key if required"
-                  autoComplete="new-password"
-                />
-                {selectedModelId === 'custom-openai' && (
-                   <InputField 
-                    label="Custom Model Name"
-                    id="openai-model"
-                    value={openAIModelId}
-                    onChange={handleOpenAIModelChange}
-                    placeholder="e.g., meta-llama/Llama-3-8b-chat-hf"
-                  />
-                )}
-              </>
-            )}
-            {provider === 'Ollama' && (
-              <InputField 
-                label="Ollama Host"
-                id="ollama-host"
-                value={ollamaHost}
-                onChange={handleOllamaHostChange}
-                placeholder="e.g., http://localhost:11434"
-              />
-            )}
-          </form>
-        </div>
-      );
-    `
-  },
-  {
-    id: 'hugging_face_configuration',
-    name: 'Hugging Face Configuration',
-    description: 'Configure the device for in-browser models from Hugging Face.',
-    category: 'UI Component',
-    version: 1,
-    parameters: [
-      { name: 'apiConfig', type: 'object', description: 'The current API configuration object', required: true },
-      { name: 'setApiConfig', type: 'string', description: 'Function to update the API configuration', required: true },
-    ],
-    implementationCode: `
-      const { huggingFaceDevice } = apiConfig;
-      
-      const DEVICES = [
-        { label: 'WebGPU (recommended)', value: 'webgpu' },
-        { label: 'WASM (slower, compatible)', value: 'wasm' },
-      ];
-
-      const handleDeviceChange = (e) => {
-        setApiConfig({ ...apiConfig, huggingFaceDevice: e.target.value });
-      };
-
-      return (
-        <div className="w-full max-w-2xl mx-auto mb-4 p-4 bg-gray-800/80 border border-gray-700 rounded-lg">
-          <h3 className="text-md font-semibold text-gray-200 mb-3">Hugging Face Configuration</h3>
-           <p className="text-xs text-gray-400 mb-3">Settings for running models directly in your browser. Loading a model for the first time will trigger a download.</p>
-          <div className="space-y-3">
-             <div>
-                <label htmlFor="hf-device" className="block text-sm font-medium text-gray-400 mb-1">Execution Device</label>
-                <select 
-                    id="hf-device" 
-                    value={huggingFaceDevice} 
-                    onChange={handleDeviceChange} 
-                    className="w-full bg-gray-800 border border-gray-600 rounded-lg p-2.5 text-white focus:ring-2 focus:ring-indigo-500"
-                >
-                    {DEVICES.map(d => <option key={d.value} value={d.value}>{d.label}</option>)}
-                </select>
-             </div>
-          </div>
-        </div>
-      );
-    `
-  },
-  {
-    id: 'ai_model_selector',
-    name: 'AI Model Selector',
-    description: 'Renders a dropdown to select the active AI model.',
-    category: 'UI Component',
-    version: 3,
-    parameters: [
-      { name: 'models', type: 'array', description: 'Array of available AI models', required: true },
-      { name: 'selectedModelId', type: 'string', description: 'The ID of the currently selected model', required: true },
-      { name: 'setSelectedModelId', type: 'string', description: 'Function to update the selected model', required: true },
-      { name: 'isLoading', type: 'boolean', description: 'Whether the app is currently processing', required: true },
-    ],
-    implementationCode: `
-      const groupedModels = models.reduce((acc, model) => {
-        const provider = model.provider;
-        if (!acc[provider]) {
-          acc[provider] = [];
+      const handleModelChange = (e) => {
+        const modelId = e.target.value;
+        const model = availableModels.find(m => m.id === modelId);
+        if (model) {
+          setSelectedModel(model);
         }
-        acc[provider].push(model);
-        return acc;
-      }, {});
-      
-      return (
-        <div className="w-full max-w-2xl mx-auto">
-          <label htmlFor="model-selector" className="block text-sm font-medium text-gray-400 mb-1">
-            AI Model
-          </label>
-          <select
-            id="model-selector"
-            value={selectedModelId}
-            onChange={(e) => setSelectedModelId(e.target.value)}
-            disabled={isLoading}
-            className="w-full bg-gray-800 border border-gray-600 rounded-lg p-2.5 text-white focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition-colors duration-200"
-          >
-            {Object.entries(groupedModels).map(([provider, providerModels]) => (
-              <optgroup key={provider} label={provider}>
-                {providerModels.map(model => (
-                    <option key={model.id} value={model.id}>
-                      {model.name}
-                    </option>
-                ))}
-              </optgroup>
-            ))}
-          </select>
-        </div>
-      );
-    `
-  },
-    {
-    id: 'tool_retrieval_strategy_selector',
-    name: 'Tool Retrieval Strategy Selector',
-    description: 'Allows the user to select the strategy for how the agent retrieves relevant tools.',
-    category: 'UI Component',
-    version: 4,
-    parameters: [
-      { name: 'toolRetrievalStrategy', type: 'string', description: 'The current strategy being used.', required: true },
-      { name: 'setToolRetrievalStrategy', type: 'string', description: 'Function to update the strategy.', required: true },
-      { name: 'isLoading', type: 'boolean', description: 'Whether the app is currently processing.', required: true },
-    ],
-    implementationCode: `
-      // Enums are not available in this scope, so we define a plain object.
-      const ToolRetrievalStrategy = {
-        Direct: 'DIRECT',
-        LLM: 'LLM',
-        Embedding: 'EMBEDDING',
-      };
-      
-      const strategies = [
-        { id: ToolRetrievalStrategy.LLM, name: 'LLM Filter', description: 'AI filters tools. Balanced but costs 1 extra API call.' },
-        { id: ToolRetrievalStrategy.Embedding, name: 'Embedding Filter', description: 'Semantic search via embeddings. Finds tools by meaning.' },
-        { id: ToolRetrievalStrategy.Direct, name: 'Direct', description: 'All tools are sent to AI. Fastest but uses large context.' },
-      ];
-
-      return (
-        <div className="w-full max-w-2xl mx-auto mt-4">
-            <label className="block text-sm font-medium text-gray-400 mb-1">Tool Retrieval Strategy</label>
-             <fieldset className="flex flex-col sm:flex-row gap-2 rounded-lg bg-gray-800 border border-gray-600 p-2">
-                <legend className="sr-only">Tool Retrieval Strategy</legend>
-                {strategies.map(strategy => (
-                    <div key={strategy.id} className="flex-1">
-                        <input 
-                            type="radio" 
-                            name="retrieval-strategy" 
-                            id={strategy.id} 
-                            value={strategy.id}
-                            checked={toolRetrievalStrategy === strategy.id}
-                            onChange={(e) => setToolRetrievalStrategy(e.target.value)}
-                            disabled={isLoading}
-                            className="sr-only peer"
-                        />
-                        <label 
-                            htmlFor={strategy.id}
-                            className="block w-full p-2 text-center rounded-md cursor-pointer peer-disabled:cursor-not-allowed peer-disabled:bg-gray-700 peer-disabled:text-gray-500 peer-checked:bg-indigo-600 peer-checked:text-white bg-gray-700/60 hover:bg-gray-600/80"
-                        >
-                            <div className="flex items-center justify-center gap-2">
-                                <span className="text-sm font-semibold">{strategy.name}</span>
-                            </div>
-                            <p className="text-xs text-gray-300 peer-checked:text-indigo-200">{strategy.description}</p>
-                        </label>
-                    </div>
-                ))}
-             </fieldset>
-        </div>
-      );
-    `
-  },
-   {
-    id: 'embedding_parameters_configuration',
-    name: 'Embedding Parameters Configuration',
-    description: 'Adjust parameters for the embedding-based tool retriever. Higher threshold means stricter matching; Top K limits the number of results.',
-    category: 'UI Component',
-    version: 1,
-    parameters: [
-      { name: 'embeddingSimilarityThreshold', type: 'number', description: 'The minimum similarity score for a tool to be considered relevant.', required: true },
-      { name: 'setEmbeddingSimilarityThreshold', type: 'string', description: 'Function to update the similarity threshold.', required: true },
-      { name: 'embeddingTopK', type: 'number', description: 'The maximum number of semantically similar tools to return.', required: true },
-      { name: 'setEmbeddingTopK', type: 'string', description: 'Function to update the Top K value.', required: true },
-      { name: 'isLoading', type: 'boolean', description: 'Whether the app is currently processing.', required: true },
-    ],
-    implementationCode: `
-      const handleThresholdChange = (e) => {
-        setEmbeddingSimilarityThreshold(parseFloat(e.target.value));
-      };
-      const handleTopKChange = (e) => {
-        setEmbeddingTopK(parseInt(e.target.value, 10));
       };
 
+      const handleConfigChange = (e) => {
+        setApiConfig(prev => ({ ...prev, [e.target.name]: e.target.value }));
+      };
+      
+      const provider = selectedModel?.provider;
+
+      const groupedModels = React.useMemo(() => {
+        const groups = {
+            GoogleAI: [],
+            OpenAI_API: [],
+            Ollama: [],
+            HuggingFace: [],
+        };
+        availableModels.forEach(model => {
+            if (groups[model.provider]) {
+                groups[model.provider].push(model);
+            }
+        });
+        return groups;
+      }, [availableModels]);
+
+      const renderProviderHelpText = () => {
+        switch (provider) {
+          case 'Ollama':
+            return <p className="text-xs text-gray-400 mt-1">Ensure the Ollama server is running and the model ('{selectedModel.id}') is pulled.</p>;
+          case 'HuggingFace':
+            return <p className="text-xs text-gray-400 mt-1">Model will be downloaded and run directly in your browser. Requires a modern browser and may be slow on first load.</p>;
+          case 'OpenAI_API':
+            return <p className="text-xs text-gray-400 mt-1">Works with any OpenAI-compatible API (e.g., a local Ollama server).</p>;
+          default:
+            return <p className="text-xs text-gray-400 mt-1">Uses Google's Generative AI services via API key.</p>;
+        }
+      }
+
       return (
-        <div className="w-full max-w-2xl mx-auto mt-4 p-4 bg-gray-800/80 border border-gray-700 rounded-lg">
-          <h3 className="text-md font-semibold text-gray-200 mb-3">Embedding Retriever Settings</h3>
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
-              <div>
-                <label htmlFor="embedding-threshold-slider" className="block text-sm font-medium text-gray-400 mb-1">
-                  Similarity Threshold: <span className="font-mono text-white">{embeddingSimilarityThreshold.toFixed(2)}</span>
-                </label>
-                <p className="text-xs text-gray-500 mb-2 h-8">Minimum score for a tool to be included (0.0 = any match).</p>
-                <input
-                  id="embedding-threshold-slider"
-                  type="range"
-                  min="0"
-                  max="1"
-                  step="0.01"
-                  value={embeddingSimilarityThreshold}
-                  onChange={handleThresholdChange}
-                  disabled={isLoading}
-                  className="w-full h-2 bg-gray-700 rounded-lg appearance-none cursor-pointer"
-                />
-              </div>
-              <div>
-                  <label htmlFor="embedding-topk-slider" className="block text-sm font-medium text-gray-400 mb-1">
-                  Top K Results: <span className="font-mono text-white">{embeddingTopK}</span>
-                </label>
-                <p className="text-xs text-gray-500 mb-2 h-8">Max number of tools to return after filtering.</p>
-                <input
-                  id="embedding-topk-slider"
-                  type="range"
-                  min="1"
-                  max="20"
-                  step="1"
-                  value={embeddingTopK}
-                  onChange={handleTopKChange}
-                  disabled={isLoading}
-                  className="w-full h-2 bg-gray-700 rounded-lg appearance-none cursor-pointer"
-                />
-              </div>
+        <div className="w-full bg-gray-800/60 border border-gray-700 rounded-xl p-4 space-y-4">
+          <div>
+            <label htmlFor="model-select" className="block text-sm font-medium text-indigo-300 mb-1">AI Model</label>
+            <select
+              id="model-select"
+              value={selectedModel?.id || ''}
+              onChange={handleModelChange}
+              className="w-full bg-gray-900 border border-gray-600 rounded-lg p-2 focus:ring-2 focus:ring-indigo-500"
+            >
+              {Object.entries(groupedModels).map(([providerName, models]) => (
+                models.length > 0 && (
+                  <optgroup key={providerName} label={providerName.replace('_API', ' API')}>
+                    {models.map(model => (
+                      <option key={model.id} value={model.id}>
+                        {model.name}
+                      </option>
+                    ))}
+                  </optgroup>
+                )
+              ))}
+            </select>
+            {renderProviderHelpText()}
           </div>
-        </div>
-      );
-    `
-  },
-   {
-    id: 'model_parameters_configuration',
-    name: 'Model Parameters Configuration',
-    description: 'Adjust model parameters like temperature. Lower values (e.g., 0.1) make the output more deterministic, while higher values make it more creative.',
-    category: 'UI Component',
-    version: 1,
-    parameters: [
-      { name: 'temperature', type: 'number', description: 'The current temperature value', required: true },
-      { name: 'setTemperature', type: 'string', description: 'Function to update the temperature', required: true },
-      { name: 'isLoading', type: 'boolean', description: 'Whether the app is currently processing', required: true },
-    ],
-    implementationCode: `
-      const handleTempChange = (e) => {
-        setTemperature(parseFloat(e.target.value));
-      };
 
-      return (
-        <div className="w-full max-w-2xl mx-auto mb-4">
-          <label htmlFor="temperature-slider" className="block text-sm font-medium text-gray-400 mb-1">
-            Temperature: <span className="font-mono text-white">{temperature.toFixed(2)}</span>
-          </label>
-           <p className="text-xs text-gray-500 mb-2">Controls randomness. 0.0 is deterministic, 1.0 is creative.</p>
-          <input
-            id="temperature-slider"
-            type="range"
-            min="0"
-            max="1"
-            step="0.01"
-            value={temperature}
-            onChange={handleTempChange}
-            disabled={isLoading}
-            className="w-full h-2 bg-gray-700 rounded-lg appearance-none cursor-pointer"
-          />
+          {provider === 'GoogleAI' && (
+            <div>
+              <label htmlFor="googleAIAPIKey" className="block text-sm font-medium text-gray-300 mb-1">Google AI API Key</label>
+              <input
+                type="password"
+                id="googleAIAPIKey"
+                name="googleAIAPIKey"
+                value={apiConfig.googleAIAPIKey}
+                onChange={handleConfigChange}
+                placeholder="Enter your Google AI API Key"
+                className="w-full bg-gray-700 border border-gray-600 rounded-lg p-2 focus:ring-2 focus:ring-indigo-500"
+              />
+            </div>
+          )}
+
+          {provider === 'OpenAI_API' && (
+            <div className="space-y-3">
+              <div>
+                <label htmlFor="openAIBaseUrl" className="block text-sm font-medium text-gray-300 mb-1">API Base URL</label>
+                <input
+                  type="text"
+                  id="openAIBaseUrl"
+                  name="openAIBaseUrl"
+                  value={apiConfig.openAIBaseUrl}
+                  onChange={handleConfigChange}
+                  placeholder="e.g., http://localhost:11434/v1"
+                  className="w-full bg-gray-700 border border-gray-600 rounded-lg p-2 focus:ring-2 focus:ring-indigo-500"
+                />
+              </div>
+              <div>
+                <label htmlFor="openAIAPIKey" className="block text-sm font-medium text-gray-300 mb-1">API Key</label>
+                <input
+                  type="password"
+                  id="openAIAPIKey"
+                  name="openAIAPIKey"
+                  value={apiConfig.openAIAPIKey}
+                  onChange={handleConfigChange}
+                  placeholder="Often 'ollama' or your API key"
+                  className="w-full bg-gray-700 border border-gray-600 rounded-lg p-2 focus:ring-2 focus:ring-indigo-500"
+                />
+              </div>
+            </div>
+          )}
+          
+          {provider === 'Ollama' && (
+            <div>
+              <label htmlFor="ollamaHost" className="block text-sm font-medium text-gray-300 mb-1">Ollama Host URL</label>
+              <input
+                type="text"
+                id="ollamaHost"
+                name="ollamaHost"
+                value={apiConfig.ollamaHost}
+                onChange={handleConfigChange}
+                placeholder="e.g., http://localhost:11434"
+                className="w-full bg-gray-700 border border-gray-600 rounded-lg p-2 focus:ring-2 focus:ring-indigo-500"
+              />
+            </div>
+          )}
+
         </div>
       );
     `
