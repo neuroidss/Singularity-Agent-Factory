@@ -1,12 +1,32 @@
-
-
 import type { AIResponse, LLMTool, APIConfig, RobotState, EnvironmentObject } from "../types";
 import { STANDARD_TOOL_CALL_SYSTEM_PROMPT } from '../constants';
 
 // --- Constants ---
 const API_HEADERS = { 'Content-Type': 'application/json' };
+const OLLAMA_TIMEOUT = 600000; // 600 seconds
 
 // --- API Helper Functions ---
+const fetchWithTimeout = async (url: string, options: RequestInit, timeout: number) => {
+    const controller = new AbortController();
+    const id = setTimeout(() => controller.abort(), timeout);
+
+    try {
+        const response = await fetch(url, {
+            ...options,
+            signal: controller.signal,
+        });
+        clearTimeout(id);
+        return response;
+    } catch (e) {
+        clearTimeout(id);
+        if (e.name === 'AbortError') {
+            throw new Error(`Request to Ollama timed out after ${timeout / 1000} seconds. The model may be too large for your system or the Ollama server is unresponsive.`);
+        }
+        throw e;
+    }
+};
+
+
 const createAPIBody = (
     model: string,
     system: string,
@@ -139,11 +159,11 @@ export const selectTools = async (
     let rawResponse = "";
 
     try {
-        const response = await fetch(`${apiConfig.ollamaHost}/api/generate`, {
+        const response = await fetchWithTimeout(`${apiConfig.ollamaHost}/api/generate`, {
             method: 'POST',
             headers: API_HEADERS,
             body: JSON.stringify(body),
-        });
+        }, OLLAMA_TIMEOUT);
 
         if (!response.ok) await handleAPIError(response);
         
@@ -198,11 +218,11 @@ export const generateGoal = async (
     let rawResponse = "";
 
     try {
-        const response = await fetch(`${apiConfig.ollamaHost}/api/generate`, {
+        const response = await fetchWithTimeout(`${apiConfig.ollamaHost}/api/generate`, {
             method: 'POST',
             headers: API_HEADERS,
             body: JSON.stringify(body),
-        });
+        }, OLLAMA_TIMEOUT);
 
         if (!response.ok) await handleAPIError(response);
 
@@ -237,11 +257,11 @@ export const verifyToolFunctionality = async (
     let rawResponse = "";
 
     try {
-        const response = await fetch(`${apiConfig.ollamaHost}/api/generate`, {
+        const response = await fetchWithTimeout(`${apiConfig.ollamaHost}/api/generate`, {
             method: 'POST',
             headers: API_HEADERS,
             body: JSON.stringify(body),
-        });
+        }, OLLAMA_TIMEOUT);
 
         if (!response.ok) await handleAPIError(response);
         
@@ -278,11 +298,11 @@ export const critiqueAction = async (
     let rawResponse = "";
 
     try {
-        const response = await fetch(`${apiConfig.ollamaHost}/api/generate`, {
+        const response = await fetchWithTimeout(`${apiConfig.ollamaHost}/api/generate`, {
             method: 'POST',
             headers: API_HEADERS,
             body: JSON.stringify(body),
-        });
+        }, OLLAMA_TIMEOUT);
 
         if (!response.ok) await handleAPIError(response);
         
@@ -334,11 +354,11 @@ export const generateResponse = async (
     let rawResponse = "";
     
     try {
-        const response = await fetch(`${apiConfig.ollamaHost}/api/generate`, {
+        const response = await fetchWithTimeout(`${apiConfig.ollamaHost}/api/generate`, {
             method: 'POST',
             headers: API_HEADERS,
             body: JSON.stringify(body),
-        });
+        }, OLLAMA_TIMEOUT);
 
         if (!response.ok) await handleAPIError(response);
 
@@ -364,11 +384,11 @@ export const generateText = async (
     let rawResponse = "";
     
     try {
-        const response = await fetch(`${apiConfig.ollamaHost}/api/generate`, {
+        const response = await fetchWithTimeout(`${apiConfig.ollamaHost}/api/generate`, {
             method: 'POST',
             headers: API_HEADERS,
             body: JSON.stringify(body),
-        });
+        }, OLLAMA_TIMEOUT);
 
         if (!response.ok) await handleAPIError(response);
         

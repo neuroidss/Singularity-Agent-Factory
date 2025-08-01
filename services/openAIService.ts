@@ -423,14 +423,19 @@ export const generateResponse = async (
             throw new Error(`AI called an unknown or disallowed tool: ${sanitizedFunctionName}`);
         }
         
-        const functionArgs = JSON.parse(firstToolCall.function.arguments);
-        
-        return {
-            toolCall: {
-                name: originalToolName,
-                arguments: functionArgs,
-            },
-        };
+        try {
+            const functionArgs = JSON.parse(firstToolCall.function.arguments);
+            
+            return {
+                toolCall: {
+                    name: originalToolName,
+                    arguments: functionArgs,
+                },
+            };
+        } catch (e) {
+            console.error(`Failed to parse tool call arguments from OpenAI stream for tool '${originalToolName}'. Raw args:`, firstToolCall.function.arguments, e);
+            throw new Error(`AI returned malformed JSON for tool arguments for tool '${originalToolName}'.`);
+        }
 
     } catch (error) {
         throw generateDetailedError(error, apiConfig.openAIBaseUrl);
