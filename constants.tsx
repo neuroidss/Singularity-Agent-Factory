@@ -6,23 +6,24 @@ import { PREDEFINED_UI_TOOLS } from './components/ui_tools/index';
 import { roboticsTools } from './components/robotics_tools';
 
 export const AVAILABLE_MODELS: AIModel[] = [
-    // Google AI
     { id: 'gemini-2.5-flash', name: 'Gemini 2.5 Flash', provider: ModelProvider.GoogleAI },
-    
-    // Hugging Face
-    { id: 'Xenova/gemma-2b-it', name: 'Gemma 2B IT', provider: ModelProvider.HuggingFace },
-    { id: 'Xenova/Qwen2-1.5B-Instruct', name: 'Qwen2 1.5B Instruct', provider: ModelProvider.HuggingFace },
-    
-    // OpenAI-Compatible
-    { id: 'gpt-4o', name: 'GPT-4o', provider: ModelProvider.OpenAI_API },
-    { id: 'gpt-4-turbo', name: 'GPT-4 Turbo', provider: ModelProvider.OpenAI_API },
-    { id: 'gpt-3.5-turbo', name: 'GPT-3.5 Turbo', provider: ModelProvider.OpenAI_API },
-    { id: 'custom-openai', name: 'Custom Model Name...', provider: ModelProvider.OpenAI_API },
-    
-    // Ollama
-    { id: 'gemma:2b', name: 'Gemma 2B', provider: ModelProvider.Ollama },
-    { id: 'qwen:1.8b', name: 'Qwen 1.8B', provider: ModelProvider.Ollama },
-    { id: 'llama3:8b', name: 'Llama3 8B', provider: ModelProvider.Ollama }
+    { id: 'gemini-2.5-flash-lite', name: 'Gemini 2.5 Flash-Lite', provider: ModelProvider.GoogleAI },
+    { id: 'gemini-2.0-flash', name: 'Gemini 2.0 Flash', provider: ModelProvider.GoogleAI },
+    { id: 'gemini-2.0-flash-lite', name: 'Gemini 2.0 Flash-Lite', provider: ModelProvider.GoogleAI },
+    { id: 'custom-openai', name: 'Custom (OpenAI-Compatible)', provider: ModelProvider.OpenAI_API },
+    { id: 'gemma3n:e4b', name: 'Gemma 3N E4B', provider: ModelProvider.Ollama },
+    { id: 'gemma3n:e2b', name: 'Gemma 3N E2B', provider: ModelProvider.Ollama },
+    { id: 'qwen3:14b', name: 'Qwen3 14B', provider: ModelProvider.Ollama },
+    { id: 'qwen3:8b', name: 'Qwen3 8B', provider: ModelProvider.Ollama },
+    { id: 'qwen3:4b', name: 'Qwen3 4B', provider: ModelProvider.Ollama },
+    { id: 'qwen3:1.7b', name: 'Qwen3 1.7B', provider: ModelProvider.Ollama },
+    { id: 'qwen3:0.6b', name: 'Qwen3 0.6B', provider: ModelProvider.Ollama }
+    { id: 'hf.co/unsloth/Qwen3-Coder-30B-A3B-Instruct-GGUF:IQ2_M', name: 'Qwen3 Coder 30B A3B', provider: ModelProvider.Ollama }
+    { id: 'onnx-community/gemma-3-1b-it-ONNX', name: 'gemma-3-1b-it-ONNX', provider: ModelProvider.HuggingFace },
+    { id: 'onnx-community/Qwen3-0.6B-ONNX', name: 'Qwen3-0.6B', provider: ModelProvider.HuggingFace },
+    { id: 'onnx-community/gemma-3n-E2B-it-ONNX', name: 'Gemma 3N E2B', provider: ModelProvider.HuggingFace },
+    { id: 'onnx-community/Qwen3-4B-ONNX', name: 'Qwen3-4B', provider: ModelProvider.HuggingFace },
+    { id: 'onnx-community/Qwen3-1.7B-ONNX', name: 'Qwen3-1.7B', provider: ModelProvider.HuggingFace },
 ];
 
 export const HUGGING_FACE_DEVICES: {label: string, value: HuggingFaceDevice}[] = [
