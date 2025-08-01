@@ -9,7 +9,7 @@ export const configurationTools: LLMTool[] = [
     category: 'UI Component',
     version: 3,
     parameters: [
-      { name: 'apiConfig', type: 'string', description: 'The current API configuration object', required: true },
+      { name: 'apiConfig', type: 'object', description: 'The current API configuration object', required: true },
       { name: 'setApiConfig', type: 'string', description: 'Function to update the API configuration', required: true },
       { name: 'selectedModelProvider', type: 'string', description: 'The provider of the currently selected model', required: true },
       { name: 'selectedModelId', type: 'string', description: 'The ID of the currently selected model', required: true },
@@ -38,7 +38,7 @@ export const configurationTools: LLMTool[] = [
         setApiConfig({ ...apiConfig, openAIModelId: e.target.value });
       };
 
-      const InputField = ({ label, id, value, onChange, placeholder, type = 'text' }) => (
+      const InputField = ({ label, id, value, onChange, placeholder, type = 'text', autoComplete = 'off' }) => (
         <div>
           <label htmlFor={id} className="block text-sm font-medium text-gray-400 mb-1">
             {label}
@@ -49,6 +49,7 @@ export const configurationTools: LLMTool[] = [
             value={value || ''}
             onChange={onChange}
             placeholder={placeholder}
+            autoComplete={autoComplete}
             className="w-full bg-gray-800 border border-gray-600 rounded-lg p-2.5 text-white focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
           />
         </div>
@@ -57,7 +58,7 @@ export const configurationTools: LLMTool[] = [
       return (
         <div className="w-full max-w-2xl mx-auto mb-4 p-4 bg-gray-800/80 border border-gray-700 rounded-lg">
           <h3 className="text-md font-semibold text-gray-200 mb-3">API Configuration for {provider}</h3>
-          <div className="space-y-3">
+          <form onSubmit={(e) => e.preventDefault()} className="space-y-3">
             {provider === 'GoogleAI' && (
                 <InputField 
                   label="Google AI API Key"
@@ -66,6 +67,7 @@ export const configurationTools: LLMTool[] = [
                   value={googleAIAPIKey}
                   onChange={handleGoogleKeyChange}
                   placeholder="Enter your Google AI API Key"
+                  autoComplete="new-password"
                 />
             )}
             {provider === 'OpenAI_API' && (
@@ -84,6 +86,7 @@ export const configurationTools: LLMTool[] = [
                   value={openAIAPIKey}
                   onChange={handleOpenAIKeyChange}
                   placeholder="Enter your API key if required"
+                  autoComplete="new-password"
                 />
                 {selectedModelId === 'custom-openai' && (
                    <InputField 
@@ -105,7 +108,7 @@ export const configurationTools: LLMTool[] = [
                 placeholder="e.g., http://localhost:11434"
               />
             )}
-          </div>
+          </form>
         </div>
       );
     `
@@ -117,7 +120,7 @@ export const configurationTools: LLMTool[] = [
     category: 'UI Component',
     version: 1,
     parameters: [
-      { name: 'apiConfig', type: 'string', description: 'The current API configuration object', required: true },
+      { name: 'apiConfig', type: 'object', description: 'The current API configuration object', required: true },
       { name: 'setApiConfig', type: 'string', description: 'Function to update the API configuration', required: true },
     ],
     implementationCode: `
@@ -160,7 +163,7 @@ export const configurationTools: LLMTool[] = [
     category: 'UI Component',
     version: 3,
     parameters: [
-      { name: 'models', type: 'string', description: 'Array of available AI models', required: true },
+      { name: 'models', type: 'array', description: 'Array of available AI models', required: true },
       { name: 'selectedModelId', type: 'string', description: 'The ID of the currently selected model', required: true },
       { name: 'setSelectedModelId', type: 'string', description: 'Function to update the selected model', required: true },
       { name: 'isLoading', type: 'boolean', description: 'Whether the app is currently processing', required: true },

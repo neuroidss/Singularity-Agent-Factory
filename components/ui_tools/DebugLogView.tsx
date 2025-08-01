@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect, useRef } from 'react';
 import { BeakerIcon } from '../icons';
 
@@ -29,6 +30,7 @@ const DebugLogView: React.FC<DebugLogViewProps> = ({ logs, onReset, apiCallCount
     
     const getLogColor = (log: string) => {
         const upperCaseLog = log.toUpperCase();
+        if (upperCaseLog.includes('[API CALL')) return 'text-cyan-400';
         if (upperCaseLog.includes('[ERROR]')) return 'text-red-400';
         if (upperCaseLog.includes('[WARN]')) return 'text-yellow-400';
         if (upperCaseLog.includes('[SUCCESS]')) return 'text-green-400';
@@ -61,11 +63,15 @@ const DebugLogView: React.FC<DebugLogViewProps> = ({ logs, onReset, apiCallCount
                     </div>
                 </div>
                 <div ref={logsContainerRef} className="flex-grow overflow-y-auto bg-black/30 p-2 rounded text-xs font-mono scroll-smooth">
-                    {logs.map((log, index) => (
-                        <p key={index} className={`py-0.5 border-b border-slate-800 break-words ${getLogColor(log)}`}>
-                            {log}
-                        </p>
-                    ))}
+                    {logs.map((log, index) => {
+                        const isApiCall = log.toUpperCase().includes('[API CALL');
+                        return (
+                            <div key={index} className={`py-0.5 border-b border-slate-800 flex items-start gap-1.5 ${getLogColor(log)}`}>
+                                {isApiCall && <BeakerIcon className="h-4 w-4 flex-shrink-0" />}
+                                <p className="flex-grow break-words">{log}</p>
+                            </div>
+                        )
+                    })}
                 </div>
             </div>
             <div className="flex items-center gap-2">

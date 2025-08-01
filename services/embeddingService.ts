@@ -104,7 +104,7 @@ export const retrieveToolsByEmbeddings = async (
 
     // --- Step 3. Calculate Similarities, Filter, and Rank ---
     const scoredTools: { tool: LLMTool; score: number }[] = [];
-    const currentCache = new Map(toolEmbeddingsCache);
+    const currentCache = toolEmbeddingsCache; // Use the latest cache
 
     allTools.forEach(tool => {
         if (foundTools.has(tool)) {

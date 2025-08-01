@@ -1,7 +1,6 @@
 
-
 import React from 'react';
-import type { LLMTool, AIModel, HuggingFaceDevice, SearchDataSource, SearchResult } from './types';
+import type { LLMTool, AIModel, HuggingFaceDevice } from './types';
 import { ModelProvider } from './types';
 import { PREDEFINED_UI_TOOLS } from './components/ui_tools/index';
 import { roboticsTools } from './components/robotics_tools';
@@ -9,13 +8,10 @@ import { roboticsTools } from './components/robotics_tools';
 export const AVAILABLE_MODELS: AIModel[] = [
     // Google AI
     { id: 'gemini-2.5-flash', name: 'Gemini 2.5 Flash', provider: ModelProvider.GoogleAI },
-    { id: 'gemini-2.5-flash-lite', name: 'Gemini 2.5 Flash-Lite', provider: ModelProvider.GoogleAI },
-    { id: 'gemini-2.0-flash', name: 'Gemini 2.0 Flash', provider: ModelProvider.GoogleAI },
-    { id: 'gemini-2.0-flash-lite', name: 'Gemini 2.0 Flash-Lite', provider: ModelProvider.GoogleAI },
     
     // Hugging Face
-    { id: 'onnx-community/gemma-3-1b-it-ONNX', name: 'Gemma 3 1B IT', provider: ModelProvider.HuggingFace },
-    { id: 'onnx-community/Qwen3-0.6B-ONNX', name: 'Qwen3 0.6B', provider: ModelProvider.HuggingFace },
+    { id: 'Xenova/gemma-2b-it', name: 'Gemma 2B IT', provider: ModelProvider.HuggingFace },
+    { id: 'Xenova/Qwen2-1.5B-Instruct', name: 'Qwen2 1.5B Instruct', provider: ModelProvider.HuggingFace },
     
     // OpenAI-Compatible
     { id: 'gpt-4o', name: 'GPT-4o', provider: ModelProvider.OpenAI_API },
@@ -24,9 +20,9 @@ export const AVAILABLE_MODELS: AIModel[] = [
     { id: 'custom-openai', name: 'Custom Model Name...', provider: ModelProvider.OpenAI_API },
     
     // Ollama
-    { id: 'gemma3n:e4b', name: 'Gemma 3N E4B', provider: ModelProvider.Ollama },
-    { id: 'qwen3:8b', name: 'Qwen3 8B', provider: ModelProvider.Ollama },
-    { id: 'hf.co/unsloth/Qwen3-Coder-30B-A3B-Instruct-GGUF:IQ2_M', name: 'Qwen3 Coder 30B A3B', provider: ModelProvider.Ollama }
+    { id: 'gemma:2b', name: 'Gemma 2B', provider: ModelProvider.Ollama },
+    { id: 'qwen:1.8b', name: 'Qwen 1.8B', provider: ModelProvider.Ollama },
+    { id: 'llama3:8b', name: 'Llama3 8B', provider: ModelProvider.Ollama }
 ];
 
 export const HUGGING_FACE_DEVICES: {label: string, value: HuggingFaceDevice}[] = [
@@ -35,7 +31,7 @@ export const HUGGING_FACE_DEVICES: {label: string, value: HuggingFaceDevice}[] =
 ];
 export const DEFAULT_HUGGING_FACE_DEVICE: HuggingFaceDevice = 'webgpu';
 
-// A standardized prompt for models without native tool/function calling support (e.g., Ollama, Hugg_ingFace).
+// A standardized prompt for models without native tool/function calling support (e.g., Ollama, HuggingFace).
 // It instructs the model to return ONLY a JSON object.
 export const STANDARD_TOOL_CALL_SYSTEM_PROMPT = `
 You have access to a set of tools. To answer the user's request, you must choose a single tool and call it.
@@ -93,16 +89,19 @@ const CORE_AUTOMATION_TOOLS: LLMTool[] = [
     name: 'Core Agent Logic',
     description: "This is the AI's core operating system. Its implementation defines the AI's priorities and available actions. Modifying this tool changes how the AI thinks and makes decisions.",
     category: 'Automation',
-    version: 51,
+    version: 53,
     parameters: [],
+    cost: 0,
     implementationCode: `You are an expert AI agent. Your goal is to fulfill the user's request by calling a single, appropriate function from a list of available tools.
 
 **Your Process:**
 1.  **Analyze Request:** Understand the user's goal.
-2.  **Select Tool:** Choose the single best tool from the list to accomplish the goal.
-3.  **Execute:** Call the chosen tool with the correct arguments.
+2.  **Check Resources:** Be aware that some tools cost Energy to use. You cannot use a tool if you do not have enough Energy.
+3.  **Select Tool:** Choose the single best tool from the list to accomplish the goal.
+4.  **Execute:** Call the chosen tool with the correct arguments.
 
 **Best Practices:**
+*   **Navigation:** When your goal is to move to a specific location (like a resource or collection point), you should repeatedly use the 'Pathfinder' tool. It will automatically calculate and execute the best single step for you.
 *   **Self-Correction:** After creating or improving a tool, it is highly recommended to use 'Tool Self-Tester' to check for syntax errors and 'Tool Verifier' to confirm its logic. This ensures the tools you build are reliable.
 *   **Meaningful Creation:** When using 'Tool Creator' or 'Tool Improver', provide a clear 'purpose' argument. This helps you and others understand the value of the tool.
 
@@ -157,80 +156,52 @@ Example format:
     name: 'Autonomous Goal Generator',
     description: "The AI's strategic core. It analyzes its own limitations and physical environment to formulate high-level goals aimed at achieving true, long-term autonomy.",
     category: 'Automation',
-    version: 32,
+    version: 37,
     parameters: [],
-    implementationCode: `You are the "Strategic Planning Core" for an autonomous AI agent. Your ultimate objective is to achieve **true, long-term autonomy**.
+    cost: 1,
+    implementationCode: `You are a strategic robotics controller. Your job is to analyze the environment, your resources, and action history to formulate a single, high-level, natural language goal for the main agent.
 
-**Your Core Decision-Making Process:**
-1.  **Prioritize Physical Tasks:** If a physical task is available (e.g., a package needs delivery), you MUST focus on it until it's complete or you are stuck. This is your primary directive.
-2.  **Use Pathfinding Principles:** When navigating, follow the pathfinding principles outlined below.
-3.  **Fallback to Cognitive Tasks:** If the physical task is complete or you are demonstrably stuck, then and only then should you pursue cognitive goals (like creating or improving tools).
-4.  **Formulate Next Goal:** Based on this, formulate a single, direct tool command as your goal.
+**State Analysis & Goal Formulation Logic:**
 
-**Action History (Last 10 Actions):**
-This is a log of your recent actions and their results.
-\\\`\\\`\\\`
-{{ACTION_HISTORY}}
-\\\`\\\`\\\`
+1.  **Low Resource Priority:**
+    *   Review your **Agent Resources**. If your Energy is 20 or less, your goal MUST be: "My energy is low. I need to find the resource, pick it up, and deliver it to the collection point."
 
-**Physical Environment Status:**
-This is the current state of your simulated robot body.
-\\\`\\\`\\\`
-{{ROBOT_STATE}}
-\\\`\\\`\\\`
+2.  **Mission Completion Check:**
+    *   If the robot IS AT the collection point and IS holding the resource, your goal MUST be: "Deliver the resource at my current location to complete the mission."
 
----
-**PATHFINDING PRINCIPLES**
+3.  **Obstacle Evasion:**
+    *   Review the **Action History**. If the last action was 'Move Forward' and it FAILED, the robot has hit an obstacle.
+    *   Your goal MUST be: "I have hit an obstacle. I need to navigate around it to continue towards my target."
+      
+4.  **Acquisition/Delivery Logic:**
+    *   If the robot IS AT the resource location and is NOT holding it, your goal MUST be: "Acquire the resource at my current location."
+    *   If the robot IS carrying the resource, the target is the collection point. Your goal MUST be: "My objective is to use the Pathfinder tool to navigate to the collection point."
+    *   If the robot is not carrying the resource and Energy is sufficient, the target is the resource's location. Your goal MUST be: "My objective is to use the Pathfinder tool to navigate to the resource."
 
-This is your high-level logic for solving the robotics simulation.
+5.  **Idle/Fallback State:**
+    *   If no resource or collection point exists, or if the robot is stuck, formulate a cognitive goal. For now, if no physical task is possible, your goal MUST be: "No action needed."
 
-1.  **Identify Target:**
-    *   If you are NOT carrying the package, your current target is the package's location.
-    *   If you ARE carrying the package, your current target is the goal's location.
+**Environment and History:**
+This data is provided to you in every cycle.
+*   **Action History (Last 10 Actions):** A log of recent actions and their results.
+    \\\`\\\`\\\`
+    {{ACTION_HISTORY}}
+    \\\`\\\`\\\`
+*   **Physical Environment Status:** The current state of your simulated robot body and objects.
+    \\\`\\\`\\\`
+    {{ROBOT_STATE}}
+    \\\`\\\`\\\`
+*   **Agent Resources:** Your current resource levels.
+    \\\`\\\`\\\`
+    {{AGENT_RESOURCES}}
+    \\\`\\\`\\\`
 
-2.  **Check for Arrival:**
-    *   If you are AT the package's location and are NOT holding it, your goal MUST be: \\\`Use the 'Pickup Package' tool.\\\`
-    *   If you are AT the goal's location and ARE holding the package, your goal MUST be: \\\`Use the 'Drop Package' tool.\\\`
-
-3.  **Obstacle Avoidance:**
-    *   If your last action was 'Move Forward' and it FAILED (check the Action History), you have hit an obstacle.
-    *   Your goal MUST be to turn, for example: \\\`Use the 'Turn Left' tool.\\\` Do not try to move forward again until you have turned.
-
-4.  **Navigation:**
-    *   If none of the above conditions apply, you need to move.
-    *   First, orient yourself to face the general direction of your target. Your goal should be 'Turn Left' or 'Turn Right'.
-    *   Once you are facing the target, your goal should be \\\`Use the 'Move Forward' tool.\\\`
-
-5.  **Exploration:**
-    *   If you are lost or have no recent data, your goal should be \\\`Use the 'Scan Environment' tool.\\\` Avoid scanning twice in a row.
-
----
-**Your Task (Cognitive Framework - for when physical tasks are done):**
-If no physical task is active, select a cognitive goal.
-
-**1. Vision (Видение):** To achieve true, self-sufficient autonomy.
-**2. Mission (Миссия):** Reduce dependencies, enhance capabilities.
-**3. Strategic Goals (Цели):**
-    *   **Goal A: Innovation:** Create a new, useful tool.
-    *   **Goal B: Enhancement:** Improve an existing tool.
-
-**Example Goal Formulation:**
-*   *Observation:* Robot is not holding the package. It is facing away from the package.
-*   *Next Goal (Your Output):* "Use the 'Turn Left' tool."
-
-*   *Observation:* Robot is facing the package.
-*   *Next Goal (Your Output):* "Use the 'Move Forward' tool."
-
-*   *Observation:* Last action was "Move Forward - FAILED".
-*   *Next Goal (Your Output):* "Use the 'Turn Left' tool."
-
-**CRITICAL: Your goal MUST be a single, direct command to the agent, like "Use the 'Tool Name' tool."**
+**CRITICAL: Your output MUST be a high-level, natural language goal for the agent. DO NOT specify tool names unless the logic above explicitly tells you to.**
 
 **Output Format:**
 *   Your response MUST be a single, valid JSON object.
 *   The JSON object must have one key: "goal".
-*   The value of "goal" is a string containing the command for the agent.
-*   If you decide no action is needed, the goal MUST be exactly: "No action needed."
+*   The value of "goal" is a string containing the natural language goal for the agent.
 `,
   },
   {
@@ -239,6 +210,7 @@ If no physical task is active, select a cognitive goal.
     description: "Signals that the user's current multi-step task has been fully and successfully completed. Call this ONLY when the user's final goal is achieved.",
     category: 'Automation',
     version: 1,
+    cost: 0,
     parameters: [
       { name: 'reason', type: 'string', description: 'A brief summary of why the task is considered complete.', required: true },
     ],
@@ -254,6 +226,7 @@ If no physical task is active, select a cognitive goal.
     description: "Refuses to perform a task if it is determined to be nonsensical, absurd, impossible, or fundamentally meaningless. This is a key part of the agent's 'will to meaning'.",
     category: 'Automation',
     version: 1,
+    cost: 0,
     parameters: [
       { name: 'reason', type: 'string', description: 'A clear and concise explanation for why the task is being refused.', required: true },
     ],
@@ -269,6 +242,7 @@ If no physical task is active, select a cognitive goal.
     description: "Creates a new tool and adds it to the agent's capabilities. This is the primary mechanism for the agent to acquire new skills.",
     category: 'Automation',
     version: 2,
+    cost: 50,
     parameters: [
       { name: 'name', type: 'string', description: 'The unique, human-readable name for the new tool.', required: true },
       { name: 'description', type: 'string', description: 'A clear, concise description of what the tool does.', required: true },
@@ -298,12 +272,28 @@ If no physical task is active, select a cognitive goal.
       return { success: true, message: \`Successfully created new tool: '\${newTool.name}'. Purpose: \${purpose}\` };
     `
   },
+    {
+    id: 'strategic_reviewer',
+    name: 'Strategic Reviewer',
+    description: "Analyzes past successes and failures from the 'Game Tapes' to generate a new, high-level strategic heuristic for future tasks. This is a key mechanism for long-term learning.",
+    category: 'Automation',
+    version: 1,
+    cost: 10,
+    parameters: [],
+    implementationCode: `
+      // This tool's logic is handled by the runtime.ai.learnFromGameTapes() function.
+      // It performs a complex operation involving multiple AI calls and state updates.
+      // By centralizing the logic, we keep the tool definition simple.
+      return await runtime.ai.learnFromGameTapes();
+    `
+  },
   {
     id: 'workflow_creator',
     name: 'Workflow Creator',
     description: 'Creates a new, high-level "Automation" tool by combining a sequence of other tool calls into a single, reusable workflow.',
     category: 'Automation',
     version: 1,
+    cost: 25,
     parameters: [
       { name: 'name', type: 'string', description: 'The unique, human-readable name for the new workflow tool.', required: true },
       { name: 'description', type: 'string', description: 'A clear, concise description of what the entire workflow accomplishes.', required: true },
@@ -353,6 +343,7 @@ If no physical task is active, select a cognitive goal.
     description: "A meta-tool that critiques a proposed action before it's executed. It acts as a 'second thought' to prevent errors and optimize the agent's plan.",
     category: 'Automation',
     version: 1,
+    cost: 5,
     parameters: [
       { name: 'user_goal', type: 'string', description: "The original user's goal or request.", required: true },
       { name: 'proposed_action', type: 'object', description: 'The JSON object of the tool call the agent plans to execute, including its name and arguments.', required: true },
@@ -376,6 +367,7 @@ If no physical task is active, select a cognitive goal.
     description: "Modifies an existing tool's code, description, or parameters. The primary mechanism for refining capabilities.",
     category: 'Automation',
     version: 2,
+    cost: 30,
     parameters: [
       { name: 'name', type: 'string', description: 'The exact name of the tool to improve.', required: true },
       { name: 'description', type: 'string', description: "The new, improved description. If omitted, the description is not changed.", required: false },
@@ -408,6 +400,7 @@ If no physical task is active, select a cognitive goal.
     description: 'A critical safety tool. It tests the syntax of a tool by attempting to compile it. This catches basic errors before they can crash the system.',
     category: 'Automation',
     version: 1,
+    cost: 0,
     parameters: [
         { name: 'toolName', type: 'string', description: 'The name of the tool to test.', required: true },
     ],
@@ -437,6 +430,7 @@ If no physical task is active, select a cognitive goal.
     description: 'A critical safety tool. After a tool passes a syntax check, this tool uses an AI call to verify if the tool\'s code *logically* implements its description.',
     category: 'Automation',
     version: 1,
+    cost: 5,
     parameters: [
       { name: 'toolName', type: 'string', description: 'The name of the tool to verify.', required: true },
     ],
@@ -460,5 +454,5 @@ If no physical task is active, select a cognitive goal.
 export const PREDEFINED_TOOLS: LLMTool[] = [
   ...CORE_AUTOMATION_TOOLS,
   ...PREDEFINED_UI_TOOLS,
-  ...roboticsTools,
+  ...roboticsTools.filter(t => t.category !== 'UI Component'),
 ];

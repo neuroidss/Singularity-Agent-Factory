@@ -27,9 +27,9 @@ const generateDetailedError = (error: unknown, modelId: string, rawResponse?: st
 };
 
 const getRobotStateString = (robotState: RobotState, environmentState: EnvironmentObject[]): string => {
-    const { x, y, rotation, hasPackage } = robotState;
-    const packageObj = environmentState.find(obj => obj.type === 'package');
-    const goalObj = environmentState.find(obj => obj.type === 'goal');
+    const { x, y, rotation, hasResource } = robotState;
+    const resourceObj = environmentState.find(obj => obj.type === 'resource');
+    const collectionPointObj = environmentState.find(obj => obj.type === 'collection_point');
     
     let direction = 'Unknown';
     if (rotation === 0) direction = 'North (Up)';
@@ -38,18 +38,18 @@ const getRobotStateString = (robotState: RobotState, environmentState: Environme
     if (rotation === 270) direction = 'West (Left)';
     
     let stateString = `Robot is at coordinates (${x}, ${y}) facing ${direction}. `;
-    stateString += `Robot is ${hasPackage ? 'currently carrying the package' : 'not carrying the package'}. `;
+    stateString += `Robot is ${hasResource ? 'currently carrying the resource' : 'not carrying the resource'}. `;
 
-    if (packageObj) {
-        stateString += `The package is at (${packageObj.x}, ${packageObj.y}). `;
+    if (resourceObj) {
+        stateString += `The resource is at (${resourceObj.x}, ${resourceObj.y}). `;
     } else {
-        if (!hasPackage) {
-            stateString += 'The package has been delivered or does not exist. ';
+        if (!hasResource) {
+            stateString += 'The resource has been collected or does not exist. ';
         }
     }
     
-    if (goalObj) {
-        stateString += `The delivery goal is at (${goalObj.x}, ${goalObj.y}).`;
+    if (collectionPointObj) {
+        stateString += `The delivery collection point is at (${collectionPointObj.x}, ${collectionPointObj.y}).`;
     }
 
     return stateString.trim();
@@ -174,7 +174,7 @@ export const selectTools = async (
         const pipe = await getPipeline(modelId, apiConfig, onProgress);
         const lightweightTools = allTools.map(t => ({ name: t.name, description: t.description }));
         const toolsForPrompt = JSON.stringify(lightweightTools, null, 2);
-        const fullSystemInstruction = `${systemInstruction}\n\nAVAILABLE TOOLS:\n${toolsForPrompt}`;
+        const fullSystemInstruction = `${systemInstruction}\n\nAVAILABLE TOOLS:\n${toolsForPrompt}${JSON_FIX_PROMPT}`;
 
         responseText = await executePipe(pipe, fullSystemInstruction, userInput, temperature);
 
@@ -206,7 +206,8 @@ export const generateGoal = async (
     autonomousActionLimit: number,
     actionContext: string | null,
     robotState: RobotState,
-    environmentState: EnvironmentObject[]
+    environmentState: EnvironmentObject[],
+    agentResources: Record<string, number>
 ): Promise<{ goal: string, rawResponse: string }> => {
     if (typeof systemInstruction !== 'string' || !systemInstruction.trim()) {
         throw new Error("The system instruction for goal generation is missing or empty. The 'Autonomous Goal Generator' tool may have been corrupted.");
@@ -214,17 +215,18 @@ export const generateGoal = async (
     let responseText = "";
     try {
         const pipe = await getPipeline(modelId, apiConfig, onProgress);
-        const lightweightTools = allTools.map(t => ({ name: t.name, description: t.description, version: t.version }));
-        const toolsForPrompt = JSON.stringify(lightweightTools, null, 2);
         
         const contextText = actionContext || "No actions have been taken yet.";
         const robotStateString = getRobotStateString(robotState, environmentState);
+        const agentResourcesString = `Agent has ${agentResources.Energy || 0} Energy.`;
+
         const instructionWithContext = systemInstruction
             .replace('{{ACTION_HISTORY}}', contextText)
             .replace('{{ACTION_LIMIT}}', String(autonomousActionLimit))
-            .replace('{{ROBOT_STATE}}', robotStateString);
+            .replace('{{ROBOT_STATE}}', robotStateString)
+            .replace('{{AGENT_RESOURCES}}', agentResourcesString);
 
-        const fullSystemInstruction = `${instructionWithContext}\n\nHere is the current list of all available tools:\n${toolsForPrompt}`;
+        const fullSystemInstruction = `${instructionWithContext}${JSON_FIX_PROMPT}`;
 
         responseText = await executePipe(pipe, fullSystemInstruction, userInput, temperature);
 
@@ -254,7 +256,7 @@ export const verifyToolFunctionality = async (
     let responseText = "";
     try {
         const pipe = await getPipeline(modelId, apiConfig, onProgress);
-        responseText = await executePipe(pipe, systemInstruction, "Please verify the tool as instructed.", temperature);
+        responseText = await executePipe(pipe, `${systemInstruction}${JSON_FIX_PROMPT}`, "Please verify the tool as instructed.", temperature);
 
         if (!responseText) {
             return { is_correct: false, reasoning: "AI returned an empty response.", rawResponse: "{}" };
@@ -285,7 +287,7 @@ export const critiqueAction = async (
     let responseText = "";
     try {
         const pipe = await getPipeline(modelId, apiConfig, onProgress);
-        responseText = await executePipe(pipe, systemInstruction, "Please critique the proposed action as instructed.", temperature);
+        responseText = await executePipe(pipe, `${systemInstruction}${JSON_FIX_PROMPT}`, "Please critique the proposed action as instructed.", temperature);
 
         if (!responseText) {
             return { is_optimal: false, suggestion: "AI returned an empty response during critique.", rawResponse: "{}" };
@@ -363,4 +365,21 @@ export const generateText = async (
     } catch (error) {
         throw generateDetailedError(error, modelId, responseText);
     }
+};
+
+export const generateHeuristic = async (
+    systemInstruction: string,
+    modelId: string,
+    temperature: number,
+    apiConfig: APIConfig,
+    onProgress: (message: string) => void
+): Promise<string> => {
+    return generateText(
+        "Based on the provided game history, generate one new strategic heuristic for the agent to follow in the future.",
+        systemInstruction,
+        modelId,
+        temperature,
+        apiConfig,
+        onProgress
+    );
 };

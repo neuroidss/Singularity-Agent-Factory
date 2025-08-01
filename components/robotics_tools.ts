@@ -4,9 +4,9 @@ export const roboticsTools: LLMTool[] = [
     {
         id: 'robot_simulation_environment',
         name: 'Robot Simulation Environment',
-        description: 'Displays the 2D grid environment for the robot simulation, showing the robot, walls, package, and goal.',
+        description: 'Displays the 2D grid environment for the robot simulation, showing the robot, walls, resources, and collection points.',
         category: 'UI Component',
-        version: 1,
+        version: 2,
         parameters: [
             { name: 'robotState', type: 'object', description: 'The current state of the robot.', required: true },
             { name: 'environmentState', type: 'array', description: 'The list of objects in the environment.', required: true },
@@ -35,8 +35,8 @@ export const roboticsTools: LLMTool[] = [
                     let content;
                     switch (obj.type) {
                         case 'wall': content = '🧱'; break;
-                        case 'package': content = '📦'; break;
-                        case 'goal': content = '🏁'; break;
+                        case 'resource': content = '💎'; break;
+                        case 'collection_point': content = '🏦'; break;
                         default: content = '';
                     }
                     return (
@@ -61,7 +61,7 @@ export const roboticsTools: LLMTool[] = [
                         {renderGrid()}
                         {renderObjects()}
                         <div style={robotStyle} className="relative flex items-center justify-center text-3xl">
-                           {robotState.hasPackage && <div className="absolute text-sm" style={{top: -5, left: -5}}>📦</div>}
+                           {robotState.hasResource && <div className="absolute text-sm" style={{top: -5, left: -5}}>💎</div>}
                            <span>🤖</span>
                         </div>
                     </div>
@@ -70,11 +70,120 @@ export const roboticsTools: LLMTool[] = [
         `,
     },
     {
+        id: 'pathfinder',
+        name: 'Pathfinder',
+        description: "Calculates and executes the single best next action (move forward, turn left, or turn right) to get closer to a target coordinate. This is the primary tool for navigation. It uses the A* algorithm to find the optimal path while avoiding walls.",
+        category: 'Automation',
+        version: 2,
+        cost: 1,
+        parameters: [
+            { name: 'targetX', type: 'number', description: 'The x-coordinate of the target.', required: true },
+            { name: 'targetY', type: 'number', description: 'The y-coordinate of the target.', required: true },
+        ],
+        implementationCode: `
+            const { robot, environment } = runtime.robot.getState();
+            const { x: startX, y: startY, rotation } = robot;
+            const { targetX, targetY } = args;
+
+            if (startX === targetX && startY === targetY) {
+                return { success: true, message: 'Pathfinder: Already at target.' };
+            }
+            
+            // --- A* Pathfinding Implementation ---
+            const walls = new Set(environment.filter(o => o.type === 'wall').map(o => \`\${o.x},\${o.y}\`));
+            const heuristic = (x, y) => Math.abs(x - targetX) + Math.abs(y - targetY);
+
+            class PriorityQueue {
+                constructor() { this.elements = []; }
+                enqueue(element, priority) { this.elements.push({ element, priority }); this.sort(); }
+                dequeue() { return this.elements.shift().element; }
+                isEmpty() { return this.elements.length === 0; }
+                sort() { this.elements.sort((a, b) => a.priority - b.priority); }
+            }
+
+            const openSet = new PriorityQueue();
+            openSet.enqueue({ x: startX, y: startY }, heuristic(startX, startY));
+            
+            const cameFrom = new Map();
+            const gScore = new Map();
+            gScore.set(\`\${startX},\${startY}\`, 0);
+
+            let pathFound = false;
+            let finalNode = null;
+
+            while (!openSet.isEmpty()) {
+                const current = openSet.dequeue();
+                const currentKey = \`\${current.x},\${current.y}\`;
+
+                if (current.x === targetX && current.y === targetY) {
+                    finalNode = current;
+                    pathFound = true;
+                    break;
+                }
+
+                const neighbors = [
+                    { x: current.x, y: current.y - 1 }, // Up
+                    { x: current.x, y: current.y + 1 }, // Down
+                    { x: current.x - 1, y: current.y }, // Left
+                    { x: current.x + 1, y: current.y }  // Right
+                ];
+                
+                for (const neighbor of neighbors) {
+                    const neighborKey = \`\${neighbor.x},\${neighbor.y}\`;
+                    if (walls.has(neighborKey)) continue;
+
+                    const tentativeGScore = gScore.get(currentKey) + 1;
+                    if (tentativeGScore < (gScore.get(neighborKey) || Infinity)) {
+                        cameFrom.set(neighborKey, current);
+                        gScore.set(neighborKey, tentativeGScore);
+                        const fScore = tentativeGScore + heuristic(neighbor.x, neighbor.y);
+                        openSet.enqueue(neighbor, fScore);
+                    }
+                }
+            }
+            
+            if (!pathFound) {
+                 throw new Error('Pathfinder: No path found to target.');
+            }
+
+            // Reconstruct path
+            const path = [];
+            let temp = finalNode;
+            while (temp) {
+                path.unshift(temp);
+                temp = cameFrom.get(\`\${temp.x},\${temp.y}\`);
+            }
+
+            // --- Determine Next Action from Path ---
+            if (path.length < 2) {
+                return { success: true, message: 'Pathfinder: No movement needed.' };
+            }
+            
+            const nextStep = path[1];
+            const dx = nextStep.x - startX;
+            const dy = nextStep.y - startY;
+
+            let idealAngle = rotation;
+            if (dx === 1) idealAngle = 90;   // East
+            else if (dx === -1) idealAngle = 270; // West
+            else if (dy === -1) idealAngle = 0;    // North
+            else if (dy === 1) idealAngle = 180;  // South
+
+            if (rotation === idealAngle) {
+                return await runtime.robot.moveForward();
+            } else {
+                const diff = (idealAngle - rotation + 360) % 360;
+                return await runtime.robot.turn(diff > 180 ? 'left' : 'right');
+            }
+        `
+    },
+    {
         id: 'scan_environment',
         name: 'Scan Environment',
         description: 'Scans the immediate surroundings and returns a description of what the robot sees.',
         category: 'Functional',
-        version: 1,
+        version: 2,
+        cost: 0,
         parameters: [],
         implementationCode: `
             const { robot, environment } = runtime.robot.getState();
@@ -93,8 +202,8 @@ export const roboticsTools: LLMTool[] = [
             const objectInFront = getObjectAt(posInFront.x, posInFront.y);
 
             let description = \`Robot is at (\${x}, \${y}) facing \${direction}. \`;
-            if (robot.hasPackage) {
-                description += "Robot is carrying the package. ";
+            if (robot.hasResource) {
+                description += "Robot is carrying the resource. ";
             }
 
             if(objectInFront) {
@@ -103,14 +212,14 @@ export const roboticsTools: LLMTool[] = [
                 description += "The space in front is clear. ";
             }
 
-            const packageObj = environment.find(o => o.type === 'package');
-            if(packageObj) {
-                 description += \`The package is at (\${packageObj.x}, \${packageObj.y}). \`;
+            const resourceObj = environment.find(o => o.type === 'resource');
+            if(resourceObj) {
+                 description += \`The resource is at (\${resourceObj.x}, \${resourceObj.y}). \`;
             }
             
-            const goalObj = environment.find(o => o.type === 'goal');
-             if(goalObj) {
-                 description += \`The goal is at (\${goalObj.x}, \${goalObj.y}).\`;
+            const collectionPointObj = environment.find(o => o.type === 'collection_point');
+             if(collectionPointObj) {
+                 description += \`The collection point is at (\${collectionPointObj.x}, \${collectionPointObj.y}).\`;
             }
 
             return { success: true, message: description };
@@ -122,6 +231,7 @@ export const roboticsTools: LLMTool[] = [
         description: 'Moves the robot one step in the direction it is currently facing. Fails if there is a wall.',
         category: 'Functional',
         version: 1,
+        cost: 0,
         parameters: [],
         implementationCode: 'return await runtime.robot.moveForward();'
     },
@@ -131,6 +241,7 @@ export const roboticsTools: LLMTool[] = [
         description: 'Turns the robot 90 degrees to the left.',
         category: 'Functional',
         version: 1,
+        cost: 0,
         parameters: [],
         implementationCode: "return runtime.robot.turn('left');"
     },
@@ -140,25 +251,28 @@ export const roboticsTools: LLMTool[] = [
         description: 'Turns the robot 90 degrees to the right.',
         category: 'Functional',
         version: 1,
+        cost: 0,
         parameters: [],
         implementationCode: "return runtime.robot.turn('right');"
     },
     {
-        id: 'pickup_package',
-        name: 'Pickup Package',
-        description: 'Picks up the package if the robot is on the same square. Fails otherwise.',
+        id: 'pickup_resource',
+        name: 'Pickup Resource',
+        description: 'Picks up the resource if the robot is on the same square. Fails otherwise.',
         category: 'Functional',
-        version: 1,
+        version: 2,
+        cost: 0,
         parameters: [],
-        implementationCode: 'return runtime.robot.grip();'
+        implementationCode: 'return runtime.robot.pickupResource();'
     },
     {
-        id: 'drop_package',
-        name: 'Drop Package',
-        description: 'Drops the package at the robot\'s current location. Used to deliver the package at the goal.',
+        id: 'deliver_resource',
+        name: 'Deliver Resource',
+        description: 'Delivers the resource at the collection point, gaining Energy. Fails if not at the correct location.',
         category: 'Functional',
-        version: 1,
+        version: 2,
+        cost: 0,
         parameters: [],
-        implementationCode: 'return runtime.robot.release();'
+        implementationCode: 'return runtime.robot.deliverResource();'
     }
 ];

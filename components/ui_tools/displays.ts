@@ -1,4 +1,5 @@
 
+
 import type { LLMTool } from '../../types';
 
 export const displayTools: LLMTool[] = [
@@ -88,6 +89,115 @@ export const displayTools: LLMTool[] = [
       { name: 'apiCallLimit', type: 'number', description: 'The daily limit of API calls.', required: true },
     ],
     implementationCode: `// This component is implemented natively in DebugLogView.tsx`,
+  },
+    {
+    id: 'learned_heuristics_display',
+    name: 'Learned Heuristics Display',
+    description: 'Displays strategic heuristics the agent has learned from reviewing past performance.',
+    category: 'UI Component',
+    version: 1,
+    parameters: [
+      { name: 'learnedHeuristics', type: 'array', description: 'Array of learned heuristic strings.', required: true },
+    ],
+    implementationCode: `
+      if (!learnedHeuristics || learnedHeuristics.length === 0) {
+        return null;
+      }
+      return (
+        <div className="w-full max-w-4xl mx-auto mt-6">
+          <div className="bg-sky-900/50 border border-sky-700 rounded-lg p-4">
+            <h3 className="text-lg font-bold text-sky-300 mb-2">Learned Heuristics</h3>
+            <ul className="list-disc list-inside space-y-2 text-sky-200 text-sm">
+              {learnedHeuristics.map((heuristic, index) => (
+                <li key={index}>{heuristic}</li>
+              ))}
+            </ul>
+          </div>
+        </div>
+      );
+    `,
+  },
+  {
+    id: 'game_tapes_viewer',
+    name: 'Game Tapes Viewer',
+    description: 'Displays a history of all completed tasks (episodes). You can review the step-by-step log for each and ask the AI to learn from them.',
+    category: 'UI Component',
+    version: 1,
+    parameters: [
+      { name: 'episodes', type: 'array', description: 'Array of all past episodes.', required: true },
+      { name: 'runtime', type: 'object', description: 'The runtime API to call tools.', required: true },
+      { name: 'isLoading', type: 'boolean', description: 'Whether the app is currently processing.', required: true },
+    ],
+    implementationCode: `
+      const [expandedId, setExpandedId] = React.useState(null);
+
+      const handleLearn = async () => {
+          try {
+              await runtime.tools.run('Strategic Reviewer', {});
+          } catch(e) {
+              console.error("Failed to run Strategic Reviewer", e);
+              // Error is logged by the main loop, so no need for a UI alert here.
+          }
+      };
+
+      const getStatusClass = (status) => {
+          if (status === 'Completed') return 'text-green-400';
+          if (status === 'Failed') return 'text-red-400';
+          return 'text-yellow-400';
+      };
+
+      if (!episodes || episodes.length === 0) {
+          return (
+            <div className="w-full max-w-4xl mx-auto mt-6 text-center text-gray-500">
+                <p>No episodes recorded yet. Complete a task to see it here.</p>
+            </div>
+          );
+      }
+
+      return (
+          <div className="w-full max-w-4xl mx-auto mt-6">
+              <div className="flex justify-between items-center mb-4">
+                <h2 className="text-xl font-bold text-gray-300">Game Tapes ({episodes.length})</h2>
+                <button 
+                  onClick={handleLearn}
+                  disabled={isLoading}
+                  className="bg-purple-600 text-white font-bold py-2 px-4 rounded-lg hover:bg-purple-700 transition-colors disabled:bg-purple-900 disabled:cursor-not-allowed"
+                >
+                  Learn from History
+                </button>
+              </div>
+              <div className="space-y-2">
+                  {[...episodes].reverse().map(episode => (
+                      <div key={episode.id} className="bg-gray-800/80 border border-gray-700 rounded-lg">
+                          <button onClick={() => setExpandedId(expandedId === episode.id ? null : episode.id)} className="w-full p-3 text-left flex justify-between items-center">
+                              <div>
+                                <p className="font-semibold text-white">Episode #{episode.id.slice(-4)}: <span className={getStatusClass(episode.status)}>{episode.status}</span></p>
+                                <p className="text-xs text-gray-400">Goal: {episode.goal} ({episode.actions.length} actions)</p>
+                              </div>
+                              <span className={\`transform transition-transform \${expandedId === episode.id ? 'rotate-180' : ''}\`}>▼</span>
+                          </button>
+                          {expandedId === episode.id && (
+                              <div className="p-3 border-t border-gray-700">
+                                  <ul className="space-y-1 text-xs font-mono">
+                                      {episode.actions.map((action, index) => (
+                                          <li key={index} className="p-1 rounded bg-gray-900/50">
+                                              <span className="text-cyan-400">Step {index + 1}: {action.toolCall?.name || 'No Tool'}</span>
+                                              {action.executionError ? (
+                                                  <p className="text-red-400">Error: {action.executionError}</p>
+                                              ) : (
+                                                  <p className="text-gray-300 truncate">Result: {JSON.stringify(action.executionResult)}</p>
+                                              )}
+                                          </li>
+                                      ))}
+                                  </ul>
+                              </div>
+                          )}
+                      </div>
+                  ))}
+              </div>
+          </div>
+      );
+    `
   },
   {
     id: 'tool_list_display',
@@ -210,6 +320,52 @@ export const displayTools: LLMTool[] = [
           </div>
         </div>
       );
+    `
+  },
+  {
+    id: 'action_proposal_panel',
+    name: 'Action Proposal Panel',
+    description: 'Displays a proposed action from the AI for the user to approve or reject.',
+    category: 'UI Component',
+    version: 1,
+    parameters: [
+      { name: 'proposedAction', type: 'object', description: 'The proposed tool call from the AI.', required: true },
+      { name: 'handleApproveAction', type: 'string', description: 'Function to execute the proposed action.', required: true },
+      { name: 'handleRejectAction', type: 'string', description: 'Function to reject the proposed action.', required: true },
+      { name: 'isLoading', type: 'boolean', description: 'Whether the app is currently processing.', required: true },
+    ],
+    implementationCode: `
+        const { name, arguments: args } = proposedAction;
+
+        return (
+          <div className="w-full max-w-2xl mx-auto mt-6 p-4 bg-blue-900/50 border-2 border-dashed border-blue-500 rounded-lg shadow-lg">
+            <h3 className="text-lg font-bold text-blue-200 mb-2">Agent Suggestion</h3>
+            <div className="bg-gray-900/70 p-3 rounded-md">
+                <p className="text-sm text-gray-300">The agent wants to call the following tool:</p>
+                <p className="font-mono text-md text-cyan-300 mt-1">{name}</p>
+                <p className="text-sm text-gray-300 mt-2">With these arguments:</p>
+                <pre className="text-xs text-gray-200 bg-black/50 p-2 rounded mt-1 whitespace-pre-wrap">
+                    {JSON.stringify(args, null, 2)}
+                </pre>
+            </div>
+            <div className="flex justify-end gap-3 mt-4">
+                <button
+                    onClick={handleRejectAction}
+                    disabled={isLoading}
+                    className="bg-red-600/80 text-white font-semibold py-2 px-4 rounded-lg hover:bg-red-700 disabled:bg-red-900/50"
+                >
+                    Reject
+                </button>
+                <button
+                    onClick={handleApproveAction}
+                    disabled={isLoading}
+                    className="bg-green-600/80 text-white font-semibold py-2 px-4 rounded-lg hover:bg-green-700 disabled:bg-green-900/50"
+                >
+                    Approve
+                </button>
+            </div>
+          </div>
+        );
     `
   },
 ];

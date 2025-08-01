@@ -2,7 +2,7 @@
 import React, { useState, useCallback, useMemo, useEffect, useRef } from 'react';
 import * as aiService from './services/aiService';
 import { PREDEFINED_TOOLS, AVAILABLE_MODELS, DEFAULT_HUGGING_FACE_DEVICE, SWARM_AGENT_SYSTEM_PROMPT, TASK_AGENT_SYSTEM_PROMPT } from './constants';
-import type { LLMTool, EnrichedAIResponse, DebugInfo, AIResponse, APIConfig, AIModel, NewToolPayload, AIToolCall, ToolSelectionCallInfo, AgentExecutionCallInfo, AgentWorker, AgentStatus, RobotState, EnvironmentObject, KnowledgeGraphNode, KnowledgeGraph } from './types';
+import type { LLMTool, EnrichedAIResponse, AIResponse, APIConfig, AIModel, NewToolPayload, AIToolCall, AgentWorker, AgentStatus, RobotState, EnvironmentObject, KnowledgeGraphNode, KnowledgeGraph, Episode, EpisodeStatus } from './types';
 import { UIToolRunner } from './components/UIToolRunner';
 import { ModelProvider, OperatingMode, ToolRetrievalStrategy } from './types';
 import { loadStateFromStorage, saveStateToStorage } from './versioning';
@@ -36,18 +36,22 @@ const generateMachineReadableId = (name: string, existingTools: LLMTool[]): stri
   return finalId;
 };
 
-const initializeTools = (): LLMTool[] => {
+const initializeState = () => {
     const loadedState = loadStateFromStorage();
-    if (loadedState && loadedState.tools) {
-        return loadedState.tools;
+    if (loadedState) {
+        return loadedState;
     }
-    // If nothing in storage, initialize from predefined and add timestamps
+    // If nothing in storage, initialize from predefined
     const now = new Date().toISOString();
-    return PREDEFINED_TOOLS.map(tool => ({
-        ...tool,
-        createdAt: tool.createdAt || now,
-        updatedAt: tool.updatedAt || now,
-    }));
+    return {
+        tools: PREDEFINED_TOOLS.map(tool => ({
+            ...tool,
+            createdAt: tool.createdAt || now,
+            updatedAt: tool.updatedAt || now,
+        })),
+        episodes: [],
+        learnedHeuristics: [],
+    };
 };
 
 const programmaticClusterNamer = (clusterTools: LLMTool[]): string => {
@@ -85,7 +89,11 @@ const programmaticClusterNamer = (clusterTools: LLMTool[]): string => {
 const App: React.FC = () => {
     const [userInput, setUserInput] = useState<string>('');
     const [isLoading, setIsLoading] = useState<boolean>(false);
-    const [tools, setTools] = useState<LLMTool[]>(initializeTools);
+    
+    const [tools, setTools] = useState<LLMTool[]>(() => initializeState().tools);
+    const [episodes, setEpisodes] = useState<Episode[]>(() => initializeState().episodes);
+    const [learnedHeuristics, setLearnedHeuristics] = useState<string[]>(() => initializeState().learnedHeuristics);
+
     const [lastResponse, setLastResponse] = useState<EnrichedAIResponse | null>(null);
     const [selectedModelId, setSelectedModelId] = useState<string>(
         () => localStorage.getItem('selectedModelId') || AVAILABLE_MODELS[0].id
@@ -119,6 +127,7 @@ const App: React.FC = () => {
     );
     const autonomousHistoryRef = useRef<EnrichedAIResponse[]>([]);
     const isRunningRef = useRef(isAutonomousLoopRunning);
+    const autonomousGoalRef = useRef<string>("");
 
     // State for Swarm mode
     const [agentSwarm, setAgentSwarm] = useState<AgentWorker[]>([]);
@@ -126,7 +135,7 @@ const App: React.FC = () => {
     const isSwarmRunningRef = useRef(isSwarmRunning);
     const swarmIterationCounter = useRef(0);
     const swarmAgentIdCounter = useRef(0);
-
+    const swarmHistoryRef = useRef<EnrichedAIResponse[]>([]);
 
     // New state for Task mode loop
     const [isTaskLoopRunning, setIsTaskLoopRunning] = useState<boolean>(false);
@@ -144,7 +153,7 @@ const App: React.FC = () => {
     );
 
     // State for Robotics Simulation
-    const [robotState, setRobotState] = useState<RobotState>({ x: 1, y: 1, rotation: 90, hasPackage: false });
+    const [robotState, setRobotState] = useState<RobotState>({ x: 1, y: 1, rotation: 90, hasResource: false });
     const [environmentState, setEnvironmentState] = useState<EnvironmentObject[]>([
         // Borders
         ...Array.from({length: 12}, (_, i) => ({ x: i, y: 0, type: 'wall' as const })),
@@ -157,12 +166,15 @@ const App: React.FC = () => {
         { x: 8, y: 10, type: 'wall' }, { x: 8, y: 9, type: 'wall' }, { x: 8, y: 8, type: 'wall' },
         { x: 8, y: 7, type: 'wall' }, { x: 8, y: 6, type: 'wall' },
         // Items
-        { x: 9, y: 2, type: 'package' },
-        { x: 2, y: 9, type: 'goal' },
+        { x: 9, y: 2, type: 'resource' },
+        { x: 2, y: 9, type: 'collection_point' },
     ]);
     
     // State for Knowledge Graph
     const [selectedGraphNode, setSelectedGraphNode] = useState<KnowledgeGraphNode | null>(null);
+    
+    // NEW: State for agent economy
+    const [agentResources, setAgentResources] = useState<Record<string, number>>({ Energy: 100 });
 
     // Centralized Logging and API call counting
     const [eventLog, setEventLog] = useState<string[]>(['[INFO] Log initialized.']);
@@ -173,9 +185,10 @@ const App: React.FC = () => {
       setEventLog(prev => [...prev.slice(-199), `[${timestamp}] ${message}`]);
     }, []);
 
-    const incrementApiCallCount = useCallback(() => {
+    const incrementApiCallCount = useCallback((purpose: string) => {
       setApiCallCount(prev => prev + 1);
-    }, []);
+      logEvent(`[API Call - ${purpose}]`);
+    }, [logEvent]);
 
 
     const [apiConfig, setApiConfig] = useState<APIConfig>(() => {
@@ -205,8 +218,8 @@ const App: React.FC = () => {
         //    This check happens only on initial load.
         if (!initialConfig.googleAIAPIKey) {
             try {
-                if (typeof process !== 'undefined' && process.env && process.env.GEMINI_API_KEY) {
-                    initialConfig.googleAIAPIKey = process.env.GEMINI_API_KEY;
+                if (typeof process !== 'undefined' && process.env && process.env.API_KEY) {
+                    initialConfig.googleAIAPIKey = process.env.API_KEY;
                 }
             } catch (e) {
                 // 'process' might not be defined in a pure browser context.
@@ -225,10 +238,8 @@ const App: React.FC = () => {
     );
 
     useEffect(() => {
-        if (tools.length > 0) {
-            saveStateToStorage({ tools });
-        }
-    }, [tools]);
+        saveStateToStorage({ tools, episodes, learnedHeuristics });
+    }, [tools, episodes, learnedHeuristics]);
     
     useEffect(() => {
         localStorage.setItem('selectedModelId', selectedModelId);
@@ -250,7 +261,7 @@ const App: React.FC = () => {
     useEffect(() => {
         localStorage.setItem('operatingMode', operatingMode);
         if (operatingMode === OperatingMode.Swarm) {
-             setUserInput(`The swarm's goal is to deliver the package. First, create a tool that allows the robot to move in a square of a given size. Then, use that new tool to have one agent patrol a 3x3 square while another agent goes for the package.`);
+             setUserInput(`The swarm's goal is to deliver the resource. First, create a tool that allows the robot to move in a square of a given size. Then, use that new tool to have one agent patrol a 3x3 square while another agent goes for the resource.`);
         } else if (operatingMode !== OperatingMode.Task) {
              setUserInput('');
         }
@@ -403,7 +414,7 @@ The JSON object must have this exact format:
   "is_correct": boolean, // true if the code matches the description, false otherwise
   "reasoning": "string" // A brief explanation for your decision.
 }`;
-                incrementApiCallCount();
+                incrementApiCallCount('Tool Verification');
                 const result = await aiService.verifyToolFunctionality(
                     verifierSystemPrompt, selectedModel, apiConfig, temperature
                 );
@@ -436,12 +447,55 @@ ${JSON.stringify(proposedAction, null, 2)}
   "is_optimal": boolean, // true if the action is logical, efficient, and correct. false otherwise.
   "suggestion": "string" // If not optimal, provide a concise, actionable suggestion for how the agent should change its proposed action. If optimal, briefly state why.
 }`;
-                incrementApiCallCount();
+                incrementApiCallCount('Action Critique');
                 const result = await aiService.critiqueAction(
                     criticSystemPrompt, selectedModel, apiConfig, temperature
                 );
 
                 return result;
+            },
+            learnFromGameTapes: async (): Promise<{ success: boolean; message: string; }> => {
+                logEvent("[INFO] 🧠 Analyzing past performance to generate new heuristic...");
+                const lastSuccess = [...episodes].reverse().find(e => e.status === 'Completed');
+                const lastFailure = [...episodes].reverse().find(e => e.status === 'Failed');
+                
+                if (!lastSuccess && !lastFailure) {
+                    throw new Error("No completed or failed episodes found to learn from.");
+                }
+
+                const formatAction = (a: EnrichedAIResponse) => ` - Action: ${a.toolCall?.name}, Result: ${a.executionError ? `FAILED (${a.executionError})` : 'OK'}`;
+                
+                const successLog = lastSuccess ? `SUCCESSFUL EPISODE:\nGoal: ${lastSuccess.goal}\nActions:\n${lastSuccess.actions.map(formatAction).join('\n')}` : "No successful episodes found.";
+                const failureLog = lastFailure ? `FAILED EPISODE:\nGoal: ${lastFailure.goal}\nActions:\n${lastFailure.actions.map(formatAction).join('\n')}` : "No failed episodes found.";
+
+                const systemInstruction = `You are a brilliant strategy analyst for an AI agent.
+Your task is to analyze logs from one successful and one failed mission to derive a single, useful, high-level strategic heuristic.
+The heuristic should be a general rule that helps the agent perform better in the future.
+It should be concise, memorable, and start with "If..., then...".
+Do not mention specific tools unless absolutely necessary. Focus on behavior and strategy.
+
+Respond with ONLY the single heuristic as a raw string. Do not add any other text, reasoning, or quotation marks.
+
+Example: "If an action fails, try a different tool before repeating the same action."
+
+ANALYSIS DATA:
+${successLog}
+-----------------
+${failureLog}`;
+                
+                incrementApiCallCount('Heuristic Generation');
+                const newHeuristic = await aiService.generateHeuristic(systemInstruction, selectedModel, apiConfig, temperature, logEvent);
+                
+                if (newHeuristic && !learnedHeuristics.includes(newHeuristic)) {
+                    setLearnedHeuristics(prev => [...prev, newHeuristic]);
+                    logEvent(`[SUCCESS] ✨ New Heuristic Learned: "${newHeuristic}"`);
+                    return { success: true, message: `New heuristic learned and added to agent's core logic.` };
+                } else if (newHeuristic) {
+                    logEvent(`[INFO] 😐 Agent generated a heuristic that was already learned.`);
+                    return { success: true, message: `The generated heuristic was already known.` };
+                } else {
+                    throw new Error("AI failed to generate a valid heuristic.");
+                }
             }
         },
         robot: {
@@ -475,28 +529,52 @@ ${JSON.stringify(proposedAction, null, 2)}
                 });
                 return { success: true, message: `Turned ${direction}.` };
             },
-            grip: () => {
-                const packageObj = environmentState.find(obj => obj.type === 'package');
-                if (robotState.hasPackage) {
-                    throw new Error("Grip failed: Robot is already holding the package.");
+            pickupResource: () => {
+                const resourceObj = environmentState.find(obj => obj.type === 'resource');
+                if (robotState.hasResource) {
+                    throw new Error("Pickup failed: Robot is already carrying a resource.");
                 }
-                if (packageObj && packageObj.x === robotState.x && packageObj.y === robotState.y) {
-                    setRobotState(prev => ({...prev, hasPackage: true}));
-                    setEnvironmentState(prev => prev.filter(obj => obj.type !== 'package'));
-                    return { success: true, message: "Package picked up." };
+                if (resourceObj && resourceObj.x === robotState.x && resourceObj.y === robotState.y) {
+                    setRobotState(prev => ({...prev, hasResource: true}));
+                    setEnvironmentState(prev => prev.filter(obj => obj.type !== 'resource'));
+                    return { success: true, message: "Resource picked up." };
                 }
-                throw new Error("Grip failed: Robot is not at the package location.");
+                throw new Error("Pickup failed: Robot is not at the resource location.");
             },
-            release: () => {
-                 const goalObj = environmentState.find(obj => obj.type === 'goal');
-                 if (!robotState.hasPackage) {
-                    throw new Error("Release failed: Robot is not holding a package.");
+            deliverResource: () => {
+                 const collectionPointObj = environmentState.find(obj => obj.type === 'collection_point');
+                 if (!robotState.hasResource) {
+                    throw new Error("Delivery failed: Robot is not carrying a resource.");
                 }
-                 setRobotState(prev => ({...prev, hasPackage: false}));
-                 if (goalObj && goalObj.x === robotState.x && goalObj.y === robotState.y) {
-                    return { success: true, message: "Package delivered to the goal! Task complete." };
+                 if (collectionPointObj && collectionPointObj.x === robotState.x && collectionPointObj.y === robotState.y) {
+                    setRobotState(prev => ({...prev, hasResource: false}));
+                    const gainedEnergy = 50;
+                    setAgentResources(prev => ({ ...prev, Energy: (prev.Energy || 0) + gainedEnergy }));
+                    logEvent(`[SUCCESS] +${gainedEnergy} Energy! Resource delivered to the collection point.`);
+                    
+                     // Respawn the resource
+                    setTimeout(() => {
+                        setEnvironmentState(prevEnv => {
+                            const validSpawns = [];
+                            const existingObjects = new Set(prevEnv.map(o => `${o.x},${o.y}`));
+                            for (let x = 1; x < 11; x++) {
+                                for (let y = 1; y < 11; y++) {
+                                    if (!existingObjects.has(`${x},${y}`)) {
+                                        validSpawns.push({ x, y });
+                                    }
+                                }
+                            }
+                            if (validSpawns.length > 0) {
+                                const spawnPoint = validSpawns[Math.floor(Math.random() * validSpawns.length)];
+                                return [...prevEnv, { x: spawnPoint.x, y: spawnPoint.y, type: 'resource' }];
+                            }
+                            return prevEnv;
+                        });
+                    }, 500);
+
+                    return { success: true, message: `Resource delivered. Gained ${gainedEnergy} Energy.` };
                  }
-                 return { success: true, message: "Package dropped." };
+                 throw new Error("Delivery failed: Robot is not at the collection point.");
             }
         },
         graph: {
@@ -586,7 +664,7 @@ ${JSON.stringify(proposedAction, null, 2)}
                 return { nodes, edges };
             }
         }
-    }), [tools, selectedModel, apiConfig, temperature, robotState, environmentState, runToolImplementation, logEvent, incrementApiCallCount]);
+    }), [tools, selectedModel, apiConfig, temperature, robotState, environmentState, agentResources, episodes, learnedHeuristics, runToolImplementation, logEvent, incrementApiCallCount]);
 
     const handleResetTools = useCallback(() => {
         if (window.confirm('This will delete ALL custom-made tools and restore the original set of tools. This action cannot be undone. Are you sure?')) {
@@ -595,20 +673,18 @@ ${JSON.stringify(proposedAction, null, 2)}
             localStorage.removeItem('tools'); // Legacy key
             
             // Update the state to immediately reflect the change in the UI
-            const now = new Date().toISOString();
-            const defaultTools = PREDEFINED_TOOLS.map(tool => ({
-                ...tool,
-                createdAt: now,
-                updatedAt: now,
-            }));
-            setTools(defaultTools);
+            const initialState = initializeState();
+            setTools(initialState.tools);
+            setEpisodes(initialState.episodes);
+            setLearnedHeuristics(initialState.learnedHeuristics);
 
             setEventLog(['[SUCCESS] System reset complete. Original tools restored.']);
             setApiCallCount(0);
             setLastResponse(null);
             setActiveUITool(null);
+            setAgentResources({ Energy: 100 });
         }
-    }, [logEvent]);
+    }, []);
 
     const handleClearEmbeddingsCache = useCallback(() => {
         if (window.confirm('This will clear the cached tool embeddings, forcing them to be recalculated on the next embedding search. Are you sure?')) {
@@ -629,6 +705,21 @@ ${JSON.stringify(proposedAction, null, 2)}
         if (!toolToExecute) {
             throw new Error(`AI returned unknown tool name: ${toolCall.name}`);
         }
+        
+        // --- NEW: Resource Cost Check ---
+        const toolCost = toolToExecute.cost || 0;
+        if (toolCost > 0) {
+            if ((agentResources.Energy || 0) < toolCost) {
+                const errorMsg = `Execution failed: Insufficient Energy to use tool '${toolToExecute.name}'. Required: ${toolCost}, Available: ${agentResources.Energy}.`;
+                logEvent(`[ERROR] ${errorMsg}`);
+                enrichedResult.executionError = errorMsg;
+                setLastResponse(enrichedResult);
+                return enrichedResult;
+            }
+            logEvent(`[INFO] Spending ${toolCost} Energy to use ${toolToExecute.name}.`);
+            setAgentResources(prev => ({...prev, Energy: (prev.Energy || 0) - toolCost}));
+        }
+
 
         enrichedResult.tool = toolToExecute;
 
@@ -637,7 +728,7 @@ ${JSON.stringify(proposedAction, null, 2)}
             infoMessage = `▶️ Activating tool: "${toolToExecute.name}"`;
             enrichedResult.executionResult = { success: true, summary: `Displayed UI tool '${toolToExecute.name}'.` };
         } else {
-            if (!toolCall.arguments) {
+            if (toolCall.arguments === undefined || toolCall.arguments === null) {
                 enrichedResult.executionError = "Execution failed: AI did not provide any arguments for the tool call.";
             } else {
                 try {
@@ -662,7 +753,7 @@ ${JSON.stringify(proposedAction, null, 2)}
 
         return enrichedResult;
 
-    }, [findToolByName, runtimeApi, runToolImplementation, logEvent]);
+    }, [findToolByName, runtimeApi, runToolImplementation, logEvent, agentResources]);
 
     const handleApproveAction = useCallback(async () => {
         if (!proposedAction) return;
@@ -705,7 +796,7 @@ ${JSON.stringify(proposedAction, null, 2)}
 
             // --- STEP 1: Tool Retrieval ---
             let selectedToolNames: string[] = [];
-            if (isAutonomous) logEvent(`🔎 Retrieving tools with strategy: ${toolRetrievalStrategy}...`);
+            logEvent(`🔎 Retrieving tools with strategy: ${toolRetrievalStrategy}...`);
             
             switch (toolRetrievalStrategy) {
                 case ToolRetrievalStrategy.LLM: {
@@ -713,9 +804,8 @@ ${JSON.stringify(proposedAction, null, 2)}
                     const retrieverLogicTool = findToolByName('Tool Retriever Logic');
                     if (!retrieverLogicTool) throw new Error("Critical error: 'Tool Retriever Logic' tool not found.");
                     
-                    const selectionSystemInstruction = retrieverLogicTool.implementationCode;
-                    incrementApiCallCount();
-                    const { names } = await aiService.selectTools(prompt, selectionSystemInstruction, selectedModel, apiConfig, temperature, tools, logEvent);
+                    incrementApiCallCount('Tool Selection');
+                    const { names } = await aiService.selectTools(prompt, retrieverLogicTool.implementationCode, selectedModel, apiConfig, temperature, tools, logEvent);
                     selectedToolNames = names;
                     break;
                 }
@@ -739,22 +829,25 @@ ${JSON.stringify(proposedAction, null, 2)}
                     break;
                 }
             }
-             if (isAutonomous) logEvent(`🛠️ Agent will use these tools: [${selectedToolNames.join(', ')}]`);
+            logEvent(`🛠️ Agent will use these tools: [${selectedToolNames.join(', ')}]`);
 
             // --- STEP 2: Agent Execution ---
             const coreLogicTool = findToolByName('Core Agent Logic');
             if (!coreLogicTool && !systemInstructionOverride) throw new Error("Critical error: 'Core Agent Logic' tool not found and no override provided.");
             
-            const mandatoryToolNames = ['Core Agent Logic', 'Tool Creator', 'Tool Improver', 'Workflow Creator', 'Tool Self-Tester', 'Tool Verifier', 'Task Complete', 'Refuse Task', 'Action Critic'];
+            const mandatoryToolNames = ['Core Agent Logic', 'Tool Creator', 'Tool Improver', 'Workflow Creator', 'Tool Self-Tester', 'Tool Verifier', 'Task Complete', 'Refuse Task', 'Action Critic', 'Strategic Reviewer'];
             const relevantToolNames = new Set([...selectedToolNames, ...mandatoryToolNames]);
             const relevantTools = Array.from(relevantToolNames).map(name => findToolByName(name)).filter((t): t is LLMTool => !!t);
             
             const agentSystemInstruction = systemInstructionOverride || coreLogicTool!.implementationCode;
             const agentTools = relevantTools.filter(t => t.name !== 'Core Agent Logic' && t.name !== 'Tool Retriever Logic');
 
-            // NEW: Augment the system instruction with the list of tool names
+            // NEW: Augment the system instruction with the list of tool names AND learned heuristics
             const toolListForContext = agentTools.map(t => `- "${t.name}"`).join('\n');
-            const augmentedSystemInstruction = `${agentSystemInstruction}\n\n---REFERENCE: Original Tool Names---\n${toolListForContext}`;
+            const heuristicsForContext = learnedHeuristics.length > 0
+                ? `\n\n---REFERENCE: Learned Heuristics---\n* ${learnedHeuristics.join('\n* ')}`
+                : '';
+            const augmentedSystemInstruction = `${agentSystemInstruction}\n\n---REFERENCE: Original Tool Names---\n${toolListForContext}${heuristicsForContext}`;
 
             if (isAutonomous) {
                 logEvent(`🤖 Agent is thinking... Prompt size: ${prompt.length} chars. Tools: ${agentTools.length}.`);
@@ -767,7 +860,7 @@ ${JSON.stringify(proposedAction, null, 2)}
                 // Could log this if needed for deep debugging, but for now we omit it to reduce noise.
             };
             
-            incrementApiCallCount();
+            incrementApiCallCount('Agent Execution');
             const aiResponse: AIResponse = await aiService.generateResponse(prompt, augmentedSystemInstruction, selectedModel, apiConfig, temperature, handleRawResponseChunk, logEvent, agentTools);
             
             if (!isAutonomous) {
@@ -810,22 +903,42 @@ ${JSON.stringify(proposedAction, null, 2)}
                 setIsLoading(false);
             }
         }
-    }, [tools, findToolByName, selectedModel, apiConfig, temperature, runtimeApi, operatingMode, executeAction, logEvent, toolRetrievalStrategy, toolEmbeddingsCache, embeddingSimilarityThreshold, embeddingTopK, incrementApiCallCount]);
+    }, [tools, findToolByName, selectedModel, apiConfig, temperature, runtimeApi, operatingMode, executeAction, logEvent, toolRetrievalStrategy, toolEmbeddingsCache, embeddingSimilarityThreshold, embeddingTopK, incrementApiCallCount, learnedHeuristics]);
+
+    const stopAndRecordEpisode = useCallback((historyRef: React.MutableRefObject<EnrichedAIResponse[]>, goal: string, status: EpisodeStatus) => {
+        if (historyRef.current.length === 0) return;
+        
+        const newEpisode: Episode = {
+            id: `ep-${new Date().getTime()}-${Math.random().toString(36).substring(2, 7)}`,
+            startTime: new Date().toISOString(), // This is technically the end time, needs improvement
+            endTime: new Date().toISOString(),
+            status,
+            goal,
+            actions: [...historyRef.current]
+        };
+        
+        setEpisodes(prev => [...prev, newEpisode]);
+        historyRef.current = [];
+        logEvent(`[INFO] 📼 Game Tape saved. Episode status: ${status}.`);
+    }, [logEvent]);
 
     const handleStopTask = useCallback(() => {
         setIsTaskLoopRunning(false);
+        stopAndRecordEpisode(taskHistoryRef, currentUserTask, 'Terminated by User');
         logEvent("[INFO] ⏹️ User requested to stop the task.");
-    }, [logEvent]);
+    }, [logEvent, stopAndRecordEpisode, currentUserTask]);
 
      const handleStopSwarm = useCallback(() => {
         setIsSwarmRunning(false);
+        stopAndRecordEpisode(swarmHistoryRef, currentUserTask, 'Terminated by User');
         logEvent("[INFO] 🛑 Swarm task stopped by user.");
-    }, [logEvent]);
+    }, [logEvent, stopAndRecordEpisode, currentUserTask]);
 
     const runSwarmCycle = useCallback(async () => {
         if (!isSwarmRunningRef.current) {
             setIsLoading(false);
             setIsSwarmRunning(false);
+            stopAndRecordEpisode(swarmHistoryRef, currentUserTask, 'Terminated by User'); // Could be 'Failed' if it auto-stops
             logEvent("[SUCCESS] Swarm task concluded.");
             return;
         }
@@ -835,6 +948,7 @@ ${JSON.stringify(proposedAction, null, 2)}
             logEvent("[WARN] ⚠️ Swarm reached maximum iterations. Stopping.");
             setIsSwarmRunning(false);
             setIsLoading(false);
+            stopAndRecordEpisode(swarmHistoryRef, currentUserTask, 'Failed');
             return;
         }
 
@@ -852,8 +966,8 @@ ${JSON.stringify(proposedAction, null, 2)}
             // Set agent to working
             setAgentSwarm(prev => prev.map(a => a.id === agent.id ? { ...a, status: 'working', lastAction: 'Thinking about next step...', error: null } : a));
             
-            const historyString = taskHistoryRef.current.length > 0
-              ? `The swarm has already performed these actions:\n${taskHistoryRef.current.map(r => {
+            const historyString = swarmHistoryRef.current.length > 0
+              ? `The swarm has already performed these actions:\n${swarmHistoryRef.current.map(r => {
                   const toolName = r.toolCall?.name || 'Unknown Action';
                   if (r.executionError) {
                     return `Action: ${toolName} - Result: FAILED - Reason: ${r.executionError}`;
@@ -871,7 +985,7 @@ ${JSON.stringify(proposedAction, null, 2)}
             if (!isSwarmRunningRef.current) throw new Error("Swarm stopped by user during processing.");
 
             if (result) {
-                taskHistoryRef.current.push(result);
+                swarmHistoryRef.current.push(result);
                 const actionSummary = result.toolCall ? `Called '${result.toolCall.name}'` : 'No action taken';
                 setAgentSwarm(prev => prev.map(a => a.id === agent.id ? { ...a, status: 'succeeded', lastAction: actionSummary, result: result.executionResult } : a));
                 
@@ -879,6 +993,7 @@ ${JSON.stringify(proposedAction, null, 2)}
                     logEvent(`[SUCCESS] ✅ Task Completed by Agent ${agent.id}: ${result.executionResult?.message || 'Finished!'}`);
                     setIsSwarmRunning(false);
                     setIsLoading(false);
+                    stopAndRecordEpisode(swarmHistoryRef, currentUserTask, 'Completed');
                     return;
                 }
             } else {
@@ -904,14 +1019,14 @@ ${JSON.stringify(proposedAction, null, 2)}
         
         // Schedule the next cycle
         setTimeout(runSwarmCycle, 1000);
-    }, [agentSwarm, currentUserTask, processRequest, logEvent]);
+    }, [agentSwarm, currentUserTask, processRequest, logEvent, stopAndRecordEpisode]);
 
 
     const startSwarmTask = useCallback(async (initialTask: string) => {
         setIsLoading(true);
         setIsSwarmRunning(true);
         setCurrentUserTask(initialTask);
-        taskHistoryRef.current = [];
+        swarmHistoryRef.current = [];
         swarmIterationCounter.current = 0;
         swarmAgentIdCounter.current = 3;
         setUserInput('');
@@ -968,17 +1083,21 @@ ${JSON.stringify(proposedAction, null, 2)}
                 if (result.toolCall?.name === 'Task Complete') {
                     logEvent(`[SUCCESS] ✅ Task Completed: ${result.executionResult?.message || 'Finished!'}`);
                     setIsTaskLoopRunning(false);
+                    stopAndRecordEpisode(taskHistoryRef, currentUserTask, 'Completed');
                     return; // End of loop
                 }
+            } else {
+                 // If the agent does not choose a tool, consider it a failure for this cycle.
+                 taskHistoryRef.current.push({ toolCall: null, executionError: "Agent failed to choose an action." });
             }
         } catch (err) {
-            // Error is already logged by processRequest
+             taskHistoryRef.current.push({ toolCall: null, executionError: err instanceof Error ? err.message : String(err) });
         }
         
         // Schedule the next cycle
         setTimeout(runTaskCycle, 1000);
 
-    }, [currentUserTask, processRequest, logEvent]);
+    }, [currentUserTask, processRequest, logEvent, stopAndRecordEpisode]);
     
     const startTask = useCallback(async (initialTask: string) => {
         setIsLoading(true);
@@ -1051,8 +1170,11 @@ ${JSON.stringify(proposedAction, null, 2)}
         autonomousHistoryRef,
         robotState,
         environmentState,
+        agentResources,
         cycleDelay,
         incrementApiCallCount,
+        stopAndRecordEpisode,
+        autonomousGoalRef,
     });
 
     // Keep the ref updated with the latest state and functions.
@@ -1072,8 +1194,11 @@ ${JSON.stringify(proposedAction, null, 2)}
             autonomousHistoryRef,
             robotState,
             environmentState,
+            agentResources,
             cycleDelay,
             incrementApiCallCount,
+            stopAndRecordEpisode,
+            autonomousGoalRef,
         };
     }, [
         logEvent,
@@ -1089,8 +1214,10 @@ ${JSON.stringify(proposedAction, null, 2)}
         setLastActionDate,
         robotState,
         environmentState,
+        agentResources,
         cycleDelay,
         incrementApiCallCount,
+        stopAndRecordEpisode,
     ]);
     
     // The autonomous loop. It now ONLY depends on the on/off switch.
@@ -1100,8 +1227,10 @@ ${JSON.stringify(proposedAction, null, 2)}
         }
 
         const autonomousRunner = async () => {
-            const { logEvent: initialLog } = autonomousLoopDependencies.current;
+            const { logEvent: initialLog, autonomousHistoryRef: historyRef, autonomousGoalRef: goalRef } = autonomousLoopDependencies.current;
             initialLog("[INFO] ▶️ Starting autonomous loop...");
+            historyRef.current = [];
+            goalRef.current = "Achieve long-term autonomy by gathering resources and improving tools.";
             
             while (isRunningRef.current) {
                 // Get the latest dependencies on each iteration from the ref.
@@ -1120,6 +1249,7 @@ ${JSON.stringify(proposedAction, null, 2)}
                     autonomousHistoryRef,
                     robotState,
                     environmentState,
+                    agentResources,
                     cycleDelay,
                     incrementApiCallCount,
                 } = autonomousLoopDependencies.current;
@@ -1141,16 +1271,19 @@ ${JSON.stringify(proposedAction, null, 2)}
                 if (autonomousActionLimit !== -1 && currentCountForThisCycle >= autonomousActionLimit) {
                     logEvent(`[WARN] 🛑 Daily limit of ${autonomousActionLimit} actions reached. Stopping loop.`);
                     setIsAutonomousLoopRunning(false);
+                    autonomousLoopDependencies.current.stopAndRecordEpisode(autonomousHistoryRef, autonomousLoopDependencies.current.autonomousGoalRef.current, 'Failed');
                     break;
                 }
 
                 try {
+                    // This is the core architectural change.
+                    // 1. Generate a high-level, natural language goal.
                     logEvent("🤔 Deciding next action...");
                     const goalGenTool = findToolByName('Autonomous Goal Generator');
                     if (!goalGenTool) throw new Error("Critical error: 'Autonomous Goal Generator' tool not found.");
                     
                     const actionHistoryString = autonomousHistoryRef.current.length > 0
-                      ? autonomousHistoryRef.current.map(r => {
+                      ? autonomousHistoryRef.current.slice(-5).map(r => {
                           const toolName = r.toolCall?.name || 'Unknown Action';
                           if (r.executionError) {
                             return `Action: ${toolName} - Result: FAILED - Reason: ${r.executionError}`;
@@ -1162,25 +1295,31 @@ ${JSON.stringify(proposedAction, null, 2)}
                       : null;
                     
                     const remainingActions = autonomousActionLimit === -1 ? Infinity : autonomousActionLimit - currentCountForThisCycle;
-                    const goalPrompt = "What should I do next?";
+                    const goalPrompt = "What should I do next?"; // This is a generic trigger for the goal generator.
                     
-                    incrementApiCallCount();
+                    incrementApiCallCount('Goal Generation');
                     const { goal } = await aiService.generateGoal(
-                        goalGenTool.implementationCode, goalPrompt, selectedModel, apiConfig, temperature, tools, remainingActions, actionHistoryString, robotState, environmentState
+                        goalGenTool.implementationCode, goalPrompt, selectedModel, apiConfig, temperature, tools, remainingActions, actionHistoryString, robotState, environmentState, agentResources
                     );
                     
-                    if (goal && goal !== "No action needed.") {
+                    if (goal && goal.toLowerCase().trim() !== "no action needed.") {
                         logEvent(`🎯 New Goal: ${goal}`);
+                        
+                        // 2. Feed the natural language goal into the full agent process.
+                        // The agent will now perform tool retrieval and execution based on this goal.
                         const result = await processRequest(goal, true);
+
+                        // 3. Store the full, enriched result in history.
                         if (result) {
-                          // Add to history and keep it capped at 10
                           autonomousHistoryRef.current.unshift(result);
-                          if (autonomousHistoryRef.current.length > 10) {
-                              autonomousHistoryRef.current.pop();
-                          }
+                           if (result.toolCall?.name === 'Deliver Resource' && result.executionResult?.success) {
+                                logEvent(`[SUCCESS] ✅ Mission accomplished! Stopping loop.`);
+                                setIsAutonomousLoopRunning(false);
+                                autonomousLoopDependencies.current.stopAndRecordEpisode(autonomousHistoryRef, autonomousLoopDependencies.current.autonomousGoalRef.current, 'Completed');
+                            }
                         }
                     } else {
-                        logEvent("🧘 No improvements found. Agent is idle.");
+                        logEvent("🧘 No action needed. Agent is idle.");
                     }
                 } catch (err) {
                     const errorMessage = err instanceof Error ? err.message : "An unexpected error occurred in autonomous cycle.";
@@ -1194,8 +1333,9 @@ ${JSON.stringify(proposedAction, null, 2)}
             }
 
             if (!isRunningRef.current) {
-                const { logEvent: finalLog } = autonomousLoopDependencies.current;
+                const { logEvent: finalLog, autonomousHistoryRef, autonomousGoalRef, stopAndRecordEpisode } = autonomousLoopDependencies.current;
                 finalLog("[INFO] ⏹️ Autonomous loop stopped.");
+                stopAndRecordEpisode(autonomousHistoryRef, autonomousGoalRef.current, 'Terminated by User');
             }
         };
 
@@ -1250,7 +1390,10 @@ ${JSON.stringify(proposedAction, null, 2)}
         embeddingTopK, setEmbeddingTopK,
         robotState, environmentState,
         selectedGraphNode, handleGraphNodeClick,
+        agentResources,
         runtime: runtimeApi,
+        episodes,
+        learnedHeuristics,
     };
 
     const debugLogProps = {
@@ -1272,8 +1415,9 @@ ${JSON.stringify(proposedAction, null, 2)}
             <main className="flex-grow flex flex-col gap-8">
                 <UIToolRunner tool={getUITool('Security Warning Banner')} props={uiProps} />
                 <UIToolRunner tool={getUITool('System Controls')} props={uiProps} />
-                <div className="w-full max-w-7xl mx-auto grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
+                <div className="w-full max-w-7xl mx-auto grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-5 gap-4">
                   <UIToolRunner tool={getUITool('Operating Mode Selector')} props={uiProps} />
+                  <UIToolRunner tool={getUITool('Agent Inventory')} props={uiProps} />
                   <UIToolRunner tool={getUITool('Autonomous Resource Monitor')} props={uiProps} />
                    <UIToolRunner tool={getUITool('Autonomous Action Limiter')} props={uiProps} />
                    <UIToolRunner tool={getUITool('Autonomous Cycle Delay Control')} props={uiProps} />
@@ -1338,6 +1482,8 @@ ${JSON.stringify(proposedAction, null, 2)}
                     </div>
                 )}
                 
+                <UIToolRunner tool={getUITool('Learned Heuristics Display')} props={uiProps} />
+                <UIToolRunner tool={getUITool('Game Tapes Viewer')} props={uiProps} />
                 <UIToolRunner tool={getUITool('Tool Knowledge Graph Display')} props={uiProps} />
                 <UIToolRunner tool={getUITool('Tool List Display')} props={uiProps} />
             </main>

@@ -1,5 +1,5 @@
 import { GoogleGenAI, Type, FunctionDeclaration, GenerateContentResponse } from "@google/genai";
-import type { AIResponse, LLMTool, APIConfig, ToolParameter, EnrichedAIResponse, AIToolCall, RobotState, EnvironmentObject } from "../types";
+import type { AIResponse, LLMTool, APIConfig, ToolParameter, RobotState, EnvironmentObject } from "../types";
 
 const getAIClient = (apiConfig: APIConfig): GoogleGenAI => {
     // Prioritize the key from the UI configuration.
@@ -122,58 +122,6 @@ const parseNativeToolCall = (response: GenerateContentResponse, toolNameMap: Map
             toolCall: { name: originalToolName, arguments: args || {} }
         };
     }
-
-    // Fallback path: Look for a text part with a non-standard tool call format.
-    const textPart = response.candidates?.[0]?.content?.parts?.find(part => 'text' in part);
-    if (textPart && textPart.text) {
-        let textContent = textPart.text.trim();
-        
-        // Remove markdown backticks if present. Using RegExp constructor to avoid parser issues.
-        const markdownRegex = new RegExp("```(?:tool_code|tool_call|python)?\\s*([\\s\\S]+?)\\s*```");
-        const markdownMatch = textContent.match(markdownRegex);
-        if (markdownMatch && markdownMatch[1]) {
-            textContent = markdownMatch[1].trim();
-        }
-
-        // This regex handles `print(default_api.Tool())`, `default_api.Tool()`, and `Tool()`.
-        // It captures: 1=sanitizedName, 2=argsString
-        const callRegex = /(?:print\()?(?:default_api\.)?([a-zA-Z0-9_]+)\(([\s\S]*?)\)\)?/;
-        const match = textContent.match(callRegex);
-
-        if (match) {
-            const sanitizedName = match[1];
-            const argsString = match[2];
-            const originalToolName = toolNameMap.get(sanitizedName);
-
-            if (!originalToolName) {
-                console.warn(`AI called an unknown tool via Gemini (fallback parser): ${sanitizedName}`);
-                return { toolCall: null };
-            }
-            
-            try {
-                // The AI can return python-style kwargs with raw string literals (e.g., '\\n' for newlines).
-                // When building the source for `new Function`, this `\` gets interpreted as an escape for `n`,
-                // creating a literal newline in the code, which is a syntax error inside a string.
-                // We must escape all backslashes in the arguments string before parsing.
-                const jsSafeArgsString = argsString.replace(/\\/g, '\\\\');
-                
-                // This replaces python-style kwargs assignment with JS-style object properties.
-                // e.g., "name='foo', code='bar'" becomes "name:'foo', code:'bar'"
-                const jsObjectContent = jsSafeArgsString.replace(/([a-zA-Z0-9_]+)=/g, '$1:');
-                const argsParser = new Function(`return {\${jsObjectContent}}`);
-                const args = argsParser();
-
-                return {
-                    toolCall: { name: originalToolName, arguments: args || {} }
-                };
-            } catch (e) {
-                console.error("Fallback parser failed to evaluate arguments string:", e, { argsString });
-                return { toolCall: null };
-            }
-        }
-    }
-
-    // If no parsable tool call is found
     return { toolCall: null };
 };
 
@@ -247,9 +195,9 @@ export const selectTools = async (
 };
 
 const getRobotStateString = (robotState: RobotState, environmentState: EnvironmentObject[]): string => {
-    const { x, y, rotation, hasPackage } = robotState;
-    const packageObj = environmentState.find(obj => obj.type === 'package');
-    const goalObj = environmentState.find(obj => obj.type === 'goal');
+    const { x, y, rotation, hasResource } = robotState;
+    const resourceObj = environmentState.find(obj => obj.type === 'resource');
+    const collectionPointObj = environmentState.find(obj => obj.type === 'collection_point');
     
     let direction = 'Unknown';
     if (rotation === 0) direction = 'North (Up)';
@@ -258,18 +206,18 @@ const getRobotStateString = (robotState: RobotState, environmentState: Environme
     if (rotation === 270) direction = 'West (Left)';
     
     let stateString = `Robot is at coordinates (${x}, ${y}) facing ${direction}. `;
-    stateString += `Robot is ${hasPackage ? 'currently carrying the package' : 'not carrying the package'}. `;
+    stateString += `Robot is ${hasResource ? 'currently carrying the resource' : 'not carrying the resource'}. `;
 
-    if (packageObj) {
-        stateString += `The package is at (${packageObj.x}, ${packageObj.y}). `;
+    if (resourceObj) {
+        stateString += `The resource is at (${resourceObj.x}, ${resourceObj.y}). `;
     } else {
-        if (!hasPackage) {
-            stateString += 'The package has been delivered or does not exist. ';
+        if (!hasResource) {
+            stateString += 'The resource has been collected or does not exist. ';
         }
     }
     
-    if (goalObj) {
-        stateString += `The delivery goal is at (${goalObj.x}, ${goalObj.y}).`;
+    if (collectionPointObj) {
+        stateString += `The delivery collection point is at (${collectionPointObj.x}, ${collectionPointObj.y}).`;
     }
 
     return stateString.trim();
@@ -286,23 +234,22 @@ export const generateGoal = async (
     actionContext: string | null,
     robotState: RobotState,
     environmentState: EnvironmentObject[],
+    agentResources: Record<string, number>
 ): Promise<{ goal: string, rawResponse: string }> => {
     if (typeof systemInstruction !== 'string' || !systemInstruction.trim()) {
         throw new Error("The system instruction for goal generation is missing or empty. The 'Autonomous Goal Generator' tool may have been corrupted.");
     }
     const ai = getAIClient(apiConfig);
-    const lightweightTools = allTools.map(t => ({ name: t.name, description: t.description, version: t.version }));
-    const toolsForPrompt = JSON.stringify(lightweightTools, null, 2);
-
+    
     const contextText = actionContext || "No actions have been taken yet in this session.";
     const robotStateString = getRobotStateString(robotState, environmentState);
+    const agentResourcesString = `Agent has ${agentResources.Energy || 0} Energy.`;
     
     const instructionWithContext = systemInstruction
         .replace('{{ACTION_HISTORY}}', contextText)
         .replace('{{ACTION_LIMIT}}', String(autonomousActionLimit))
-        .replace('{{ROBOT_STATE}}', robotStateString);
-
-    const fullSystemInstruction = `${instructionWithContext}\n\nHere is the current list of all available tools:\n${toolsForPrompt}`;
+        .replace('{{ROBOT_STATE}}', robotStateString)
+        .replace('{{AGENT_RESOURCES}}', agentResourcesString);
 
     const responseSchema = {
         type: Type.OBJECT,
@@ -320,7 +267,7 @@ export const generateGoal = async (
             model: modelId,
             contents: userInput, 
             config: {
-                systemInstruction: fullSystemInstruction,
+                systemInstruction: instructionWithContext,
                 temperature: temperature,
                 responseMimeType: "application/json",
                 responseSchema: responseSchema,
@@ -483,7 +430,6 @@ export const generateResponse = async (
     onRawResponseChunk: (chunk: string) => void,
     apiConfig: APIConfig,
     relevantTools: LLMTool[],
-    // onProgress is unused for this service, but included for signature consistency
     onProgress?: (message: string) => void, 
 ): Promise<AIResponse> => {
     if (typeof systemInstruction !== 'string' || !systemInstruction.trim()) {
@@ -565,4 +511,19 @@ export const generateText = async (
         processingError.rawAIResponse = JSON.stringify(error, null, 2);
         throw processingError;
     }
+};
+
+export const generateHeuristic = async (
+    systemInstruction: string,
+    modelId: string,
+    temperature: number,
+    apiConfig: APIConfig,
+): Promise<string> => {
+    return generateText(
+        "Based on the provided game history, generate one new strategic heuristic for the agent to follow in the future.",
+        systemInstruction,
+        modelId,
+        temperature,
+        apiConfig
+    );
 };

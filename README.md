@@ -1,4 +1,5 @@
 
+
 # Singularity Agent Factory
 
 **Live Demo:** [https://neuroidss.github.io/Singularity-Agent-Factory/](https://neuroidss.github.io/Singularity-Agent-Factory/)
@@ -26,7 +27,14 @@ To manage the agent's evolution, the application features several distinct opera
 *   **`Command` Mode:** The safest mode. The agent only acts upon direct user instructions.
 *   **`Assist` Mode:** The agent acts as a co-pilot. It analyzes a request and proposes a plan of action (e.g., "I suggest creating a new 'Calculator' tool"), which the user must explicitly approve or reject.
 *   **`Swarm` Mode:** This mode unleashes a **collective of agents** to work on a single, high-level goal. It is designed to test collaborative problem-solving and emergent specialization. Its key feature is **meaningful skill sharing**: when one agent creates a new tool, it also shares the *purpose* for that tool, allowing the entire collective to understand and utilize the new capability more effectively.
-*   **`Autonomous` Mode:** This is the most advanced mode for a *single agent*. The agent is given a strategic directive: **achieve true, long-term autonomy**. It analyzes its own limitations and generates its own goals to overcome them, governed by a daily action limit to ensure strategic use of resources.
+*   **`Autonomous` Mode:** This is the most advanced mode for a *single agent*. The agent is given a strategic directive: **achieve true, long-term autonomy**. It analyzes its own limitations and generates its own goals to overcome them, governed by a daily action limit and an energy economy to ensure strategic use of resources.
+
+## The Resource Economy: A Foundation for Strategy
+To ground the agent's actions in a stateful, strategic context, the simulation now includes a simple resource economy.
+*   **Energy**: The agent's core resource, required to use its more advanced tools.
+*   **Resource Gathering**: The environment contains a "Resource" (💎) and a "Collection Point" (🏦). The agent must formulate a plan to navigate to the resource, pick it up, and deliver it to the collection point.
+*   **Tool Costs**: Creating new tools, improving them, or using advanced analytical functions costs Energy. This forces the agent to balance its creative or analytical actions with the need to replenish its resources.
+*   **Strategic Behavior**: When low on Energy, the agent's `Autonomous Goal Generator` will automatically prioritize finding and delivering a resource, demonstrating a basic survival instinct. This economic layer transforms simple task execution into a strategic game of resource management.
 
 ## How It Works: The Agent Lifecycle
 
@@ -55,7 +63,7 @@ This demonstrates a more advanced, collective intelligence through the transfer 
 3.  **Meaningful Skill Sharing & Parallel Execution:** The moment this new tool and its purpose are created, they appear in the shared library. Another agent in the swarm can now immediately understand *why* the tool exists and use it to fulfill the patrol objective, while other agents proceed with different parts of the overall goal. This shows the swarm's ability to dynamically create and distribute contextual skills to solve problems more efficiently.
 
 ## The Robotics Simulation Testbed
-To test the agent's planning and execution abilities in a more complex, stateful environment, the project includes a 2D robotics simulation. This environment serves as a "gymnasium" where the agent can be given physical tasks, such as navigating a maze or delivering an object. It's a perfect testbed for demonstrating the agent's ability to perform a sequence of actions (turn, move, pickup, drop) and react to a world that changes based on its actions.
+To test the agent's planning and execution abilities in a more complex, stateful environment, the project includes a 2D robotics simulation. This environment serves as a "gymnasium" where the agent can be given physical tasks, such as navigating a maze or, more importantly, **gathering resources to sustain its operations**. It's a perfect testbed for demonstrating the agent's ability to perform a sequence of actions (turn, move, pickup, deliver) and react to a world that changes based on its actions, all while managing its own energy economy.
 
 ## Key Components
 -   **Operating Mode Controls:** UI for switching between Command, Assist, Swarm, and Autonomous modes.

@@ -1,12 +1,19 @@
-import { LLMTool } from './types';
+import { LLMTool, Episode } from './types';
 
 const STORAGE_KEY = 'singularity-agent-factory-state';
 const LEGACY_STORAGE_KEY = 'tools';
-const CURRENT_STORAGE_VERSION = 2;
+const CURRENT_STORAGE_VERSION = 3;
 
-interface AppState {
+interface AppStateV2 {
+    version: 2;
+    tools: LLMTool[];
+}
+
+export interface AppState {
     version: number;
     tools: LLMTool[];
+    episodes: Episode[];
+    learnedHeuristics: string[];
 }
 
 // Migration from implicit v1 (just an array of tools) to v2 (versioned object with timestamps)
@@ -22,21 +29,40 @@ const migrateV1ToV2 = (legacyTools: LLMTool[]): LLMTool[] => {
     }));
 };
 
+const migrateV2ToV3 = (v2State: AppStateV2): AppState => {
+    console.log("Running migration from v2 to v3 for state.");
+    return {
+        ...v2State,
+        version: 3,
+        episodes: [],
+        learnedHeuristics: [],
+    };
+}
+
 
 export const loadStateFromStorage = (): AppState | null => {
     // 1. Try loading from the new, versioned key
     const newStateJson = localStorage.getItem(STORAGE_KEY);
     if (newStateJson) {
         try {
-            const state = JSON.parse(newStateJson) as AppState;
+            let state = JSON.parse(newStateJson);
             // Ensure the state has a version number and tools array before proceeding
             if (typeof state.version === 'number' && Array.isArray(state.tools)) {
                  if (state.version === CURRENT_STORAGE_VERSION) {
-                    // Version matches, no migration needed
-                    return state;
+                    // Version matches, no migration needed. Just ensure new fields exist.
+                    return {
+                        ...state,
+                        episodes: state.episodes || [],
+                        learnedHeuristics: state.learnedHeuristics || [],
+                    };
                 } else if (state.version < CURRENT_STORAGE_VERSION) {
-                    // Placeholder for future migrations (e.g., from v2 to v3)
-                    console.warn(`Stored state is on an old version (${state.version}). Future migrations would be handled here.`);
+                    console.warn(`Stored state is on an old version (${state.version}). Migrating...`);
+                    if (state.version === 2) {
+                        state = migrateV2ToV3(state as AppStateV2);
+                        saveStateToStorage(state);
+                        return state;
+                    }
+                    // Add other migration steps here if needed, e.g. from v3 to v4
                     return state;
                 }
             }
@@ -53,7 +79,7 @@ export const loadStateFromStorage = (): AppState | null => {
     const legacyStateJson = localStorage.getItem(LEGACY_STORAGE_KEY);
     if (legacyStateJson) {
         try {
-            console.log("Found legacy (v1) state. Migrating to v2...");
+            console.log("Found legacy (v1) state. Migrating to v3...");
             const legacyTools = JSON.parse(legacyStateJson) as LLMTool[];
             
             // Check if it's a valid array of tools before migrating
@@ -66,6 +92,8 @@ export const loadStateFromStorage = (): AppState | null => {
             const newState: AppState = {
                 version: CURRENT_STORAGE_VERSION,
                 tools: migratedTools,
+                episodes: [],
+                learnedHeuristics: [],
             };
             
             // Save the newly formatted state and remove the old one

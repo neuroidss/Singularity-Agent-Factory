@@ -1,3 +1,5 @@
+
+
 import type { AIResponse, LLMTool, APIConfig, RobotState, EnvironmentObject } from "../types";
 import { STANDARD_TOOL_CALL_SYSTEM_PROMPT } from '../constants';
 
@@ -45,36 +47,33 @@ const parseToolCallResponse = (responseText: string, toolNameMap: Map<string, st
     if (!jsonText) {
         return { toolCall: null };
     }
-    
-    // Attempt to extract JSON from markdown code blocks, a common failure mode.
-    const markdownMatch = jsonText.match(/```(?:json)?\s*([\s\S]+?)\s*```/s);
+    // Ollama sometimes wraps its JSON in markdown backticks
+    const markdownMatch = jsonText.match(/```(?:json)?\s*({[\s\S]+?})\s*```/);
     if (markdownMatch && markdownMatch[1]) {
-        jsonText = markdownMatch[1].trim();
-    }
-
-    // As a fallback, find the first '{' and last '}' to strip extraneous text.
-    const firstBrace = jsonText.indexOf('{');
-    const lastBrace = jsonText.lastIndexOf('}');
-    if (firstBrace !== -1 && lastBrace > firstBrace) {
-        jsonText = jsonText.substring(firstBrace, lastBrace + 1);
+        jsonText = markdownMatch[1];
     }
     
     try {
         const parsed = JSON.parse(jsonText);
-
-        // Handle the case of {} for no tool
-        if (!parsed.name || typeof parsed.arguments === 'undefined') {
+        
+        // Handle empty object response, which means no tool call
+        if (Object.keys(parsed).length === 0) {
             return { toolCall: null };
         }
-        
+
+        if (!parsed.name || typeof parsed.arguments === 'undefined') {
+            console.warn("Ollama response is missing 'name' or 'arguments' field.", parsed);
+            return { toolCall: null };
+        }
+
         const { name, arguments: args } = parsed;
         const originalToolName = toolNameMap.get(name);
-        
+
         if (!originalToolName) {
             console.warn(`AI called an unknown tool via Ollama: ${name}`);
             return { toolCall: null };
         }
-        
+
         return {
             toolCall: { name: originalToolName, arguments: args || {} }
         };
@@ -88,14 +87,11 @@ const parseToolCallResponse = (responseText: string, toolNameMap: Map<string, st
     }
 };
 
-const sanitizeForFunctionName = (name: string): string => {
-  return name.replace(/[^a-zA-Z0-9_]/g, '_');
-};
 
 const getRobotStateString = (robotState: RobotState, environmentState: EnvironmentObject[]): string => {
-    const { x, y, rotation, hasPackage } = robotState;
-    const packageObj = environmentState.find(obj => obj.type === 'package');
-    const goalObj = environmentState.find(obj => obj.type === 'goal');
+    const { x, y, rotation, hasResource } = robotState;
+    const resourceObj = environmentState.find(obj => obj.type === 'resource');
+    const collectionPointObj = environmentState.find(obj => obj.type === 'collection_point');
     
     let direction = 'Unknown';
     if (rotation === 0) direction = 'North (Up)';
@@ -104,18 +100,18 @@ const getRobotStateString = (robotState: RobotState, environmentState: Environme
     if (rotation === 270) direction = 'West (Left)';
     
     let stateString = `Robot is at coordinates (${x}, ${y}) facing ${direction}. `;
-    stateString += `Robot is ${hasPackage ? 'currently carrying the package' : 'not carrying the package'}. `;
+    stateString += `Robot is ${hasResource ? 'currently carrying the resource' : 'not carrying the resource'}. `;
 
-    if (packageObj) {
-        stateString += `The package is at (${packageObj.x}, ${packageObj.y}). `;
+    if (resourceObj) {
+        stateString += `The resource is at (${resourceObj.x}, ${resourceObj.y}). `;
     } else {
-        if (!hasPackage) {
-            stateString += 'The package has been delivered or does not exist. ';
+        if (!hasResource) {
+            stateString += 'The resource has been collected or does not exist. ';
         }
     }
     
-    if (goalObj) {
-        stateString += `The delivery goal is at (${goalObj.x}, ${goalObj.y}).`;
+    if (collectionPointObj) {
+        stateString += `The delivery collection point is at (${collectionPointObj.x}, ${collectionPointObj.y}).`;
     }
 
     return stateString.trim();
@@ -123,6 +119,7 @@ const getRobotStateString = (robotState: RobotState, environmentState: Environme
 
 
 // --- Service Implementations ---
+
 export const selectTools = async (
     userInput: string,
     systemInstruction: string,
@@ -132,15 +129,15 @@ export const selectTools = async (
     allTools: LLMTool[]
 ): Promise<{ names: string[], rawResponse: string }> => {
     if (typeof systemInstruction !== 'string' || !systemInstruction.trim()) {
-        throw new Error("The system instruction for tool retrieval is missing or empty. The 'Tool Retriever Logic' tool may have been corrupted.");
+        throw new Error("The system instruction for tool retrieval is missing or empty.");
     }
+
     const lightweightTools = allTools.map(t => ({ name: t.name, description: t.description }));
     const toolsForPrompt = JSON.stringify(lightweightTools, null, 2);
     const fullSystemInstruction = `${systemInstruction}\n\nAVAILABLE TOOLS:\n${toolsForPrompt}`;
-
     const body = createAPIBody(modelId, fullSystemInstruction, userInput, temperature, 'json');
-    let responseText = "";
-    
+    let rawResponse = "";
+
     try {
         const response = await fetch(`${apiConfig.ollamaHost}/api/generate`, {
             method: 'POST',
@@ -151,22 +148,22 @@ export const selectTools = async (
         if (!response.ok) await handleAPIError(response);
         
         const jsonResponse = await response.json();
-        responseText = jsonResponse.response || "{}";
-
-        if (!responseText) {
+        rawResponse = jsonResponse.response;
+        
+        if (!rawResponse) {
              return { names: [], rawResponse: "{}" };
         }
         
-        const parsed = JSON.parse(responseText);
+        const parsed = JSON.parse(rawResponse);
         const names = parsed.tool_names || [];
         
         const allToolNames = new Set(allTools.map(t => t.name));
         const validNames = names.filter((name: string) => allToolNames.has(name));
         
-        return { names: validNames, rawResponse: responseText };
+        return { names: validNames, rawResponse };
 
     } catch (error) {
-         throw generateDetailedError(error, apiConfig.ollamaHost, responseText);
+        throw generateDetailedError(error, apiConfig.ollamaHost, rawResponse);
     }
 };
 
@@ -180,26 +177,26 @@ export const generateGoal = async (
     autonomousActionLimit: number,
     actionContext: string | null,
     robotState: RobotState,
-    environmentState: EnvironmentObject[]
+    environmentState: EnvironmentObject[],
+    agentResources: Record<string, number>
 ): Promise<{ goal: string, rawResponse: string }> => {
     if (typeof systemInstruction !== 'string' || !systemInstruction.trim()) {
-        throw new Error("The system instruction for goal generation is missing or empty. The 'Autonomous Goal Generator' tool may have been corrupted.");
+        throw new Error("The system instruction for goal generation is missing or empty.");
     }
-    const lightweightTools = allTools.map(t => ({ name: t.name, description: t.description, version: t.version }));
-    const toolsForPrompt = JSON.stringify(lightweightTools, null, 2);
-
-    const contextText = actionContext || "No actions have been taken yet.";
+    
+    const contextText = actionContext || "No action has been taken yet.";
     const robotStateString = getRobotStateString(robotState, environmentState);
+    const agentResourcesString = `Agent has ${agentResources.Energy || 0} Energy.`;
+    
     const instructionWithContext = systemInstruction
         .replace('{{ACTION_HISTORY}}', contextText)
         .replace('{{ACTION_LIMIT}}', String(autonomousActionLimit))
-        .replace('{{ROBOT_STATE}}', robotStateString);
+        .replace('{{ROBOT_STATE}}', robotStateString)
+        .replace('{{AGENT_RESOURCES}}', agentResourcesString);
 
-    const fullSystemInstruction = `${instructionWithContext}\n\nHere is the current list of all available tools:\n${toolsForPrompt}`;
+    const body = createAPIBody(modelId, instructionWithContext, userInput, temperature, 'json');
+    let rawResponse = "";
 
-    const body = createAPIBody(modelId, fullSystemInstruction, userInput, temperature, 'json');
-    let responseText = "";
-    
     try {
         const response = await fetch(`${apiConfig.ollamaHost}/api/generate`, {
             method: 'POST',
@@ -208,21 +205,21 @@ export const generateGoal = async (
         });
 
         if (!response.ok) await handleAPIError(response);
-        
-        const jsonResponse = await response.json();
-        responseText = jsonResponse.response || "{}";
 
-        if (!responseText) {
+        const jsonResponse = await response.json();
+        rawResponse = jsonResponse.response;
+
+        if (!rawResponse) {
             return { goal: "No action needed.", rawResponse: "{}" };
         }
-        
-        const parsed = JSON.parse(responseText);
+
+        const parsed = JSON.parse(rawResponse);
         const goal = parsed.goal || "No action needed.";
-        
-        return { goal, rawResponse: responseText };
+
+        return { goal, rawResponse };
 
     } catch (error) {
-         throw generateDetailedError(error, apiConfig.ollamaHost, responseText);
+        throw generateDetailedError(error, apiConfig.ollamaHost, rawResponse);
     }
 };
 
@@ -237,8 +234,8 @@ export const verifyToolFunctionality = async (
     }
 
     const body = createAPIBody(modelId, systemInstruction, "Please verify the tool as instructed.", temperature, 'json');
-    let responseText = "";
-    
+    let rawResponse = "";
+
     try {
         const response = await fetch(`${apiConfig.ollamaHost}/api/generate`, {
             method: 'POST',
@@ -249,21 +246,21 @@ export const verifyToolFunctionality = async (
         if (!response.ok) await handleAPIError(response);
         
         const jsonResponse = await response.json();
-        responseText = jsonResponse.response || "{}";
-
-        if (!responseText) {
+        rawResponse = jsonResponse.response;
+        
+        if (!rawResponse) {
             return { is_correct: false, reasoning: "AI returned an empty response.", rawResponse: "{}" };
         }
         
-        const parsed = JSON.parse(responseText);
+        const parsed = JSON.parse(rawResponse);
         return {
             is_correct: parsed.is_correct || false,
             reasoning: parsed.reasoning || "AI did not provide a reason.",
-            rawResponse: responseText
+            rawResponse: rawResponse
         };
 
     } catch (error) {
-         throw generateDetailedError(error, apiConfig.ollamaHost, responseText);
+        throw generateDetailedError(error, apiConfig.ollamaHost, rawResponse);
     }
 };
 
@@ -278,8 +275,8 @@ export const critiqueAction = async (
     }
 
     const body = createAPIBody(modelId, systemInstruction, "Please critique the proposed action as instructed.", temperature, 'json');
-    let responseText = "";
-    
+    let rawResponse = "";
+
     try {
         const response = await fetch(`${apiConfig.ollamaHost}/api/generate`, {
             method: 'POST',
@@ -290,21 +287,21 @@ export const critiqueAction = async (
         if (!response.ok) await handleAPIError(response);
         
         const jsonResponse = await response.json();
-        responseText = jsonResponse.response || "{}";
-
-        if (!responseText) {
+        rawResponse = jsonResponse.response;
+        
+        if (!rawResponse) {
             return { is_optimal: false, suggestion: "AI returned an empty response during critique.", rawResponse: "{}" };
         }
         
-        const parsed = JSON.parse(responseText);
+        const parsed = JSON.parse(rawResponse);
         return {
             is_optimal: parsed.is_optimal || false,
             suggestion: parsed.suggestion || "AI did not provide a suggestion.",
-            rawResponse: responseText
+            rawResponse: rawResponse
         };
 
     } catch (error) {
-         throw generateDetailedError(error, apiConfig.ollamaHost, responseText);
+        throw generateDetailedError(error, apiConfig.ollamaHost, rawResponse);
     }
 };
 
@@ -321,38 +318,21 @@ export const generateResponse = async (
     if (typeof systemInstruction !== 'string' || !systemInstruction.trim()) {
         throw new Error("The core system instruction is missing or empty. The 'Core Agent Logic' tool may have been corrupted.");
     }
+    
+    const sanitizeForFunctionName = (name: string): string => name.replace(/[^a-zA-Z0-9_]/g, '_');
     const toolNameMap = new Map(relevantTools.map(t => [sanitizeForFunctionName(t.name), t.name]));
+    
     const toolsForPrompt = relevantTools.map(t => ({
         name: sanitizeForFunctionName(t.name),
         description: t.description,
         parameters: t.parameters,
     }));
-    
-    if (relevantTools.length === 0) {
-        // If no tools are relevant, we can't use the tool call prompt.
-        // We will just send the base system instruction and see if the model can generate a text response.
-        const body = createAPIBody(modelId, systemInstruction, userInput, temperature);
-        const response = await fetch(`${apiConfig.ollamaHost}/api/generate`, {
-            method: 'POST',
-            headers: API_HEADERS,
-            body: JSON.stringify(body),
-        });
-         if (!response.ok) await handleAPIError(response);
-         const jsonResponse = await response.json();
-         const responseText = jsonResponse.response || "";
-         onRawResponseChunk(JSON.stringify({ text_response: responseText }, null, 2));
-         // This model can't call tools, so we return null.
-         return { toolCall: null };
-    }
-    
-    const toolDefinitions = JSON.stringify(toolsForPrompt, null, 2);
-    // Combine the main agent logic with the standardized tool-calling instructions.
-    const fullSystemInstruction = systemInstruction + '\n\n' + STANDARD_TOOL_CALL_SYSTEM_PROMPT.replace('{{TOOLS_JSON}}', toolDefinitions);
-    
-    // Force JSON format for the main response.
-    const body = createAPIBody(modelId, fullSystemInstruction, userInput, temperature, 'json');
-    let responseText = "";
 
+    const toolDefinitions = JSON.stringify(toolsForPrompt, null, 2);
+    const fullSystemInstruction = systemInstruction + '\n\n' + STANDARD_TOOL_CALL_SYSTEM_PROMPT.replace('{{TOOLS_JSON}}', toolDefinitions);
+    const body = createAPIBody(modelId, fullSystemInstruction, userInput, temperature, 'json');
+    let rawResponse = "";
+    
     try {
         const response = await fetch(`${apiConfig.ollamaHost}/api/generate`, {
             method: 'POST',
@@ -361,16 +341,15 @@ export const generateResponse = async (
         });
 
         if (!response.ok) await handleAPIError(response);
-        
-        // Since stream is false, we get the full response at once.
+
         const jsonResponse = await response.json();
-        responseText = jsonResponse.response || "{}";
-        onRawResponseChunk(responseText);
-        
-        return parseToolCallResponse(responseText, toolNameMap);
+        rawResponse = jsonResponse.response;
+        onRawResponseChunk(rawResponse);
+
+        return parseToolCallResponse(rawResponse, toolNameMap);
 
     } catch (error) {
-         throw generateDetailedError(error, apiConfig.ollamaHost, responseText);
+        throw generateDetailedError(error, apiConfig.ollamaHost, rawResponse);
     }
 };
 
@@ -379,13 +358,10 @@ export const generateText = async (
     systemInstruction: string,
     modelId: string,
     temperature: number,
-    apiConfig: APIConfig,
+    apiConfig: APIConfig
 ): Promise<string> => {
-    if (typeof systemInstruction !== 'string' || !systemInstruction.trim()) {
-        throw new Error("The system instruction for text generation is missing or empty.");
-    }
     const body = createAPIBody(modelId, systemInstruction, userInput, temperature);
-    let responseText = "";
+    let rawResponse = "";
     
     try {
         const response = await fetch(`${apiConfig.ollamaHost}/api/generate`, {
@@ -397,11 +373,25 @@ export const generateText = async (
         if (!response.ok) await handleAPIError(response);
         
         const jsonResponse = await response.json();
-        responseText = jsonResponse.response || "";
+        rawResponse = jsonResponse.response;
+        return rawResponse || "";
         
-        return responseText;
-
     } catch (error) {
-         throw generateDetailedError(error, apiConfig.ollamaHost, responseText);
+        throw generateDetailedError(error, apiConfig.ollamaHost, rawResponse);
     }
+};
+
+export const generateHeuristic = async (
+    systemInstruction: string,
+    modelId: string,
+    temperature: number,
+    apiConfig: APIConfig
+): Promise<string> => {
+    return generateText(
+        "Based on the provided game history, generate one new strategic heuristic for the agent to follow in the future.",
+        systemInstruction,
+        modelId,
+        temperature,
+        apiConfig
+    );
 };

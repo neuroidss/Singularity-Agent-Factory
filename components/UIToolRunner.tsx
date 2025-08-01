@@ -41,7 +41,7 @@ export const UIToolRunner: React.FC<UIToolRunnerComponentProps> = ({ tool, props
     }
 
     // Special case for complex, directly imported components
-    if (tool.name === 'KnowledgeGraphView') {
+    if (tool.name === 'KnowledgeGraphView') { // This is the internal component, not the tool
         return KnowledgeGraphView;
     }
     if (tool.name === 'Debug Log View') {

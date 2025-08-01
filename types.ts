@@ -43,6 +43,7 @@ export interface LLMTool {
   category: ToolCategory;
   version: number;
   parameters: ToolParameter[];
+  cost?: number; // The amount of resources this tool costs to use.
   // A new field to store the AI's reasoning for creating the tool,
   // aligning with Viktor Frankl's "Will to Meaning".
   purpose?: string;
@@ -72,10 +73,6 @@ export interface EnrichedAIResponse {
   executionError?: string; // Any error that occurred during execution.
 }
 
-export interface ServiceOutput {
-  data: AIResponse;
-}
-
 // Debug info for the first AI call (Tool Selection)
 export interface ToolSelectionCallInfo {
     strategy: ToolRetrievalStrategy;
@@ -96,16 +93,6 @@ export interface AgentExecutionCallInfo {
     processedResponse: EnrichedAIResponse | null;
     error?: string;
 }
-
-export interface DebugInfo {
-    userInput: string;
-    modelId: string;
-    temperature: number;
-    toolRetrievalStrategy: ToolRetrievalStrategy;
-    toolSelectionCall?: ToolSelectionCallInfo;
-    agentExecutionCall?: AgentExecutionCallInfo;
-}
-
 
 // Model Selection Types
 export enum ModelProvider {
@@ -136,36 +123,18 @@ export interface APIConfig {
 // Props passed to UI tools. All properties are optional.
 export type UIToolRunnerProps = Record<string, any>;
 
-// Types for new search tools
-export enum SearchDataSource {
-    GoogleSearch = 'Google Search',
-    WebSearch = 'Web Search',
-    PubMed = 'PubMed',
-    BioRxivFeed = 'bioRxiv Feed',
-    BioRxivPmcArchive = 'bioRxiv (PMC)',
-    GooglePatents = 'Google Patents',
-    OpenGenes = 'OpenGenes API',
-}
-
-export interface SearchResult {
-    link: string;
-    title: string;
-    snippet: string;
-    source: SearchDataSource;
-}
-
 // Types for the robotics simulation
 export interface RobotState {
   x: number;
   y: number;
   rotation: number; // 0: up, 90: right, 180: down, 270: left
-  hasPackage: boolean;
+  hasResource: boolean;
 }
 
 export interface EnvironmentObject {
   x: number;
   y: number;
-  type: 'wall' | 'package' | 'goal';
+  type: 'wall' | 'resource' | 'collection_point';
 }
 
 // --- Knowledge Graph Types ---
@@ -196,4 +165,18 @@ export interface TrendAnalysis {
     emergingTopics: string[];
     fadingTopics: string[];
     connectingTopics: string[];
+}
+
+
+// --- Game Tapes & Learning Types ---
+
+export type EpisodeStatus = 'Completed' | 'Failed' | 'Terminated by User' | 'In Progress';
+
+export interface Episode {
+    id: string;
+    startTime: string;
+    endTime: string;
+    status: EpisodeStatus;
+    goal: string;
+    actions: EnrichedAIResponse[];
 }

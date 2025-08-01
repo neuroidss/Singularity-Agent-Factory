@@ -1,4 +1,4 @@
-import { ModelProvider, type AIModel, type APIConfig, type AIResponse, type LLMTool, type EnrichedAIResponse, AIToolCall, type RobotState, type EnvironmentObject } from '../types';
+import { ModelProvider, type AIModel, type APIConfig, type AIResponse, type LLMTool, type RobotState, type EnvironmentObject } from '../types';
 import * as geminiService from './geminiService';
 import * as openAIService from './openAIService';
 import * as ollamaService from './ollamaService';
@@ -41,21 +41,22 @@ export const generateGoal = async (
     autonomousActionLimit: number,
     actionContext: string | null,
     robotState: RobotState,
-    environmentState: EnvironmentObject[]
+    environmentState: EnvironmentObject[],
+    agentResources: Record<string, number>
 ): Promise<{ goal: string, rawResponse: string }> => {
     switch (model.provider) {
         case ModelProvider.GoogleAI:
-            return geminiService.generateGoal(userInput, systemInstruction, model.id, temperature, apiConfig, allTools, autonomousActionLimit, actionContext, robotState, environmentState);
+            return geminiService.generateGoal(userInput, systemInstruction, model.id, temperature, apiConfig, allTools, autonomousActionLimit, actionContext, robotState, environmentState, agentResources);
         case ModelProvider.OpenAI_API:
             if (!apiConfig.openAIBaseUrl) throw new Error("OpenAI-Compatible Base URL is not configured.");
             const modelIdToUse = model.id === 'custom-openai' && apiConfig.openAIModelId ? apiConfig.openAIModelId : model.id;
-            return openAIService.generateGoal(userInput, systemInstruction, modelIdToUse, temperature, apiConfig, allTools, autonomousActionLimit, actionContext, robotState, environmentState);
+            return openAIService.generateGoal(userInput, systemInstruction, modelIdToUse, temperature, apiConfig, allTools, autonomousActionLimit, actionContext, robotState, environmentState, agentResources);
         case ModelProvider.Ollama:
             if (!apiConfig.ollamaHost) throw new Error("Ollama Host is not configured.");
-            return ollamaService.generateGoal(userInput, systemInstruction, model.id, temperature, apiConfig, allTools, autonomousActionLimit, actionContext, robotState, environmentState);
+            return ollamaService.generateGoal(userInput, systemInstruction, model.id, temperature, apiConfig, allTools, autonomousActionLimit, actionContext, robotState, environmentState, agentResources);
         case ModelProvider.HuggingFace:
             const onProgressStub = (msg: string) => console.log(`[HF GoalGen]: ${msg}`);
-            return huggingFaceService.generateGoal(userInput, systemInstruction, model.id, temperature, apiConfig, allTools, onProgressStub, autonomousActionLimit, actionContext, robotState, environmentState);
+            return huggingFaceService.generateGoal(userInput, systemInstruction, model.id, temperature, apiConfig, allTools, onProgressStub, autonomousActionLimit, actionContext, robotState, environmentState, agentResources);
         default:
             throw new Error(`Goal generation not supported for model provider: ${model.provider}`);
     }
@@ -167,5 +168,30 @@ export const generateText = async (
             return huggingFaceService.generateText(userInput, systemInstruction, model.id, temperature, apiConfig, onProgress);
         default:
             throw new Error(`generateText not supported for model provider: ${model.provider}`);
+    }
+};
+
+export const generateHeuristic = async (
+    systemInstruction: string,
+    model: AIModel,
+    apiConfig: APIConfig,
+    temperature: number,
+    onProgress: (message: string) => void,
+): Promise<string> => {
+     switch (model.provider) {
+        case ModelProvider.GoogleAI:
+            return geminiService.generateHeuristic(systemInstruction, model.id, temperature, apiConfig);
+        case ModelProvider.OpenAI_API: {
+            if (!apiConfig.openAIBaseUrl) throw new Error("OpenAI-Compatible Base URL is not configured.");
+            const modelIdToUse = model.id === 'custom-openai' && apiConfig.openAIModelId ? apiConfig.openAIModelId : model.id;
+            return openAIService.generateHeuristic(systemInstruction, modelIdToUse, temperature, apiConfig);
+        }
+        case ModelProvider.Ollama:
+             if (!apiConfig.ollamaHost) throw new Error("Ollama Host is not configured.");
+            return ollamaService.generateHeuristic(systemInstruction, model.id, temperature, apiConfig);
+        case ModelProvider.HuggingFace:
+            return huggingFaceService.generateHeuristic(systemInstruction, model.id, temperature, apiConfig, onProgress);
+        default:
+            throw new Error(`generateHeuristic not supported for model provider: ${model.provider}`);
     }
 };

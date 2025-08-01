@@ -16,7 +16,7 @@ const buildOpenAITools = (tools: LLMTool[]) => {
                 type: param.type,
                 description: param.description,
             };
-            if (param.type === 'array' && (param.name === 'parameters' || param.name === 'steps')) {
+            if (param.type === 'array' && (param.name === 'parameters' || param.name === 'steps' || param.name === 'proposed_action')) {
                 properties[param.name].items = { type: 'object' };
             }
             if (param.required) {
@@ -72,9 +72,9 @@ const generateDetailedError = (error: unknown, url: string): Error => {
 }
 
 const getRobotStateString = (robotState: RobotState, environmentState: EnvironmentObject[]): string => {
-    const { x, y, rotation, hasPackage } = robotState;
-    const packageObj = environmentState.find(obj => obj.type === 'package');
-    const goalObj = environmentState.find(obj => obj.type === 'goal');
+    const { x, y, rotation, hasResource } = robotState;
+    const resourceObj = environmentState.find(obj => obj.type === 'resource');
+    const collectionPointObj = environmentState.find(obj => obj.type === 'collection_point');
     
     let direction = 'Unknown';
     if (rotation === 0) direction = 'North (Up)';
@@ -83,18 +83,18 @@ const getRobotStateString = (robotState: RobotState, environmentState: Environme
     if (rotation === 270) direction = 'West (Left)';
     
     let stateString = `Robot is at coordinates (${x}, ${y}) facing ${direction}. `;
-    stateString += `Robot is ${hasPackage ? 'currently carrying the package' : 'not carrying the package'}. `;
+    stateString += `Robot is ${hasResource ? 'currently carrying the resource' : 'not carrying the resource'}. `;
 
-    if (packageObj) {
-        stateString += `The package is at (${packageObj.x}, ${y}). `;
+    if (resourceObj) {
+        stateString += `The resource is at (${resourceObj.x}, ${resourceObj.y}). `;
     } else {
-        if (!hasPackage) {
-            stateString += 'The package has been delivered or does not exist. ';
+        if (!hasResource) {
+            stateString += 'The resource has been collected or does not exist. ';
         }
     }
     
-    if (goalObj) {
-        stateString += `The delivery goal is at (${goalObj.x}, ${goalObj.y}).`;
+    if (collectionPointObj) {
+        stateString += `The delivery collection point is at (${collectionPointObj.x}, ${collectionPointObj.y}).`;
     }
 
     return stateString.trim();
@@ -167,27 +167,27 @@ export const generateGoal = async (
     autonomousActionLimit: number,
     actionContext: string | null,
     robotState: RobotState,
-    environmentState: EnvironmentObject[]
+    environmentState: EnvironmentObject[],
+    agentResources: Record<string, number>
 ): Promise<{ goal: string, rawResponse: string }> => {
     if (typeof systemInstruction !== 'string' || !systemInstruction.trim()) {
         throw new Error("The system instruction for goal generation is missing or empty. The 'Autonomous Goal Generator' tool may have been corrupted.");
     }
-    const lightweightTools = allTools.map(t => ({ name: t.name, description: t.description, version: t.version }));
-    const toolsForPrompt = JSON.stringify(lightweightTools, null, 2);
 
     const contextText = actionContext || "No action has been taken yet.";
     const robotStateString = getRobotStateString(robotState, environmentState);
+    const agentResourcesString = `Agent has ${agentResources.Energy || 0} Energy.`;
+    
     const instructionWithContext = systemInstruction
         .replace('{{ACTION_HISTORY}}', contextText)
         .replace('{{ACTION_LIMIT}}', String(autonomousActionLimit))
-        .replace('{{ROBOT_STATE}}', robotStateString);
-
-    const fullSystemInstruction = `${instructionWithContext}\n\nHere is the current list of all available tools:\n${toolsForPrompt}`;
+        .replace('{{ROBOT_STATE}}', robotStateString)
+        .replace('{{AGENT_RESOURCES}}', agentResourcesString);
 
     const body = {
         model: modelId,
         messages: [
-            { role: 'system', content: fullSystemInstruction },
+            { role: 'system', content: instructionWithContext },
             { role: 'user', content: userInput },
         ],
         temperature,
@@ -469,4 +469,19 @@ export const generateText = async (
     } catch (error) {
         throw generateDetailedError(error, apiConfig.openAIBaseUrl);
     }
+};
+
+export const generateHeuristic = async (
+    systemInstruction: string,
+    modelId: string,
+    temperature: number,
+    apiConfig: APIConfig
+): Promise<string> => {
+    return generateText(
+        "Based on the provided game history, generate one new strategic heuristic for the agent to follow in the future.",
+        systemInstruction,
+        modelId,
+        temperature,
+        apiConfig
+    );
 };

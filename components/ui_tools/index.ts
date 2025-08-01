@@ -3,7 +3,7 @@ import { applicationLayoutTools } from './application_layout';
 import { configurationTools } from './configuration';
 import { agentControlsTools } from './agent_controls';
 import { displayTools } from './displays';
-import { roboticsTools } from '../robotics_tools'; // Temporarily add robotics tools here
+import { roboticsTools } from '../robotics_tools';
 import { graphTools } from './graph';
 
 export const PREDEFINED_UI_TOOLS: LLMTool[] = [
