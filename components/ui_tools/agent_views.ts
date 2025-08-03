@@ -1,6 +1,69 @@
+
 import type { LLMTool } from '../../types';
 
 export const agentViewTools: LLMTool[] = [
+    {
+    id: 'audio_testbed',
+    name: 'Audio Testbed',
+    description: 'A UI component for recording audio and sending it to the server for processing with an AI-created tool.',
+    category: 'UI Component',
+    version: 1,
+    parameters: [
+      { name: 'isRecording', type: 'boolean', description: 'Whether audio is currently being recorded.', required: true },
+      { name: 'isProcessingAudio', type: 'boolean', description: 'Whether the server is currently processing audio.', required: true },
+      { name: 'audioResult', type: 'string', description: 'The transcription or result from the audio processing.', required: false },
+      { name: 'handleStartRecording', type: 'string', description: 'Function to call to start recording.', required: true },
+      { name: 'handleStopRecording', type: 'string', description: 'Function to call to stop recording.', required: true },
+      { name: 'isServerConnected', type: 'boolean', description: 'Whether the backend server is connected.', required: true },
+    ],
+    implementationCode: `
+      let statusText = "Ready to record.";
+      let statusColor = "text-gray-400";
+
+      if (!isServerConnected) {
+        statusText = "Server offline.";
+        statusColor = "text-yellow-400";
+      } else if (isRecording) {
+        statusText = "Recording...";
+        statusColor = "text-red-400 animate-pulse";
+      } else if (isProcessingAudio) {
+        statusText = "Processing on server...";
+        statusColor = "text-blue-400";
+      } else if (audioResult) {
+        statusText = "Processing complete.";
+        statusColor = "text-green-400";
+      }
+
+      return (
+        <div className="bg-gray-800/60 border border-gray-700 rounded-xl p-4">
+          <h3 className="text-lg font-bold text-indigo-300 mb-2">Audio Testbed</h3>
+          <p className="text-xs text-gray-400 mb-3">Test server-side tools like audio transcription. The AI must first create the Python script and the server tool that runs it.</p>
+          <div className="flex items-center gap-4">
+            <button
+              onClick={isRecording ? handleStopRecording : handleStartRecording}
+              disabled={!isServerConnected || isProcessingAudio}
+              className={\`w-32 text-center px-4 py-2 font-semibold rounded-lg transition-colors text-white \${
+                isRecording 
+                  ? 'bg-red-600 hover:bg-red-700' 
+                  : 'bg-green-600 hover:bg-green-700'
+              } disabled:bg-gray-600 disabled:cursor-not-allowed\`}
+            >
+              {isRecording ? 'Stop Recording' : 'Start Recording'}
+            </button>
+            <div className="flex-grow">
+              <p className="text-sm font-semibold">Status: <span className={statusColor}>{statusText}</span></p>
+            </div>
+          </div>
+          {audioResult && (
+            <div className="mt-4">
+              <h4 className="font-semibold text-gray-300">Server Response:</h4>
+              <pre className="mt-1 text-sm text-cyan-200 bg-black/30 p-3 rounded-md whitespace-pre-wrap">{audioResult}</pre>
+            </div>
+          )}
+        </div>
+      );
+    `
+  },
   {
     id: 'manual_robot_control',
     name: 'Manual Robot Control',

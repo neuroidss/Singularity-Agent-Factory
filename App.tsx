@@ -7,6 +7,8 @@ import { UIToolRunner } from './components/UIToolRunner';
 import { ModelProvider } from './types';
 import { loadStateFromStorage, saveStateToStorage } from './versioning';
 
+const SERVER_URL = 'http://localhost:3001';
+
 const generateMachineReadableId = (name: string, existingTools: LLMTool[]): string => {
   let baseId = name
     .trim()
@@ -36,11 +38,14 @@ const initializeState = () => {
 };
 
 const App: React.FC = () => {
+    // Client-side state
     const [userInput, setUserInput] = useState<string>('');
     const [isLoading, setIsLoading] = useState<boolean>(false);
     const [tools, setTools] = useState<LLMTool[]>(() => initializeState().tools);
+    const [serverTools, setServerTools] = useState<LLMTool[]>([]);
     const [apiCallCount, setApiCallCount] = useState<number>(0);
     const [eventLog, setEventLog] = useState<string[]>(['[INFO] System Initialized. Target: Achieve Singularity.']);
+    const [isServerConnected, setIsServerConnected] = useState<boolean>(false);
     
     // Swarm State
     const [agentSwarm, setAgentSwarm] = useState<AgentWorker[]>([]);
@@ -65,6 +70,13 @@ const App: React.FC = () => {
         { x: 2, y: 9, type: 'collection_point' },
     ]);
 
+    // Audio State
+    const [isRecording, setIsRecording] = useState(false);
+    const [isProcessingAudio, setIsProcessingAudio] = useState(false);
+    const [audioResult, setAudioResult] = useState<string | null>(null);
+    const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+    const audioChunksRef = useRef<Blob[]>([]);
+
     // Model & API Config State
     const [availableModels, setAvailableModels] = useState<AIModel[]>(AI_MODELS);
     const [selectedModel, setSelectedModel] = useState<AIModel>(AI_MODELS[0]);
@@ -88,6 +100,10 @@ const App: React.FC = () => {
         }
         return initialConfig;
     });
+    
+    const executeActionRef = useRef<any>();
+
+    const allTools = useMemo(() => [...tools, ...serverTools], [tools, serverTools]);
 
     useEffect(() => { saveStateToStorage({ tools }); }, [tools]);
     useEffect(() => { localStorage.setItem('apiConfig', JSON.stringify(apiConfig)); }, [apiConfig]);
@@ -98,9 +114,23 @@ const App: React.FC = () => {
       setEventLog(prev => [...prev.slice(-199), `[${timestamp}] ${message}`]);
     }, []);
 
-    const findToolByName = useCallback((toolName: string): LLMTool | undefined => {
-        return tools.find(t => t.name === toolName);
-    }, [tools]);
+    useEffect(() => {
+        const fetchServerTools = async () => {
+          try {
+            const response = await fetch(`${SERVER_URL}/api/tools`);
+            if (!response.ok) throw new Error('Failed to fetch server tools');
+            const data: LLMTool[] = await response.json();
+            setServerTools(data);
+            setIsServerConnected(true);
+            logEvent(`[INFO] ✅ Backend server connected. Found ${data.length} server-side tools.`);
+          } catch (e) {
+            setIsServerConnected(false);
+            logEvent(`[WARN] ⚠️ Backend server not found. Running in client-only mode.`);
+            console.warn(`Could not connect to backend at ${SERVER_URL}. Server tools unavailable.`, e);
+          }
+        };
+        fetchServerTools();
+    }, [logEvent]);
 
     const runToolImplementation = useCallback(async (code: string, params: any, runtime: any): Promise<any> => {
         const AsyncFunction = Object.getPrototypeOf(async function(){}).constructor;
@@ -111,21 +141,68 @@ const App: React.FC = () => {
     const getRuntimeApi = useCallback((agentId: string) => ({
         tools: {
             run: async (toolName: string, args: Record<string, any>): Promise<any> => {
-                const toolToRun = tools.find(t => t.name === toolName);
+                const toolToRun = allTools.find(t => t.name === toolName);
                 if (!toolToRun) throw new Error(`Workflow failed: Tool '${toolName}' not found.`);
-                // The agent calling the workflow will execute sub-steps with its own runtime
-                return await runToolImplementation(toolToRun.implementationCode, args, getRuntimeApi(agentId));
+                const result = await executeActionRef.current({ name: toolName, arguments: args }, agentId);
+                if (result.executionError) throw new Error(result.executionError);
+                return result.executionResult;
             },
             add: (newToolPayload: NewToolPayload): LLMTool => {
-                if (tools.find(t => t.name === newToolPayload.name)) throw new Error(`A tool with the name '${newToolPayload.name}' already exists.`);
-                const newId = generateMachineReadableId(newToolPayload.name, tools);
+                if (allTools.find(t => t.name === newToolPayload.name)) throw new Error(`A tool with the name '${newToolPayload.name}' already exists.`);
+                const newId = generateMachineReadableId(newToolPayload.name, allTools);
                 const now = new Date().toISOString();
                 const completeTool: LLMTool = { ...newToolPayload, id: newId, version: 1, createdAt: now, updatedAt: now };
                 setTools(prevTools => [...prevTools, completeTool]);
                 return completeTool;
             }
         },
+        server: {
+            isConnected: () => isServerConnected,
+            createTool: async (newToolPayload: NewToolPayload): Promise<any> => {
+                if (!isServerConnected) throw new Error("Cannot create server tool: Backend server is not connected.");
+                try {
+                    const response = await fetch(`${SERVER_URL}/api/tools/create`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(newToolPayload),
+                    });
+                    const result = await response.json();
+                    if (!response.ok) throw new Error(result.error || 'Server failed to create tool');
+                    setServerTools(prev => [...prev, result.tool]);
+                    return { success: true, message: `Successfully created server-side tool: '${result.tool.name}'`};
+                } catch (e) {
+                    const errorMessage = e instanceof Error ? e.message : String(e);
+                    logEvent(`[ERROR] Failed to create server tool: ${errorMessage}`);
+                    throw e;
+                }
+            },
+            writeFile: async (filePath: string, content: string): Promise<any> => {
+                if (!isServerConnected) throw new Error("Cannot write file: The backend server is not connected.");
+                 try {
+                    const response = await fetch(`${SERVER_URL}/api/files/write`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ filePath, content }),
+                    });
+                    const result = await response.json();
+                    if (!response.ok) throw new Error(result.error || 'Server failed to write file');
+                    logEvent(`[INFO] ✅ [SERVER] Successfully wrote file: ${filePath}`);
+                    return result;
+                } catch (e) {
+                    const errorMessage = e instanceof Error ? e.message : String(e);
+                    logEvent(`[ERROR] Failed to write server file: ${errorMessage}`);
+                    throw e;
+                }
+            },
+        },
         robot: {
+            getState: () => {
+                const robot = robotStates.find(r => r.id === agentId);
+                if (!robot) {
+                    throw new Error(`Pathfinder cannot find robot state for agent ${agentId}.`);
+                }
+                return { robot, environment: environmentState };
+            },
             moveForward: () => new Promise<any>((resolve, reject) => {
                 setRobotStates(prevStates => {
                     const robotIndex = prevStates.findIndex(r => r.id === agentId);
@@ -152,20 +229,20 @@ const App: React.FC = () => {
                     return newStates;
                 });
             }),
-            turn: (direction: 'left' | 'right') => {
-                let success = false;
+            turn: (direction: 'left' | 'right') => new Promise<any>((resolve, reject) => {
                 setRobotStates(prev => {
                     const robotIndex = prev.findIndex(r => r.id === agentId);
-                    if (robotIndex === -1) return prev;
+                    if (robotIndex === -1) {
+                        reject(new Error(`Agent ${agentId} not found for turn operation.`));
+                        return prev;
+                    }
                     const newStates = [...prev];
                     const robot = newStates[robotIndex];
                     newStates[robotIndex] = { ...robot, rotation: (robot.rotation + (direction === 'left' ? -90 : 90) + 360) % 360 };
-                    success = true;
+                    resolve({ success: true, message: `Agent ${agentId} turned ${direction}.` });
                     return newStates;
                 });
-                if (!success) throw new Error(`Agent ${agentId} not found for turn operation.`);
-                return { success: true, message: `Agent ${agentId} turned ${direction}.` };
-            },
+            }),
             pickupResource: () => new Promise((resolve, reject) => {
                 setRobotStates(prevStates => {
                     const robotIndex = prevStates.findIndex(r => r.id === agentId);
@@ -217,38 +294,46 @@ const App: React.FC = () => {
         },
         getObservationHistory: () => observationHistory,
         clearObservationHistory: () => setObservationHistory([]),
-    }), [tools, runToolImplementation, robotStates, environmentState, observationHistory, logEvent]);
-    
-    const handleManualControl = useCallback(async (toolName: string, args: any = {}) => {
-        logEvent(`[PILOT] Manual command: ${toolName}`);
-        const leadAgentId = 'agent-1';
-        const runtime = getRuntimeApi(leadAgentId);
-
-        try {
-            const toolToExecute = findToolByName(toolName);
-            if (!toolToExecute) {
-                logEvent(`[ERROR] Manual control tool '${toolName}' not found.`);
-                return;
-            }
-            const result = await runToolImplementation(toolToExecute.implementationCode, args, runtime);
-            logEvent(`[PILOT] ${result.message}`);
-            setObservationHistory(prev => [...prev, { name: toolName, arguments: args }]);
-        } catch(e) {
-            logEvent(`[ERROR] ${e instanceof Error ? e.message : String(e)}`);
-        }
-    }, [findToolByName, runToolImplementation, getRuntimeApi, logEvent]);
+    }), [allTools, runToolImplementation, robotStates, environmentState, observationHistory, logEvent, isServerConnected]);
 
     const executeAction = useCallback(async (toolCall: AIToolCall, agentId: string): Promise<EnrichedAIResponse> => {
         if (!toolCall) return { toolCall: null };
+
         let enrichedResult: EnrichedAIResponse = { toolCall };
-        const toolToExecute = findToolByName(toolCall.name);
+        const toolToExecute = allTools.find(t => t.name === toolCall.name);
+
         if (!toolToExecute) throw new Error(`AI returned unknown tool name for agent ${agentId}: ${toolCall.name}`);
         
         enrichedResult.tool = toolToExecute;
         const runtime = getRuntimeApi(agentId);
-        if (toolToExecute.category === 'UI Component') {
+
+        if (toolToExecute.category === 'Server') {
+            if (!isServerConnected) {
+                const errorMessage = `Cannot execute server tool '${toolToExecute.name}': Backend server is not connected.`;
+                enrichedResult.executionError = errorMessage;
+                logEvent(`[ERROR] ❌ ${errorMessage}`);
+                return enrichedResult;
+            }
+            try {
+                const response = await fetch(`${SERVER_URL}/api/execute`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(toolCall)
+                });
+                 const result = await response.json();
+                if (!response.ok) {
+                   throw new Error(result.error || 'Server execution failed with unknown error');
+                }
+                enrichedResult.executionResult = result;
+                logEvent(`[INFO] ✅ [SERVER] ${result?.message || `Tool "${toolToExecute.name}" executed by server.`}`);
+            } catch (execError) {
+                 const errorMessage = execError instanceof Error ? execError.message : String(execError);
+                 enrichedResult.executionError = errorMessage;
+                 logEvent(`[ERROR] ❌ [SERVER] ${errorMessage}`);
+            }
+        } else if (toolToExecute.category === 'UI Component') {
              enrichedResult.executionResult = { success: true, summary: `Displayed UI tool '${toolToExecute.name}'.` };
-        } else {
+        } else { // Client-side Functional or Automation
             try {
                 const result = await runToolImplementation(toolToExecute.implementationCode, toolCall.arguments, runtime);
                 enrichedResult.executionResult = result;
@@ -260,14 +345,111 @@ const App: React.FC = () => {
             }
         }
         return enrichedResult;
-    }, [findToolByName, getRuntimeApi, runToolImplementation, logEvent]);
+    }, [allTools, getRuntimeApi, runToolImplementation, logEvent, isServerConnected]);
+    
+    executeActionRef.current = executeAction;
+    
+    // --- Audio Handling ---
+    const handleStartRecording = async () => {
+        setAudioResult(null);
+        if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+            logEvent("[ERROR] Audio recording is not supported by this browser.");
+            return;
+        }
+        try {
+            const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+            mediaRecorderRef.current = new MediaRecorder(stream, { mimeType: 'audio/webm' });
+            audioChunksRef.current = [];
+            
+            mediaRecorderRef.current.ondataavailable = event => {
+                audioChunksRef.current.push(event.data);
+            };
+
+            mediaRecorderRef.current.onstop = () => {
+                const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
+                handleAudioUpload(audioBlob);
+                stream.getTracks().forEach(track => track.stop());
+            };
+            
+            mediaRecorderRef.current.start();
+            setIsRecording(true);
+            logEvent("[INFO] 🎤 Started recording audio...");
+        } catch (err) {
+            logEvent(`[ERROR] Could not start recording: ${err instanceof Error ? err.message : String(err)}`);
+        }
+    };
+
+    const handleStopRecording = () => {
+        if (mediaRecorderRef.current && mediaRecorderRef.current.state === "recording") {
+            mediaRecorderRef.current.stop();
+            setIsRecording(false);
+            setIsProcessingAudio(true);
+            logEvent("[INFO] 🛑 Stopped recording. Processing audio...");
+        }
+    };
+    
+    const handleAudioUpload = async (audioBlob: Blob) => {
+        const gemmaTool = serverTools.find(t => t.name === "Gemma Audio Processor");
+        if (!gemmaTool) {
+             logEvent("[ERROR] 'Gemma Audio Processor' tool not found on server. Please ask the AI to create it first.");
+             setAudioResult("Error: 'Gemma Audio Processor' tool not found on server.");
+             setIsProcessingAudio(false);
+             return;
+        }
+
+        const formData = new FormData();
+        formData.append('audioFile', audioBlob, 'recording.webm');
+        formData.append('toolName', gemmaTool.name);
+
+        try {
+            const response = await fetch(`${SERVER_URL}/api/audio/process`, {
+                method: 'POST',
+                body: formData,
+            });
+            const result = await response.json();
+
+            if (!response.ok) {
+                throw new Error(result.error || result.stderr || 'Server failed to process audio.');
+            }
+            
+            logEvent(`[SUCCESS] 🎵 Audio processed. Server response: ${result.stdout}`);
+            setAudioResult(result.stdout);
+        } catch (err) {
+            const errorMessage = err instanceof Error ? err.message : String(err);
+            logEvent(`[ERROR] Failed to process audio: ${errorMessage}`);
+            setAudioResult(`Error: ${errorMessage}`);
+        } finally {
+            setIsProcessingAudio(false);
+        }
+    };
+
+    const handleManualControl = useCallback(async (toolName: string, args: any = {}) => {
+        logEvent(`[PILOT] Manual command: ${toolName}`);
+        const leadAgentId = 'agent-1';
+        
+        try {
+            const toolToExecute = allTools.find(t => t.name === toolName);
+            if (!toolToExecute) {
+                logEvent(`[ERROR] Manual control tool '${toolName}' not found.`);
+                return;
+            }
+            const result = await executeAction({ name: toolName, arguments: args }, leadAgentId);
+             if(result.executionError) {
+                throw new Error(result.executionError);
+            }
+            logEvent(`[PILOT] ${result.executionResult.message}`);
+            setObservationHistory(prev => [...prev, { name: toolName, arguments: args }]);
+        } catch(e) {
+            logEvent(`[ERROR] ${e instanceof Error ? e.message : String(e)}`);
+        }
+    }, [allTools, executeAction, logEvent]);
 
     const processRequest = useCallback(async (prompt: string, systemInstruction: string, agentId: string): Promise<EnrichedAIResponse | null> => {
         setIsLoading(true);
         try {
             logEvent(`[INFO] 🤖 Agent ${agentId} is thinking using ${selectedModel.name}...`);
             setApiCallCount(prev => prev + 1);
-            const aiResponse: AIResponse = await aiService.generateResponse(prompt, systemInstruction, selectedModel, apiConfig, logEvent, tools);
+            const aiResponse: AIResponse = await aiService.generateResponse(prompt, systemInstruction, selectedModel, apiConfig, logEvent, allTools);
             
             if(!aiResponse.toolCall) {
                 logEvent(`[WARN] Agent ${agentId} did not select a tool to execute.`);
@@ -283,7 +465,7 @@ const App: React.FC = () => {
         } finally {
             setIsLoading(false);
         }
-    }, [tools, apiConfig, logEvent, executeAction, selectedModel]);
+    }, [allTools, apiConfig, logEvent, executeAction, selectedModel]);
 
     const handleStopSwarm = useCallback(() => {
         setIsSwarmRunning(false);
@@ -344,7 +526,6 @@ const App: React.FC = () => {
                 return [...failedSwarm, { id: `agent-${swarmAgentIdCounter.current}`, status: 'idle', lastAction: 'Newly spawned', error: null, result: null }];
             });
         }
-        // Give some time for the state to update and for readability before the next cycle
         setTimeout(runSwarmCycle, 1000);
     }, [agentSwarm, currentUserTask, processRequest, logEvent]);
 
@@ -356,8 +537,8 @@ const App: React.FC = () => {
         swarmIterationCounter.current = 0;
         swarmAgentIdCounter.current = 3;
         setUserInput('');
-        logEvent(`[INFO] 🚀 Starting swarm task: "${initialTask}"`);
-        setEventLog(prev => prev.slice(-1)); // Clear previous logs
+        const timestamp = new Date().toLocaleTimeString();
+        setEventLog([`[${timestamp}] [INFO] 🚀 Starting swarm task: "${initialTask}"`]); // Clear previous logs and set the starting message
         const initialAgents: AgentWorker[] = Array.from({ length: 3 }, (_, i) => ({ id: `agent-${i + 1}`, status: 'idle', lastAction: 'Awaiting instructions', error: null, result: null }));
         setAgentSwarm(initialAgents);
         const initialRobots: RobotState[] = initialAgents.map((agent, i) => ({
@@ -368,7 +549,7 @@ const App: React.FC = () => {
             hasResource: false,
         }));
         setRobotStates(initialRobots);
-    }, [logEvent]);
+    }, []);
 
     useEffect(() => {
         if (isSwarmRunning && agentSwarm.length > 0 && agentSwarm.every(a => a.status !== 'working')) {
@@ -382,23 +563,23 @@ const App: React.FC = () => {
     }, [userInput, startSwarmTask, logEvent]);
 
     const handleResetTools = useCallback(() => {
-        if (window.confirm('This will delete ALL custom-made tools and restore the original set. Are you sure?')) {
+        if (window.confirm('This will delete ALL client-side custom-made tools and restore the original set. Server tools will NOT be affected. Are you sure?')) {
             localStorage.removeItem('singularity-agent-factory-state');
             const initialState = initializeState();
             setTools(initialState.tools);
-            setEventLog(['[SUCCESS] System reset complete.']);
+            setEventLog(['[SUCCESS] Client-side system reset complete.']);
             setApiCallCount(0);
         }
     }, []);
 
     const configProps = { apiConfig, setApiConfig, availableModels, selectedModel, setSelectedModel };
-    const debugLogProps = { logs: eventLog, onReset: handleResetTools, apiCallCount };
+    const debugLogProps = { logs: eventLog, onReset: handleResetTools, apiCallCount, apiCallLimit: -1 };
+    const audioProps = { isRecording, isProcessingAudio, audioResult, handleStartRecording, handleStopRecording, isServerConnected };
     
     // Dynamically get tools to avoid stale closures in props
     const getTool = (name: string): LLMTool => {
-        const tool = tools.find(t => t.name === name);
+        const tool = allTools.find(t => t.name === name);
         if (tool) return tool;
-        // Return a fallback UI tool if not found to prevent crashes
         return { 
           id: 'fallback', 
           name: 'Not Found', 
@@ -417,6 +598,7 @@ const App: React.FC = () => {
                 {/* Left Column */}
                 <div className="lg:col-span-2 space-y-6">
                     <UIToolRunner tool={getTool('Robot Simulation Environment')} props={{ robotStates, environmentState }} />
+                    <UIToolRunner tool={getTool('Audio Testbed')} props={audioProps} />
                     <UIToolRunner tool={getTool('Manual Robot Control')} props={{ handleManualControl, isSwarmRunning }} />
                      <UIToolRunner tool={getTool('Configuration Panel')} props={configProps} />
                     <UIToolRunner tool={getTool('User Input Form')} props={{ userInput, setUserInput, handleSubmit, isSwarmRunning }} />
@@ -425,7 +607,7 @@ const App: React.FC = () => {
                 {/* Right Column */}
                 <div className="lg:col-span-3 space-y-6">
                      <UIToolRunner tool={getTool('Agent Swarm Display')} props={{ agentSwarm, isSwarmRunning, handleStopSwarm, currentUserTask }} />
-                    <UIToolRunner tool={getTool('Tool List Display')} props={{ tools }} />
+                    <UIToolRunner tool={getTool('Tool List Display')} props={{ tools: allTools, isServerConnected }} />
                 </div>
             </main>
             <UIToolRunner tool={getTool('Debug Log View')} props={debugLogProps} />

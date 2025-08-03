@@ -1,0 +1,6 @@
+#!/bin/bash
+# This script starts the backend server.
+# Rename this file to start.sh and run `chmod +x start.sh` to make it executable.
+
+echo "🚀 Starting Singularity Agent Factory Backend Server..."
+npm start

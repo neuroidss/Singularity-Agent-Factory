@@ -1,6 +1,8 @@
 {
-  "name": "Singularity Agent Factory swarm",
+  "name": "Singularity Agent Factory mcp",
   "description": "An AI-powered application that analyzes your project needs and suggests the most suitable Large Language Model (LLM) tools for the job, complete with justifications and relevance scores.",
-  "requestFramePermissions": [],
+  "requestFramePermissions": [
+    "microphone"
+  ],
   "prompt": ""
 }

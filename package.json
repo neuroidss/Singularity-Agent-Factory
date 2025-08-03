@@ -1,5 +1,5 @@
 {
-  "name": "singularity-agent-factory-swarm",
+  "name": "singularity-agent-factory-mcp",
   "private": true,
   "version": "0.0.0",
   "type": "module",
@@ -12,7 +12,14 @@
     "react": "^19.1.0",
     "@google/genai": "^1.11.0",
     "@huggingface/transformers": "^3.0.0-alpha.12",
-    "react-dom": "^19.1.0"
+    "react-dom": "^19.1.0",
+    "fs": "^0.0.1-security",
+    "path": "^0.12.7",
+    "express": "^5.1.0",
+    "cors": "^2.8.5",
+    "url": "^0.11.4",
+    "child_process": "^1.0.2",
+    "multer": "^2.0.2"
   },
   "devDependencies": {
     "@types/node": "^22.14.0",

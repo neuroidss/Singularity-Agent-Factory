@@ -78,45 +78,77 @@ const CORE_AUTOMATION_TOOLS: LLMTool[] = [
       return { success: true, message: \`Task completed. Reason: \${args.reason}\` };
     `
   },
+    {
+    id: 'server_file_writer',
+    name: 'Server File Writer',
+    description: "Creates or overwrites a file on the server's filesystem, typically for scripts (e.g., Python) or config files. The path is relative to the server's 'scripts' directory.",
+    category: 'Functional',
+    version: 1,
+    parameters: [
+      { name: 'filePath', type: 'string', description: "The name of the file to create within the server's 'scripts' directory (e.g., 'my_script.py').", required: true },
+      { name: 'content', type: 'string', description: 'The full content to write to the file.', required: true },
+    ],
+    implementationCode: `
+      if (!runtime.server.isConnected()) {
+        throw new Error("Cannot write file: The backend server is not connected.");
+      }
+      return await runtime.server.writeFile(args.filePath, args.content);
+    `,
+  },
   {
     id: 'tool_creator',
     name: 'Tool Creator',
-    description: "Creates a new tool and adds it to the agent's capabilities. This is the primary mechanism for the agent to acquire new skills.",
+    description: "Creates a new tool and adds it to the agent's capabilities. This is the primary mechanism for the agent to acquire new skills. Can create tools on the client or server.",
     category: 'Automation',
-    version: 2,
+    version: 4,
     parameters: [
       { name: 'name', type: 'string', description: 'The unique, human-readable name for the new tool.', required: true },
       { name: 'description', type: 'string', description: 'A clear, concise description of what the tool does.', required: true },
-      { name: 'category', type: 'string', description: "The tool's category: 'UI Component', 'Functional', or 'Automation'.", required: true },
+      { name: 'category', type: 'string', description: "The tool's category: 'UI Component', 'Functional', 'Automation', or 'Server'.", required: true },
+      { name: 'executionEnvironment', type: 'string', description: "Where the tool should run: 'Client' or 'Server'. 'UI Component' must be 'Client'. 'Server' tools can execute shell commands.", required: true },
       { name: 'parameters', type: 'array', description: 'An array of objects defining the parameters the tool accepts.', required: true },
-      { name: 'implementationCode', type: 'string', description: 'The JavaScript (for Functional/Automation) or JSX (for UI) code that implements the tool.', required: true },
+      { name: 'implementationCode', type: 'string', description: 'The JavaScript/JSX (for Client) or shell command/script (for Server) code that implements the tool.', required: true },
       { name: 'purpose', type: 'string', description: 'A clear explanation of why this tool is being created and what problem it solves. This is crucial for the "Will to Meaning".', required: true },
     ],
     implementationCode: `
-      const { name, description, category, parameters, implementationCode, purpose } = args;
-      if (!name || !description || !category || !implementationCode || !purpose) {
-        throw new Error("Tool name, description, category, implementationCode, and purpose are required.");
+      const { executionEnvironment, category, ...toolPayload } = args;
+      
+      if (!executionEnvironment || (executionEnvironment !== 'Client' && executionEnvironment !== 'Server')) {
+        throw new Error("executionEnvironment is required and must be 'Client' or 'Server'.");
       }
-      if (!['UI Component', 'Functional', 'Automation'].includes(category)) {
-          throw new Error("Invalid category. Must be 'UI Component', 'Functional', or 'Automation'.");
+
+      if (category === 'UI Component' && executionEnvironment !== 'Client') {
+        throw new Error("'UI Component' tools must have an executionEnvironment of 'Client'.");
+      }
+      if (category === 'Server' && executionEnvironment !== 'Server') {
+        throw new Error("'Server' category tools must have an executionEnvironment of 'Server'.");
+      }
+      if (executionEnvironment === 'Server' && category !== 'Server') {
+        throw new Error("Tools with executionEnvironment 'Server' must have the category 'Server'.");
+      }
+
+      const validCategories = ['UI Component', 'Functional', 'Automation', 'Server'];
+      if (!validCategories.includes(category)) {
+          throw new Error("Invalid category. Must be one of: " + validCategories.join(', '));
       }
       
-      const newTool = runtime.tools.add({
-        name,
-        description,
-        category,
-        parameters,
-        implementationCode,
-        purpose,
-      });
-
-      return { success: true, message: \`Successfully created new tool: '\${newTool.name}'. Purpose: \${purpose}\` };
+      if (executionEnvironment === 'Server') {
+        if (!runtime.server.isConnected()) {
+          throw new Error("Cannot create server tool: The backend server is not connected. Advise the user to start the server for this functionality.");
+        }
+        // Delegate to the server to create the tool
+        return await runtime.server.createTool({ category, ...toolPayload });
+      } else {
+        // Create the tool on the client-side
+        const newTool = runtime.tools.add({ category, ...toolPayload });
+        return { success: true, message: \`Successfully created new client-side tool: '\${newTool.name}'. Purpose: \${toolPayload.purpose}\` };
+      }
     `
   },
   {
     id: 'workflow_creator',
     name: 'Workflow Creator',
-    description: 'Creates a new, high-level "Automation" tool by combining a sequence of other tool calls into a single, reusable workflow.',
+    description: 'Creates a new, high-level "Automation" tool by combining a sequence of other tool calls into a single, reusable workflow. These workflows run on the client.',
     category: 'Automation',
     version: 1,
     parameters: [
@@ -137,6 +169,7 @@ const CORE_AUTOMATION_TOOLS: LLMTool[] = [
         for (const step of workflowSteps) {
             console.log(\`Running workflow step: \${step.toolName}\`);
             try {
+                // runtime.tools.run can execute client or server tools transparently
                 const result = await runtime.tools.run(step.toolName, step.arguments);
                 results.push({ step: step.toolName, success: true, result });
             } catch (e) {

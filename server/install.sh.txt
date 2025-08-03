@@ -1,0 +1,15 @@
+#!/bin/bash
+# This script installs all necessary dependencies for the server.
+# Rename this file to install.sh and run `chmod +x install.sh` to make it executable.
+
+echo "--- Installing Node.js dependencies from package.json... ---"
+npm install
+
+echo ""
+echo "--- Installing Python dependencies from requirements.txt... ---"
+python3 -m venv venv
+source venv/bin/activate
+pip install -r requirements.txt
+
+echo ""
+echo "✅ Installation complete. You can now run './start.sh' to launch the server."

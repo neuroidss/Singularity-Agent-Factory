@@ -1,4 +1,4 @@
-export type ToolCategory = 'UI Component' | 'Functional' | 'Automation';
+export type ToolCategory = 'UI Component' | 'Functional' | 'Automation' | 'Server';
 
 export type AgentStatus = 'idle' | 'working' | 'succeeded' | 'failed' | 'terminated';
 
@@ -71,7 +71,7 @@ export type HuggingFaceDevice = 'wasm' | 'webgpu';
 
 export interface APIConfig {
   googleAIAPIKey: string;
-  openAIAPIKey: string;
+  openAIAPIKey:string;
   openAIBaseUrl: string;
   ollamaHost: string;
 }
