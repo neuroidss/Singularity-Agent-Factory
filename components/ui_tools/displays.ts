@@ -7,11 +7,11 @@ export const displayTools: LLMTool[] = [
     name: 'User Input Form',
     description: 'Renders the main textarea for user input and the submit button.',
     category: 'UI Component',
-    version: 7,
+    version: 8,
     parameters: [
         {name: 'userInput', type: 'string', description: 'Current value of the input', required: true},
-        {name: 'setUserInput', type: 'string', description: 'Function to update the input value', required: true},
-        {name: 'handleSubmit', type: 'string', description: 'Function to call on submit', required: true},
+        {name: 'setUserInput', type: 'object', description: 'Function to update the input value', required: true},
+        {name: 'handleSubmit', type: 'object', description: 'Function to call on submit', required: true},
         {name: 'isSwarmRunning', type: 'boolean', description: 'Whether the swarm is running.', required: true },
     ],
     implementationCode: `
@@ -63,10 +63,10 @@ export const displayTools: LLMTool[] = [
     name: 'Debug Log View',
     description: 'A floating panel that shows a running log of events, API call counts, and system reset functionality.',
     category: 'UI Component',
-    version: 2,
+    version: 3,
     parameters: [
       { name: 'logs', type: 'array', description: 'The array of log messages.', required: true },
-      { name: 'onReset', type: 'string', description: 'Function to reset all tools and progress.', required: true },
+      { name: 'onReset', type: 'object', description: 'Function to reset all tools and progress.', required: true },
       { name: 'apiCallCount', type: 'number', description: 'The number of API calls made.', required: true },
     ],
     implementationCode: `// This component is implemented natively in DebugLogView.tsx`,

@@ -7,74 +7,197 @@ export const agentViewTools: LLMTool[] = [
     name: 'Audio Testbed',
     description: 'A UI component for recording audio and sending it to the server for processing with an AI-created tool.',
     category: 'UI Component',
-    version: 1,
+    version: 6,
     parameters: [
       { name: 'isRecording', type: 'boolean', description: 'Whether audio is currently being recorded.', required: true },
       { name: 'isProcessingAudio', type: 'boolean', description: 'Whether the server is currently processing audio.', required: true },
       { name: 'audioResult', type: 'string', description: 'The transcription or result from the audio processing.', required: false },
-      { name: 'handleStartRecording', type: 'string', description: 'Function to call to start recording.', required: true },
-      { name: 'handleStopRecording', type: 'string', description: 'Function to call to stop recording.', required: true },
+      { name: 'recordedAudioUrl', type: 'string', description: 'The local URL of the recorded audio for playback.', required: false },
+      { name: 'handleStartRecording', type: 'object', description: 'Function to call to start recording.', required: true },
+      { name: 'handleStopRecording', type: 'object', description: 'Function to call to stop recording.', required: true },
+      { name: 'handleAudioUpload', type: 'object', description: 'Function to call to upload audio to the server.', required: true },
       { name: 'isServerConnected', type: 'boolean', description: 'Whether the backend server is connected.', required: true },
+      { name: 'allTools', type: 'array', description: 'A list of all available tools to check for existence.', required: true },
+      { name: 'handleCreateGemmaTool', type: 'object', description: 'Function to create the Gemma audio processor tool.', required: true },
+      { name: 'recordingMimeType', type: 'string', description: 'The currently selected audio MIME type for recording.', required: true },
+      { name: 'setRecordingMimeType', type: 'object', description: 'Function to update the selected MIME type.', required: true },
+      { name: 'recordingBitrate', type: 'number', description: 'The current recording bitrate.', required: true },
+      { name: 'setRecordingBitrate', type: 'object', description: 'Function to update the recording bitrate.', required: true },
+      { name: 'supportedMimeTypes', type: 'array', description: 'List of MIME types supported by the browser.', required: true },
+      { name: 'recordingTime', type: 'number', description: 'The current duration of the recording in seconds.', required: true },
+      { name: 'analyserNode', type: 'object', description: 'The Web Audio API AnalyserNode for visualization.', required: false },
     ],
     implementationCode: `
-      let statusText = "Ready to record.";
-      let statusColor = "text-gray-400";
+      const [isCreatingTool, setIsCreatingTool] = React.useState(false);
+      const canvasRef = React.useRef(null);
 
-      if (!isServerConnected) {
-        statusText = "Server offline.";
-        statusColor = "text-yellow-400";
-      } else if (isRecording) {
-        statusText = "Recording...";
-        statusColor = "text-red-400 animate-pulse";
-      } else if (isProcessingAudio) {
-        statusText = "Processing on server...";
-        statusColor = "text-blue-400";
-      } else if (audioResult) {
-        statusText = "Processing complete.";
-        statusColor = "text-green-400";
+      const gemmaToolExists = allTools.some(t => t.name === "Gemma Audio Processor");
+      const canRecord = isServerConnected && gemmaToolExists && supportedMimeTypes.length > 0;
+      
+      let statusText = "Ready to record";
+      if (!isServerConnected) statusText = "Server is offline";
+      else if (!gemmaToolExists) statusText = "Audio processor tool not found";
+      else if (isRecording) statusText = "Recording in progress...";
+      else if (isProcessingAudio) statusText = "Processing on server...";
+      else if (audioResult) statusText = "Processing complete!";
+      else if (recordedAudioUrl) statusText = "Ready for playback or upload";
+
+      const timer = React.useMemo(() => {
+        const minutes = Math.floor(recordingTime / 60).toString().padStart(2, '0');
+        const seconds = (recordingTime % 60).toString().padStart(2, '0');
+        return \`\${minutes}:\${seconds}\`;
+      }, [recordingTime]);
+
+      React.useEffect(() => {
+        const canvas = canvasRef.current;
+        if (!canvas) return;
+        const resizeObserver = new ResizeObserver(() => {
+            canvas.width = canvas.offsetWidth * window.devicePixelRatio;
+            canvas.height = canvas.offsetHeight * window.devicePixelRatio;
+        });
+        resizeObserver.observe(canvas);
+        return () => resizeObserver.disconnect();
+      }, []);
+
+      React.useEffect(() => {
+        if (!analyserNode || !canvasRef.current) return;
+        
+        const canvas = canvasRef.current;
+        const canvasCtx = canvas.getContext('2d');
+        
+        analyserNode.fftSize = 256;
+        const bufferLength = analyserNode.frequencyBinCount;
+        const dataArray = new Uint8Array(bufferLength);
+        
+        let animationFrameId;
+
+        const draw = () => {
+            animationFrameId = requestAnimationFrame(draw);
+            analyserNode.getByteFrequencyData(dataArray);
+            
+            canvasCtx.fillStyle = 'rgba(30, 41, 59, 1)'; // bg-gray-800
+            canvasCtx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            const barWidth = (canvas.width / bufferLength) * 1.5;
+            let x = 0;
+            
+            for(let i = 0; i < bufferLength; i++) {
+                const barHeight = (dataArray[i] / 255) * canvas.height;
+                const hue = i * 2.5;
+                canvasCtx.fillStyle = 'hsl(' + hue + ', 80%, 60%)';
+                canvasCtx.fillRect(x, canvas.height - barHeight, barWidth, barHeight);
+                x += barWidth + 2;
+            }
+        };
+        draw();
+        
+        return () => {
+            cancelAnimationFrame(animationFrameId);
+             if (canvasCtx) {
+                canvasCtx.fillStyle = 'rgba(30, 41, 59, 1)';
+                canvasCtx.fillRect(0, 0, canvas.width, canvas.height);
+            }
+        };
+      }, [analyserNode]);
+
+      const handleCreateClick = async () => {
+        setIsCreatingTool(true);
+        try {
+          await handleCreateGemmaTool();
+        } finally {
+          setIsCreatingTool(false);
+        }
+      };
+      
+      const renderContent = () => {
+        if (isServerConnected && !gemmaToolExists) {
+            return (
+                <div className="text-center p-4">
+                    <p className="text-sm text-yellow-300 mb-4">The 'Gemma Audio Processor' tool is missing on the server.</p>
+                    <button
+                        onClick={handleCreateClick}
+                        disabled={isCreatingTool}
+                        className="w-full bg-purple-600 text-white font-semibold py-2.5 px-4 rounded-lg hover:bg-purple-700 disabled:bg-purple-900/50 disabled:cursor-not-allowed flex items-center justify-center"
+                    >
+                         {isCreatingTool && <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white mr-2"></div>}
+                        {isCreatingTool ? 'Creating Tool...' : 'Auto-Create Audio Tool'}
+                    </button>
+                </div>
+            )
+        }
+        
+        return (
+          <>
+            <div className="text-center text-4xl font-bold text-gray-200 my-3 tracking-widest">{timer}</div>
+            <div className="text-center text-indigo-300 font-semibold h-6 mb-4">{statusText}</div>
+
+            <div className="flex items-center justify-center gap-3 flex-wrap my-4">
+                 <button onClick={isRecording ? handleStopRecording : handleStartRecording} disabled={!canRecord || isProcessingAudio} className={\`px-6 py-3 font-bold text-white rounded-full flex items-center gap-2 transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed \${isRecording ? 'bg-red-600 hover:bg-red-700 animate-pulse' : 'bg-green-600 hover:bg-green-700'}\`}>
+                    <div className={\`w-3 h-3 rounded-full \${isRecording ? 'bg-white' : 'bg-red-300'}\`}></div>
+                    {isRecording ? 'Stop' : 'Record'}
+                 </button>
+                 <button onClick={handleAudioUpload} disabled={!recordedAudioUrl || isProcessingAudio || isRecording} className="px-6 py-3 font-bold text-white rounded-full flex items-center gap-2 transition-all duration-200 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed">
+                    {isProcessingAudio ? <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div> : '🚀'}
+                    {isProcessingAudio ? 'Processing...' : 'Send to Server'}
+                 </button>
+            </div>
+            
+            {recordedAudioUrl && !isProcessingAudio && !isRecording && (
+              <div className="mt-4 p-3 bg-black/20 rounded-lg border border-gray-600">
+                <audio controls src={recordedAudioUrl} className="w-full h-10">
+                  Your browser does not support the audio element.
+                </audio>
+              </div>
+            )}
+
+            {audioResult && (
+              <div className="mt-4">
+                <h4 className="font-semibold text-gray-300">Server Response:</h4>
+                <pre className="mt-1 text-sm text-cyan-200 bg-black/30 p-3 rounded-md whitespace-pre-wrap">{audioResult}</pre>
+              </div>
+            )}
+
+            <div className="mt-6 p-3 bg-black/20 rounded-lg border border-gray-600 grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div>
+                    <label htmlFor="mime-type-select" className="block text-xs font-medium text-gray-300 mb-1">Recording Format</label>
+                    <select id="mime-type-select" value={recordingMimeType} onChange={(e) => setRecordingMimeType(e.target.value)} disabled={isRecording || isProcessingAudio} className="w-full bg-gray-700 border border-gray-600 rounded-lg p-2 text-xs focus:ring-2 focus:ring-indigo-500 disabled:opacity-50">
+                        {supportedMimeTypes.map(type => (<option key={type} value={type}>{type}</option>))}
+                    </select>
+                </div>
+                <div>
+                    <label htmlFor="bitrate-input" className="block text-xs font-medium text-gray-300 mb-1">Bitrate (bits/sec)</label>
+                    <input type="number" id="bitrate-input" step="8000" value={recordingBitrate} onChange={(e) => setRecordingBitrate(Number(e.target.value))} disabled={isRecording || isProcessingAudio || recordingMimeType.includes('wav')} className="w-full bg-gray-700 border border-gray-600 rounded-lg p-2 text-xs focus:ring-2 focus:ring-indigo-500 disabled:opacity-50" title={recordingMimeType.includes('wav') ? 'Bitrate does not apply to uncompressed WAV format' : ''} />
+                </div>
+            </div>
+          </>
+        )
       }
 
       return (
         <div className="bg-gray-800/60 border border-gray-700 rounded-xl p-4">
-          <h3 className="text-lg font-bold text-indigo-300 mb-2">Audio Testbed</h3>
-          <p className="text-xs text-gray-400 mb-3">Test server-side tools like audio transcription. The AI must first create the Python script and the server tool that runs it.</p>
-          <div className="flex items-center gap-4">
-            <button
-              onClick={isRecording ? handleStopRecording : handleStartRecording}
-              disabled={!isServerConnected || isProcessingAudio}
-              className={\`w-32 text-center px-4 py-2 font-semibold rounded-lg transition-colors text-white \${
-                isRecording 
-                  ? 'bg-red-600 hover:bg-red-700' 
-                  : 'bg-green-600 hover:bg-green-700'
-              } disabled:bg-gray-600 disabled:cursor-not-allowed\`}
-            >
-              {isRecording ? 'Stop Recording' : 'Start Recording'}
-            </button>
-            <div className="flex-grow">
-              <p className="text-sm font-semibold">Status: <span className={statusColor}>{statusText}</span></p>
-            </div>
+          <div className="text-center mb-3">
+              <h3 className="text-lg font-bold text-indigo-300">Audio Testbed</h3>
+              <p className="text-xs text-gray-400">Record audio, see it visualized, and send it for transcription.</p>
           </div>
-          {audioResult && (
-            <div className="mt-4">
-              <h4 className="font-semibold text-gray-300">Server Response:</h4>
-              <pre className="mt-1 text-sm text-cyan-200 bg-black/30 p-3 rounded-md whitespace-pre-wrap">{audioResult}</pre>
-            </div>
-          )}
+          <div className="bg-gray-800 rounded-lg p-2 my-2 h-24 w-full">
+            <canvas ref={canvasRef} className="w-full h-full"></canvas>
+          </div>
+          {renderContent()}
         </div>
       );
     `
   },
   {
-    id: 'manual_robot_control',
-    name: 'Manual Robot Control',
-    description: "Provides UI buttons for direct manual control of the lead robot ('agent-1'), and for creating new skills from observed actions.",
-    category: 'UI Component',
-    version: 2,
-    parameters: [
-      { name: 'handleManualControl', type: 'string', description: 'Function to call for a manual action.', required: true },
-      { name: 'isSwarmRunning', type: 'boolean', description: 'Whether the agent swarm is currently active.', required: true },
-    ],
-    implementationCode: `
+      id: 'manual_robot_control',
+      name: 'Manual Robot Control',
+      description: "Provides UI buttons for direct manual control of the lead robot ('agent-1'), and for creating new skills from observed actions.",
+      category: 'UI Component',
+      version: 3,
+      parameters: [
+        { name: 'handleManualControl', type: 'object', description: 'Function to call for a manual action.', required: true },
+        { name: 'isSwarmRunning', type: 'boolean', description: 'Whether the agent swarm is currently active.', required: true },
+      ],
+      implementationCode: `
       const ControlButton = ({ action, label, children, args = {} }) => (
         <button
           onClick={() => handleManualControl(action, args)}
@@ -110,11 +233,11 @@ export const agentViewTools: LLMTool[] = [
       name: 'Agent Swarm Display',
       description: 'Visualizes the status and activity of each agent in the swarm.',
       category: 'UI Component',
-      version: 2,
+      version: 3,
       parameters: [
         { name: 'agentSwarm', type: 'array', description: 'The array of agent workers.', required: true },
         { name: 'isSwarmRunning', type: 'boolean', description: 'Whether the swarm is running.', required: true },
-        { name: 'handleStopSwarm', type: 'string', description: 'Function to stop the swarm task.', required: true },
+        { name: 'handleStopSwarm', type: 'object', description: 'Function to stop the swarm task.', required: true },
         { name: 'currentUserTask', type: 'string', description: 'The current high-level task for the swarm.', required: true },
       ],
       implementationCode: `

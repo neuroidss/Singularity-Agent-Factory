@@ -9,6 +9,98 @@ import { loadStateFromStorage, saveStateToStorage } from './versioning';
 
 const SERVER_URL = 'http://localhost:3001';
 
+const GEMMA_PYTHON_SCRIPT = `
+import sys
+import torch
+from transformers import AutoProcessor, AutoModelForCausalLM
+import librosa # Add librosa for reliable audio loading
+
+def main(audio_path):
+    # Model for multimodal inputs
+    model_id = "google/gemma-3n-E2B-it"
+    
+    try:
+        # 1. Determine device (GPU if available, otherwise CPU)
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+        print(f"Using device: {device}", file=sys.stderr)
+
+        # 2. Initialize processor and model
+        processor = AutoProcessor.from_pretrained(model_id)
+        model = AutoModelForCausalLM.from_pretrained(
+            model_id, 
+            torch_dtype=torch.bfloat16  # Load model in bfloat16
+        ).to(device) # <-- CHANGE: Move model to the selected device
+
+        # 3. Prepare the prompt.
+        #    For reliability, first load the audio with librosa
+        #    to guarantee the correct sample rate and mono channel.
+        sampling_rate = processor.feature_extractor.sampling_rate
+        audio_array, _ = librosa.load(audio_path, sr=sampling_rate, mono=True)
+
+        messages = [
+            {
+                "role": "user",
+                "content": [
+                    # Pass the NumPy array instead of the file path
+                    {"type": "audio", "audio": audio_array}, 
+                    {"type": "text", "text": "Transcribe the following speech segment in English."}
+                ]
+            }
+        ]
+        
+        # 4. Apply the chat template, which will process the audio and text
+        inputs = processor.apply_chat_template(
+            messages,
+            add_generation_prompt=True,
+            tokenize=True,
+            return_dict=True,
+            return_tensors="pt"
+        )
+
+        # 5. <-- KEY CHANGE: Convert data types and move tensors to the device
+        #    This solves the "Input type (torch.FloatTensor) and weight type (CPUBFloat16Type) should be the same" error
+        #    We check each tensor and if it's float32, convert to bfloat16
+        inputs_on_device = {}
+        for k, v in inputs.items():
+            if torch.is_tensor(v) and v.dtype == torch.float32:
+                inputs_on_device[k] = v.to(device, dtype=torch.bfloat16)
+            elif torch.is_tensor(v):
+                inputs_on_device[k] = v.to(device)
+            else:
+                inputs_on_device[k] = v
+
+        # 6. Generate the transcription
+        generated_ids = model.generate(**inputs_on_device, max_new_tokens=512)
+        
+        # 7. Decode the result
+        generated_text = processor.batch_decode(generated_ids, skip_special_tokens=True)[0]
+        
+        # Clean up the output to remove the prompt part
+        model_prompt_token = "<start_of_turn>model\\n"
+        parts = generated_text.split(model_prompt_token)
+        transcription = parts[-1].strip() if len(parts) > 1 else generated_text.strip()
+            
+        print(transcription)
+
+    except Exception as e:
+        print(f"Error processing audio: {e}", file=sys.stderr)
+        sys.exit(1)
+
+if __name__ == "__main__":
+    if len(sys.argv) < 2:
+        print("Usage: python process_audio_gemma.py <audio_file_path>", file=sys.stderr)
+        sys.exit(1)
+    
+    # Ensure the librosa library is installed
+    try:
+        import librosa
+    except ImportError:
+        print("Please install librosa: pip install librosa", file=sys.stderr)
+        sys.exit(1)
+
+    main(sys.argv[1])
+`;
+
 const generateMachineReadableId = (name: string, existingTools: LLMTool[]): string => {
   let baseId = name
     .trim()
@@ -28,20 +120,18 @@ const generateMachineReadableId = (name: string, existingTools: LLMTool[]): stri
   return finalId;
 };
 
-const initializeState = () => {
-    const loadedState = loadStateFromStorage();
-    if (loadedState) return loadedState;
-    const now = new Date().toISOString();
-    return {
-        tools: PREDEFINED_TOOLS.map(tool => ({ ...tool, createdAt: tool.createdAt || now, updatedAt: tool.updatedAt || now }))
-    };
-};
-
 const App: React.FC = () => {
     // Client-side state
     const [userInput, setUserInput] = useState<string>('');
     const [isLoading, setIsLoading] = useState<boolean>(false);
-    const [tools, setTools] = useState<LLMTool[]>(() => initializeState().tools);
+    const [tools, setTools] = useState<LLMTool[]>(() => {
+        const loadedState = loadStateFromStorage();
+        if (loadedState) {
+            return loadedState.tools;
+        }
+        const now = new Date().toISOString();
+        return PREDEFINED_TOOLS.map(tool => ({ ...tool, createdAt: tool.createdAt || now, updatedAt: tool.updatedAt || now }));
+    });
     const [serverTools, setServerTools] = useState<LLMTool[]>([]);
     const [apiCallCount, setApiCallCount] = useState<number>(0);
     const [eventLog, setEventLog] = useState<string[]>(['[INFO] System Initialized. Target: Achieve Singularity.']);
@@ -74,15 +164,24 @@ const App: React.FC = () => {
     const [isRecording, setIsRecording] = useState(false);
     const [isProcessingAudio, setIsProcessingAudio] = useState(false);
     const [audioResult, setAudioResult] = useState<string | null>(null);
+    const [recordedAudioUrl, setRecordedAudioUrl] = useState<string | null>(null);
+    const [recordedAudioBlob, setRecordedAudioBlob] = useState<Blob | null>(null);
     const mediaRecorderRef = useRef<MediaRecorder | null>(null);
     const audioChunksRef = useRef<Blob[]>([]);
+    const [recordingMimeType, setRecordingMimeType] = useState<string>('');
+    const [recordingBitrate, setRecordingBitrate] = useState<number>(128000);
+    const [supportedMimeTypes, setSupportedMimeTypes] = useState<string[]>([]);
+    const [recordingTime, setRecordingTime] = useState(0);
+    const recordingIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+    const [analyserNode, setAnalyserNode] = useState<AnalyserNode | null>(null);
+    const audioContextRef = useRef<AudioContext | null>(null);
+    const mediaStreamSourceRef = useRef<MediaStreamAudioSourceNode | null>(null);
 
     // Model & API Config State
     const [availableModels, setAvailableModels] = useState<AIModel[]>(AI_MODELS);
     const [selectedModel, setSelectedModel] = useState<AIModel>(AI_MODELS[0]);
     const [apiConfig, setApiConfig] = useState<APIConfig>(() => {
         let initialConfig: APIConfig = { 
-            googleAIAPIKey: '',
             openAIAPIKey: '',
             openAIBaseUrl: 'https://api.openai.com/v1',
             ollamaHost: 'http://localhost:11434',
@@ -91,13 +190,6 @@ const App: React.FC = () => {
             const stored = localStorage.getItem('apiConfig');
             if (stored) initialConfig = { ...initialConfig, ...JSON.parse(stored) };
         } catch {}
-        if (!initialConfig.googleAIAPIKey) {
-            try {
-                if (typeof process !== 'undefined' && process.env && process.env.API_KEY) {
-                    initialConfig.googleAIAPIKey = process.env.API_KEY;
-                }
-            } catch (e) {}
-        }
         return initialConfig;
     });
     
@@ -108,29 +200,53 @@ const App: React.FC = () => {
     useEffect(() => { saveStateToStorage({ tools }); }, [tools]);
     useEffect(() => { localStorage.setItem('apiConfig', JSON.stringify(apiConfig)); }, [apiConfig]);
     useEffect(() => { isSwarmRunningRef.current = isSwarmRunning; }, [isSwarmRunning]);
+    
+    useEffect(() => {
+        const potentialMimeTypes = [
+            'audio/wav',
+            'audio/webm;codecs=opus',
+            'audio/ogg;codecs=opus',
+            'audio/webm',
+            'audio/mp4',
+            'audio/aac',
+        ];
+        const supported = potentialMimeTypes.filter(type => {
+            try {
+                return MediaRecorder.isTypeSupported(type);
+            } catch(e) { return false; }
+        });
+        setSupportedMimeTypes(supported);
+        if (supported.length > 0) {
+            const preferred = supported.find(t => t.includes('wav')) || supported[0];
+            setRecordingMimeType(preferred);
+        }
+    }, []);
 
     const logEvent = useCallback((message: string) => {
       const timestamp = new Date().toLocaleTimeString();
       setEventLog(prev => [...prev.slice(-199), `[${timestamp}] ${message}`]);
     }, []);
-
-    useEffect(() => {
-        const fetchServerTools = async () => {
-          try {
+    
+    const fetchServerTools = useCallback(async () => {
+        try {
             const response = await fetch(`${SERVER_URL}/api/tools`);
             if (!response.ok) throw new Error('Failed to fetch server tools');
             const data: LLMTool[] = await response.json();
             setServerTools(data);
             setIsServerConnected(true);
             logEvent(`[INFO] ✅ Backend server connected. Found ${data.length} server-side tools.`);
-          } catch (e) {
+        } catch (e) {
             setIsServerConnected(false);
+            setServerTools([]); // Clear stale tools
             logEvent(`[WARN] ⚠️ Backend server not found. Running in client-only mode.`);
             console.warn(`Could not connect to backend at ${SERVER_URL}. Server tools unavailable.`, e);
-          }
-        };
-        fetchServerTools();
+        }
     }, [logEvent]);
+
+
+    useEffect(() => {
+        fetchServerTools();
+    }, [fetchServerTools]);
 
     const runToolImplementation = useCallback(async (code: string, params: any, runtime: any): Promise<any> => {
         const AsyncFunction = Object.getPrototypeOf(async function(){}).constructor;
@@ -243,7 +359,7 @@ const App: React.FC = () => {
                     return newStates;
                 });
             }),
-            pickupResource: () => new Promise((resolve, reject) => {
+            pickupResource: () => new Promise<any>((resolve, reject) => {
                 setRobotStates(prevStates => {
                     const robotIndex = prevStates.findIndex(r => r.id === agentId);
                     if (robotIndex === -1) {
@@ -267,7 +383,7 @@ const App: React.FC = () => {
                     return prevStates;
                 });
             }),
-            deliverResource: () => new Promise((resolve, reject) => {
+            deliverResource: () => new Promise<any>((resolve, reject) => {
                  setRobotStates(prevStates => {
                     const robotIndex = prevStates.findIndex(r => r.id === agentId);
                     if (robotIndex === -1) {
@@ -293,7 +409,7 @@ const App: React.FC = () => {
             })
         },
         getObservationHistory: () => observationHistory,
-        clearObservationHistory: () => setObservationHistory([]),
+        clearObservationHistory: () => setObservationHistory(() => []),
     }), [allTools, runToolImplementation, robotStates, environmentState, observationHistory, logEvent, isServerConnected]);
 
     const executeAction = useCallback(async (toolCall: AIToolCall, agentId: string): Promise<EnrichedAIResponse> => {
@@ -352,28 +468,71 @@ const App: React.FC = () => {
     // --- Audio Handling ---
     const handleStartRecording = async () => {
         setAudioResult(null);
+        setRecordedAudioUrl(null);
+        setRecordedAudioBlob(null);
+        if (recordedAudioUrl) {
+            URL.revokeObjectURL(recordedAudioUrl);
+        }
+
         if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
             logEvent("[ERROR] Audio recording is not supported by this browser.");
             return;
         }
+
+        if (!recordingMimeType) {
+            logEvent('[ERROR] No suitable audio format selected or available.');
+            return;
+        }
+        logEvent(`[INFO] Attempting to record with format: ${recordingMimeType} @ ${recordingBitrate / 1000}kbps`);
+
         try {
             const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-            mediaRecorderRef.current = new MediaRecorder(stream, { mimeType: 'audio/webm' });
+            
+            // --- Set up AudioContext for visualizer ---
+            const audioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
+            audioContextRef.current = audioContext;
+            const source = audioContext.createMediaStreamSource(stream);
+            mediaStreamSourceRef.current = source;
+            const analyser = audioContext.createAnalyser();
+            source.connect(analyser);
+            setAnalyserNode(analyser);
+            
+            // --- Set up MediaRecorder ---
+            const recorderOptions: { mimeType: string; audioBitsPerSecond?: number } = {
+                mimeType: recordingMimeType,
+            };
+            if (!recordingMimeType.includes('wav')) {
+                recorderOptions.audioBitsPerSecond = recordingBitrate;
+            }
+            mediaRecorderRef.current = new MediaRecorder(stream, recorderOptions);
             audioChunksRef.current = [];
             
             mediaRecorderRef.current.ondataavailable = event => {
-                audioChunksRef.current.push(event.data);
+                if (event.data.size > 0) audioChunksRef.current.push(event.data);
             };
 
             mediaRecorderRef.current.onstop = () => {
-                const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
-                handleAudioUpload(audioBlob);
+                const audioBlob = new Blob(audioChunksRef.current, { type: recordingMimeType });
+                setRecordedAudioBlob(audioBlob);
+                setRecordedAudioUrl(URL.createObjectURL(audioBlob));
                 stream.getTracks().forEach(track => track.stop());
+
+                // --- Clean up AudioContext ---
+                if (mediaStreamSourceRef.current) mediaStreamSourceRef.current.disconnect();
+                if (audioContextRef.current && audioContextRef.current.state !== 'closed') audioContextRef.current.close();
+                setAnalyserNode(null);
             };
             
             mediaRecorderRef.current.start();
             setIsRecording(true);
             logEvent("[INFO] 🎤 Started recording audio...");
+            
+            // --- Start Timer ---
+            setRecordingTime(0);
+            recordingIntervalRef.current = setInterval(() => {
+                setRecordingTime(prevTime => prevTime + 1);
+            }, 1000);
+
         } catch (err) {
             logEvent(`[ERROR] Could not start recording: ${err instanceof Error ? err.message : String(err)}`);
         }
@@ -381,24 +540,44 @@ const App: React.FC = () => {
 
     const handleStopRecording = () => {
         if (mediaRecorderRef.current && mediaRecorderRef.current.state === "recording") {
-            mediaRecorderRef.current.stop();
+            mediaRecorderRef.current.stop(); // This triggers the 'onstop' handler
             setIsRecording(false);
-            setIsProcessingAudio(true);
-            logEvent("[INFO] 🛑 Stopped recording. Processing audio...");
+            logEvent("[INFO] 🛑 Stopped recording. Ready for playback or upload.");
+
+            if (recordingIntervalRef.current) {
+                clearInterval(recordingIntervalRef.current);
+                recordingIntervalRef.current = null;
+            }
         }
     };
     
-    const handleAudioUpload = async (audioBlob: Blob) => {
+    const handleAudioUpload = async () => {
+        if (!recordedAudioBlob) {
+            logEvent("[ERROR] No recorded audio found to upload.");
+            return;
+        }
+        
+        setIsProcessingAudio(true);
+        logEvent("[INFO] 🚀 Sending audio to server for processing...");
+        
         const gemmaTool = serverTools.find(t => t.name === "Gemma Audio Processor");
         if (!gemmaTool) {
-             logEvent("[ERROR] 'Gemma Audio Processor' tool not found on server. Please ask the AI to create it first.");
+             logEvent("[ERROR] 'Gemma Audio Processor' tool not found on server. Please create it first using the button in the Audio Testbed.");
              setAudioResult("Error: 'Gemma Audio Processor' tool not found on server.");
              setIsProcessingAudio(false);
              return;
         }
 
+        const getExtension = (mimeType: string) => {
+            if (mimeType.includes('wav')) return 'wav';
+            if (mimeType.includes('ogg')) return 'ogg';
+            if (mimeType.includes('mp4')) return 'mp4';
+            return 'webm'; // Default
+        };
+
         const formData = new FormData();
-        formData.append('audioFile', audioBlob, 'recording.webm');
+        const extension = getExtension(recordingMimeType);
+        formData.append('audioFile', recordedAudioBlob, `recording.${extension}`);
         formData.append('toolName', gemmaTool.name);
 
         try {
@@ -423,6 +602,45 @@ const App: React.FC = () => {
         }
     };
 
+    const handleCreateGemmaTool = useCallback(async () => {
+        logEvent("[INFO] Starting automatic creation of 'Gemma Audio Processor' tool...");
+        try {
+            // Step 1: Write the Python script to the server
+            logEvent("[INFO] Step 1/2: Writing Python script to server...");
+            const writeResult = await executeActionRef.current({
+                name: 'Server File Writer',
+                arguments: {
+                    filePath: 'process_audio_gemma.py',
+                    content: GEMMA_PYTHON_SCRIPT,
+                }
+            }, 'system-creator');
+             if(writeResult.executionError) throw new Error(`Failed to write script: ${writeResult.executionError}`);
+             logEvent("[SUCCESS] Python script written to server.");
+
+            // Step 2: Create the server tool that executes the script
+            logEvent("[INFO] Step 2/2: Creating server tool to run the script...");
+            const createResult = await executeActionRef.current({
+                name: 'Tool Creator',
+                arguments: {
+                    name: 'Gemma Audio Processor',
+                    description: 'Processes an audio file using the google/gemma-3n-E2B-it model to generate a transcription. Takes an audio file path as input.',
+                    category: 'Server',
+                    executionEnvironment: 'Server',
+                    parameters: [{ name: 'audioFilePath', type: 'string', description: 'The path to the audio file on the server.', required: true }],
+                    implementationCode: `venv/bin/python scripts/process_audio_gemma.py \${audioFilePath}`,
+                    purpose: 'To enable audio transcription functionality for the Audio Testbed.'
+                }
+            }, 'system-creator');
+            if(createResult.executionError) throw new Error(`Failed to create tool: ${createResult.executionError}`);
+            logEvent("[SUCCESS] ✅ 'Gemma Audio Processor' tool created successfully! You can now use the Audio Testbed.");
+            await fetchServerTools(); // Refresh the server tool list
+        } catch (e) {
+            const errorMessage = e instanceof Error ? e.message : String(e);
+            logEvent(`[ERROR] ❌ Failed to create Gemma tool: ${errorMessage}`);
+        }
+    }, [logEvent, fetchServerTools]);
+
+
     const handleManualControl = useCallback(async (toolName: string, args: any = {}) => {
         logEvent(`[PILOT] Manual command: ${toolName}`);
         const leadAgentId = 'agent-1';
@@ -433,7 +651,7 @@ const App: React.FC = () => {
                 logEvent(`[ERROR] Manual control tool '${toolName}' not found.`);
                 return;
             }
-            const result = await executeAction({ name: toolName, arguments: args }, leadAgentId);
+            const result = await executeActionRef.current({ name: toolName, arguments: args }, leadAgentId);
              if(result.executionError) {
                 throw new Error(result.executionError);
             }
@@ -442,7 +660,7 @@ const App: React.FC = () => {
         } catch(e) {
             logEvent(`[ERROR] ${e instanceof Error ? e.message : String(e)}`);
         }
-    }, [allTools, executeAction, logEvent]);
+    }, [allTools, logEvent]);
 
     const processRequest = useCallback(async (prompt: string, systemInstruction: string, agentId: string): Promise<EnrichedAIResponse | null> => {
         setIsLoading(true);
@@ -456,7 +674,7 @@ const App: React.FC = () => {
                 return null;
             }
             logEvent(`💡 Agent ${agentId} decided to call: ${aiResponse.toolCall.name} with args: ${JSON.stringify(aiResponse.toolCall.arguments)}`);
-            const executionResult = await executeAction(aiResponse.toolCall, agentId);
+            const executionResult = await executeActionRef.current(aiResponse.toolCall, agentId);
             return executionResult;
 
         } catch (err) {
@@ -465,7 +683,7 @@ const App: React.FC = () => {
         } finally {
             setIsLoading(false);
         }
-    }, [allTools, apiConfig, logEvent, executeAction, selectedModel]);
+    }, [allTools, apiConfig, logEvent, selectedModel]);
 
     const handleStopSwarm = useCallback(() => {
         setIsSwarmRunning(false);
@@ -549,7 +767,7 @@ const App: React.FC = () => {
             hasResource: false,
         }));
         setRobotStates(initialRobots);
-    }, []);
+    }, [logEvent]);
 
     useEffect(() => {
         if (isSwarmRunning && agentSwarm.length > 0 && agentSwarm.every(a => a.status !== 'working')) {
@@ -565,8 +783,9 @@ const App: React.FC = () => {
     const handleResetTools = useCallback(() => {
         if (window.confirm('This will delete ALL client-side custom-made tools and restore the original set. Server tools will NOT be affected. Are you sure?')) {
             localStorage.removeItem('singularity-agent-factory-state');
-            const initialState = initializeState();
-            setTools(initialState.tools);
+            const now = new Date().toISOString();
+            const defaultTools = PREDEFINED_TOOLS.map(tool => ({ ...tool, createdAt: tool.createdAt || now, updatedAt: tool.updatedAt || now }));
+            setTools(defaultTools);
             setEventLog(['[SUCCESS] Client-side system reset complete.']);
             setApiCallCount(0);
         }
@@ -574,7 +793,25 @@ const App: React.FC = () => {
 
     const configProps = { apiConfig, setApiConfig, availableModels, selectedModel, setSelectedModel };
     const debugLogProps = { logs: eventLog, onReset: handleResetTools, apiCallCount, apiCallLimit: -1 };
-    const audioProps = { isRecording, isProcessingAudio, audioResult, handleStartRecording, handleStopRecording, isServerConnected };
+    const audioProps = { 
+        isRecording, 
+        isProcessingAudio, 
+        audioResult, 
+        recordedAudioUrl,
+        handleStartRecording, 
+        handleStopRecording, 
+        handleAudioUpload,
+        isServerConnected, 
+        allTools, 
+        handleCreateGemmaTool,
+        recordingMimeType,
+        setRecordingMimeType,
+        recordingBitrate,
+        setRecordingBitrate,
+        supportedMimeTypes,
+        recordingTime,
+        analyserNode,
+    };
     
     // Dynamically get tools to avoid stale closures in props
     const getTool = (name: string): LLMTool => {

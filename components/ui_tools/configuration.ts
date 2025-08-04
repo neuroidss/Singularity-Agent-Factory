@@ -7,13 +7,13 @@ export const configurationTools: LLMTool[] = [
     name: 'Configuration Panel',
     description: 'A UI panel for selecting the AI model and configuring API keys and service endpoints.',
     category: 'UI Component',
-    version: 2,
+    version: 3,
     parameters: [
       { name: 'apiConfig', type: 'object', description: 'The current API configuration.', required: true },
-      { name: 'setApiConfig', type: 'string', description: 'Function to update the API config.', required: true },
+      { name: 'setApiConfig', type: 'object', description: 'Function to update the API config.', required: true },
       { name: 'availableModels', type: 'array', description: 'List of available AI models.', required: true },
       { name: 'selectedModel', type: 'object', description: 'The currently selected AI model.', required: true },
-      { name: 'setSelectedModel', type: 'string', description: 'Function to update the selected model.', required: true },
+      { name: 'setSelectedModel', type: 'object', description: 'Function to update the selected model.', required: true },
     ],
     implementationCode: `
       const handleModelChange = (e) => {
@@ -54,7 +54,7 @@ export const configurationTools: LLMTool[] = [
           case 'OpenAI_API':
             return <p className="text-xs text-gray-400 mt-1">Works with any OpenAI-compatible API (e.g., a local Ollama server).</p>;
           default:
-            return <p className="text-xs text-gray-400 mt-1">Uses Google's Generative AI services via API key.</p>;
+            return <p className="text-xs text-gray-400 mt-1">Google AI API key is read from the 'process.env.API_KEY' environment variable.</p>;
         }
       }
 
@@ -82,21 +82,6 @@ export const configurationTools: LLMTool[] = [
             </select>
             {renderProviderHelpText()}
           </div>
-
-          {provider === 'GoogleAI' && (
-            <div>
-              <label htmlFor="googleAIAPIKey" className="block text-sm font-medium text-gray-300 mb-1">Google AI API Key</label>
-              <input
-                type="password"
-                id="googleAIAPIKey"
-                name="googleAIAPIKey"
-                value={apiConfig.googleAIAPIKey}
-                onChange={handleConfigChange}
-                placeholder="Enter your Google AI API Key"
-                className="w-full bg-gray-700 border border-gray-600 rounded-lg p-2 focus:ring-2 focus:ring-indigo-500"
-              />
-            </div>
-          )}
 
           {provider === 'OpenAI_API' && (
             <div className="space-y-3">

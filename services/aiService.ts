@@ -41,7 +41,7 @@ export const generateResponse = async (
 ): Promise<AIResponse> => {
     switch (model.provider) {
         case ModelProvider.GoogleAI:
-            return geminiService.generateWithNativeTools(userInput, systemInstruction, model.id, apiConfig, relevantTools);
+            return geminiService.generateWithNativeTools(userInput, systemInstruction, model.id, relevantTools);
         
         case ModelProvider.OpenAI_API: {
             const toolsForPrompt = relevantTools.map(t => ({ name: t.name, description: t.description, parameters: t.parameters }));

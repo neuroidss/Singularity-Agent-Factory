@@ -3,3 +3,7 @@ torch
 transformers
 accelerate
 av
+pillow
+torchvision
+timm
+librosa

@@ -1,20 +1,12 @@
 
 import { GoogleGenAI, Type, FunctionDeclaration, GenerateContentResponse } from "@google/genai";
-import type { AIResponse, LLMTool, APIConfig, ToolParameter } from "../types";
+import type { AIResponse, LLMTool, ToolParameter } from "../types";
 
-const getAIClient = (apiConfig: APIConfig): GoogleGenAI => {
-    const { googleAIAPIKey } = apiConfig;
-    if (!googleAIAPIKey) {
-        try {
-            if (typeof process !== 'undefined' && process.env && process.env.API_KEY) {
-                return new GoogleGenAI({ apiKey: process.env.API_KEY });
-            }
-        } catch (e) {
-            console.warn("Could not access process.env to check for API_KEY.");
-        }
-        throw new Error("Google AI API Key not found. Please set it in the app's API Configuration.");
+const getAIClient = (): GoogleGenAI => {
+    if (typeof process === 'undefined' || !process.env || !process.env.API_KEY) {
+        throw new Error("Google AI API Key not found. It must be set in the process.env.API_KEY environment variable.");
     }
-    return new GoogleGenAI({ apiKey: googleAIAPIKey });
+    return new GoogleGenAI({ apiKey: process.env.API_KEY });
 };
 
 const sanitizeForFunctionName = (name: string): string => {
@@ -93,10 +85,9 @@ export const generateWithNativeTools = async (
     userInput: string,
     systemInstruction: string,
     modelId: string,
-    apiConfig: APIConfig,
     relevantTools: LLMTool[],
 ): Promise<AIResponse> => {
-    const ai = getAIClient(apiConfig);
+    const ai = getAIClient();
     const { functionDeclarations, toolNameMap } = buildGeminiTools(relevantTools);
     let rawResponseForDebug = "";
 

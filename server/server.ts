@@ -1,6 +1,6 @@
 
 // server/server.ts
-import express from 'express';
+import express, { Request, Response } from 'express';
 import cors from 'cors';
 import fs from 'fs/promises';
 import path from 'path';
@@ -70,13 +70,13 @@ const generateMachineReadableId = (name: string, existingTools: LLMTool[]): stri
 // --- API Endpoints ---
 
 // Get all server-side tools
-app.get('/api/tools', async (req: express.Request, res: express.Response) => {
+app.get('/api/tools', async (req: Request, res: Response) => {
     const tools = await readTools();
     res.json(tools);
 });
 
 // Create a new server-side tool
-app.post('/api/tools/create', async (req: express.Request, res: express.Response) => {
+app.post('/api/tools/create', async (req: Request, res: Response) => {
     try {
         const payload: NewToolPayload = req.body;
         if (!payload.name || !payload.description || !payload.category || !payload.implementationCode) {
@@ -106,7 +106,7 @@ app.post('/api/tools/create', async (req: express.Request, res: express.Response
 });
 
 // Execute a server-side tool
-app.post('/api/execute', async (req: express.Request, res: express.Response) => {
+app.post('/api/execute', async (req: Request, res: Response) => {
     const { name, arguments: args }: AIToolCall = req.body;
     if (!name) return res.status(400).json({ error: 'Tool name is required.' });
 
@@ -117,10 +117,17 @@ app.post('/api/execute', async (req: express.Request, res: express.Response) => 
     let command = toolToExecute.implementationCode;
     if (args) {
         for (const key in args) {
-            const value = String(args[key]).replace(/[^a-zA-Z0-9_.\-\/ ]/g, '');
+            // A slightly more permissive sanitation for file paths
+            const value = String(args[key]).replace(/[^a-zA-Z0-9_.\-\/\\ ]/g, '');
             command = command.replace(new RegExp(`\\$\\{${key}\\}`, 'g'), value);
         }
     }
+
+    // Use the python from the virtual environment for reliability
+    if (command.startsWith('python ')) {
+        command = path.join('venv', 'bin', 'python') + command.substring('python'.length);
+    }
+
     exec(command, { timeout: 60000 }, (error, stdout, stderr) => {
         if (error) {
             console.error(`Exec error for tool '${name}':`, error);
@@ -131,7 +138,7 @@ app.post('/api/execute', async (req: express.Request, res: express.Response) => 
 });
 
 // Create/write a file on the server
-app.post('/api/files/write', async (req: express.Request, res: express.Response) => {
+app.post('/api/files/write', async (req: Request, res: Response) => {
     try {
         const { filePath, content } = req.body;
         if (!filePath || typeof content !== 'string') {
@@ -158,7 +165,7 @@ app.post('/api/files/write', async (req: express.Request, res: express.Response)
 });
 
 // Process an uploaded audio file
-app.post('/api/audio/process', upload.single('audioFile'), async (req: express.Request, res: express.Response) => {
+app.post('/api/audio/process', upload.single('audioFile'), async (req: Request, res: Response) => {
     const { toolName } = req.body;
     
     if (!(req as any).file) return res.status(400).json({ error: 'No audio file uploaded.' });
