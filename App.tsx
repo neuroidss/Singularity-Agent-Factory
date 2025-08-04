@@ -12,78 +12,99 @@ const SERVER_URL = 'http://localhost:3001';
 const GEMMA_PYTHON_SCRIPT = `
 import sys
 import torch
-from transformers import AutoProcessor, AutoModelForCausalLM
-import librosa # Add librosa for reliable audio loading
+import numpy as np
+import subprocess
+from unsloth import FastModel
+from transformers import TextStreamer
+
+def load_audio_with_ffmpeg(audio_path, sampling_rate):
+    """Load audio using FFmpeg directly to avoid library issues"""
+    try:
+        # Run FFmpeg to decode audio to raw PCM
+        cmd = [
+            'ffmpeg',
+            '-i', audio_path,
+            '-f', 'f32le',      # 32-bit float little-endian
+            '-ac', '1',          # mono
+            '-ar', str(sampling_rate),  # target sample rate
+            '-loglevel', 'quiet', # suppress logs
+            '-'
+        ]
+        
+        # Execute command and capture output
+        process = subprocess.run(
+            cmd, 
+            check=True, 
+            stdout=subprocess.PIPE, 
+            stderr=subprocess.PIPE
+        )
+        
+        # Convert bytes to numpy array
+        audio_array = np.frombuffer(process.stdout, dtype=np.float32)
+        return audio_array
+        
+    except subprocess.CalledProcessError as e:
+        raise RuntimeError(f"FFmpeg failed: {e.stderr.decode('utf-8')}")
+    except Exception as e:
+        raise RuntimeError(f"Audio loading failed: {str(e)}")
 
 def main(audio_path):
-    # Model for multimodal inputs
-    model_id = "google/gemma-3n-E2B-it"
+    model_id = "unsloth/gemma-3n-E2B-it-unsloth-bnb-4bit"
     
     try:
-        # 1. Determine device (GPU if available, otherwise CPU)
-        device = "cuda" if torch.cuda.is_available() else "cpu"
-        print(f"Using device: {device}", file=sys.stderr)
+        # Load model
+        model, tokenizer = FastModel.from_pretrained(
+            model_name=model_id,
+            max_seq_length=2048,
+            dtype=None,
+            load_in_4bit=True,
+        )
+        print(f"Model '{model_id}' loaded successfully.", file=sys.stderr)
+        device = model.device
 
-        # 2. Initialize processor and model
-        processor = AutoProcessor.from_pretrained(model_id)
-        model = AutoModelForCausalLM.from_pretrained(
-            model_id, 
-            torch_dtype=torch.bfloat16  # Load model in bfloat16
-        ).to(device) # <-- CHANGE: Move model to the selected device
+        # Get required sampling rate
+        sampling_rate = tokenizer.feature_extractor.sampling_rate
+        
+        # Load audio using FFmpeg
+        audio_array = load_audio_with_ffmpeg(audio_path, sampling_rate)
+        print(f"Audio loaded: {len(audio_array)/sampling_rate:.2f}s duration", file=sys.stderr)
 
-        # 3. Prepare the prompt.
-        #    For reliability, first load the audio with librosa
-        #    to guarantee the correct sample rate and mono channel.
-        sampling_rate = processor.feature_extractor.sampling_rate
-        audio_array, _ = librosa.load(audio_path, sr=sampling_rate, mono=True)
-
+        # Prepare prompt
         messages = [
             {
                 "role": "user",
                 "content": [
-                    # Pass the NumPy array instead of the file path
                     {"type": "audio", "audio": audio_array}, 
                     {"type": "text", "text": "Transcribe the following speech segment in English."}
                 ]
             }
         ]
         
-        # 4. Apply the chat template, which will process the audio and text
-        inputs = processor.apply_chat_template(
+        # Tokenize and move to device
+        inputs = tokenizer.apply_chat_template(
             messages,
             add_generation_prompt=True,
             tokenize=True,
             return_dict=True,
             return_tensors="pt"
-        )
+        ).to(device)
 
-        # 5. <-- KEY CHANGE: Convert data types and move tensors to the device
-        #    This solves the "Input type (torch.FloatTensor) and weight type (CPUBFloat16Type) should be the same" error
-        #    We check each tensor and if it's float32, convert to bfloat16
-        inputs_on_device = {}
-        for k, v in inputs.items():
-            if torch.is_tensor(v) and v.dtype == torch.float32:
-                inputs_on_device[k] = v.to(device, dtype=torch.bfloat16)
-            elif torch.is_tensor(v):
-                inputs_on_device[k] = v.to(device)
-            else:
-                inputs_on_device[k] = v
-
-        # 6. Generate the transcription
-        generated_ids = model.generate(**inputs_on_device, max_new_tokens=512)
+        # Generate transcription
+        print("Generating transcription...", file=sys.stderr)
+        generated_ids = model.generate(**inputs, max_new_tokens=512)
         
-        # 7. Decode the result
-        generated_text = processor.batch_decode(generated_ids, skip_special_tokens=True)[0]
-        
-        # Clean up the output to remove the prompt part
+        # Decode output
+        generated_text = tokenizer.batch_decode(generated_ids, skip_special_tokens=True)[0]
         model_prompt_token = "<start_of_turn>model\\n"
-        parts = generated_text.split(model_prompt_token)
-        transcription = parts[-1].strip() if len(parts) > 1 else generated_text.strip()
+        transcription = generated_text.split(model_prompt_token)[-1].strip()
             
         print(transcription)
 
+    except RuntimeError as e:
+        print(f"Runtime error: {e}", file=sys.stderr)
+        sys.exit(1)
     except Exception as e:
-        print(f"Error processing audio: {e}", file=sys.stderr)
+        print(f"Unexpected error: {e}", file=sys.stderr)
         sys.exit(1)
 
 if __name__ == "__main__":
@@ -91,11 +112,17 @@ if __name__ == "__main__":
         print("Usage: python process_audio_gemma.py <audio_file_path>", file=sys.stderr)
         sys.exit(1)
     
-    # Ensure the librosa library is installed
     try:
-        import librosa
-    except ImportError:
-        print("Please install librosa: pip install librosa", file=sys.stderr)
+        # Verify critical dependencies
+        import unsloth
+        import numpy
+    except ImportError as e:
+        print(f"Missing dependency: {e.name}", file=sys.stderr)
+        print("Please install: pip install unsloth numpy", file=sys.stderr)
+        print("Also ensure FFmpeg is properly installed:", file=sys.stderr)
+        print("  Linux: sudo apt-get install ffmpeg", file=sys.stderr)
+        print("  macOS: brew install ffmpeg", file=sys.stderr)
+        print("  Windows: download from ffmpeg.org and add to PATH", file=sys.stderr)
         sys.exit(1)
 
     main(sys.argv[1])
@@ -140,7 +167,6 @@ const App: React.FC = () => {
     // Swarm State
     const [agentSwarm, setAgentSwarm] = useState<AgentWorker[]>([]);
     const [isSwarmRunning, setIsSwarmRunning] = useState(false);
-    const isSwarmRunningRef = useRef(isSwarmRunning);
     const swarmIterationCounter = useRef(0);
     const swarmAgentIdCounter = useRef(0);
     const swarmHistoryRef = useRef<EnrichedAIResponse[]>([]);
@@ -199,7 +225,6 @@ const App: React.FC = () => {
 
     useEffect(() => { saveStateToStorage({ tools }); }, [tools]);
     useEffect(() => { localStorage.setItem('apiConfig', JSON.stringify(apiConfig)); }, [apiConfig]);
-    useEffect(() => { isSwarmRunningRef.current = isSwarmRunning; }, [isSwarmRunning]);
     
     useEffect(() => {
         const potentialMimeTypes = [
@@ -249,9 +274,9 @@ const App: React.FC = () => {
     }, [fetchServerTools]);
 
     const runToolImplementation = useCallback(async (code: string, params: any, runtime: any): Promise<any> => {
-        const AsyncFunction = Object.getPrototypeOf(async function(){}).constructor;
-        const executor = new AsyncFunction('args', 'runtime', 'Babel', code);
-        return await executor(params, runtime, (window as any).Babel);
+        const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
+        const executor = new AsyncFunction('args', 'runtime', code);
+        return await executor(params, runtime);
     }, []);
 
     const getRuntimeApi = useCallback((agentId: string) => ({
@@ -270,10 +295,12 @@ const App: React.FC = () => {
                 const completeTool: LLMTool = { ...newToolPayload, id: newId, version: 1, createdAt: now, updatedAt: now };
                 setTools(prevTools => [...prevTools, completeTool]);
                 return completeTool;
-            }
+            },
+            list: (): LLMTool[] => allTools,
         },
         server: {
             isConnected: () => isServerConnected,
+            getUrl: () => SERVER_URL,
             createTool: async (newToolPayload: NewToolPayload): Promise<any> => {
                 if (!isServerConnected) throw new Error("Cannot create server tool: Backend server is not connected.");
                 try {
@@ -409,7 +436,7 @@ const App: React.FC = () => {
             })
         },
         getObservationHistory: () => observationHistory,
-        clearObservationHistory: () => setObservationHistory(() => []),
+        clearObservationHistory: () => setObservationHistory([]),
     }), [allTools, runToolImplementation, robotStates, environmentState, observationHistory, logEvent, isServerConnected]);
 
     const executeAction = useCallback(async (toolCall: AIToolCall, agentId: string): Promise<EnrichedAIResponse> => {
@@ -486,7 +513,13 @@ const App: React.FC = () => {
         logEvent(`[INFO] Attempting to record with format: ${recordingMimeType} @ ${recordingBitrate / 1000}kbps`);
 
         try {
-            const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+            const stream = await navigator.mediaDevices.getUserMedia({
+                audio: { 
+                    echoCancellation: false, 
+                    noiseSuppression: false, 
+                    autoGainControl: false 
+                }
+            });
             
             // --- Set up AudioContext for visualizer ---
             const audioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
@@ -623,7 +656,7 @@ const App: React.FC = () => {
                 name: 'Tool Creator',
                 arguments: {
                     name: 'Gemma Audio Processor',
-                    description: 'Processes an audio file using the google/gemma-3n-E2B-it model to generate a transcription. Takes an audio file path as input.',
+                    description: 'Processes an audio file using a multimodal Gemma model to generate a transcription. Takes an audio file path as input.',
                     category: 'Server',
                     executionEnvironment: 'Server',
                     parameters: [{ name: 'audioFilePath', type: 'string', description: 'The path to the audio file on the server.', required: true }],
@@ -691,7 +724,7 @@ const App: React.FC = () => {
     }, [logEvent]);
 
     const runSwarmCycle = useCallback(async () => {
-        if (!isSwarmRunningRef.current) {
+        if (!isSwarmRunning) {
             setIsLoading(false);
             setIsSwarmRunning(false);
             logEvent("[SUCCESS] Swarm task concluded.");
@@ -720,7 +753,7 @@ const App: React.FC = () => {
             
             const result = await processRequest(promptForAgent, SWARM_AGENT_SYSTEM_PROMPT, agent.id);
 
-            if (!isSwarmRunningRef.current) throw new Error("Swarm stopped by user.");
+            if (!isSwarmRunning) throw new Error("Swarm stopped by user.");
 
             if (result) {
                 swarmHistoryRef.current.push(result);
@@ -745,7 +778,7 @@ const App: React.FC = () => {
             });
         }
         setTimeout(runSwarmCycle, 1000);
-    }, [agentSwarm, currentUserTask, processRequest, logEvent]);
+    }, [agentSwarm, currentUserTask, processRequest, logEvent, isSwarmRunning]);
 
     const startSwarmTask = useCallback(async (initialTask: string) => {
         setIsLoading(true);

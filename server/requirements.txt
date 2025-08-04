@@ -7,3 +7,6 @@ pillow
 torchvision
 timm
 librosa
+bitsandbytes
+unsloth[colab-new]
+resampy

@@ -4,6 +4,7 @@ import type { LLMTool, AIModel } from './types';
 import { ModelProvider } from './types';
 import { PREDEFINED_UI_TOOLS } from './components/ui_tools/index';
 import { roboticsTools } from './components/robotics_tools';
+import { mediaTools } from './components/media_tools';
 
 export const AI_MODELS: AIModel[] = [
     { id: 'gemini-2.5-flash', name: 'Gemini 2.5 Flash', provider: ModelProvider.GoogleAI },
@@ -121,7 +122,7 @@ const CORE_AUTOMATION_TOOLS: LLMTool[] = [
         throw new Error("'UI Component' tools must have an executionEnvironment of 'Client'.");
       }
       if (category === 'Server' && executionEnvironment !== 'Server') {
-        throw new Error("'Server' category tools must have an executionEnvironment of 'Server'.");
+        throw new Error("'Server' category tools must have the category 'Server'.");
       }
       if (executionEnvironment === 'Server' && category !== 'Server') {
         throw new Error("Tools with executionEnvironment 'Server' must have the category 'Server'.");
@@ -235,5 +236,6 @@ const CORE_AUTOMATION_TOOLS: LLMTool[] = [
 export const PREDEFINED_TOOLS: LLMTool[] = [
   ...CORE_AUTOMATION_TOOLS,
   ...PREDEFINED_UI_TOOLS,
-  ...roboticsTools,
+  ...roboticsTools.filter(t => t.category !== 'UI Component'),
+  ...mediaTools,
 ];
