@@ -39,6 +39,17 @@ export interface LLMTool {
 
 export type NewToolPayload = Omit<LLMTool, 'id' | 'version' | 'createdAt' | 'updatedAt'>;
 
+// Represents the arguments needed to create a new tool, used for bootstrapping.
+export interface ToolCreatorPayload {
+  name: string;
+  description: string;
+  category: ToolCategory;
+  executionEnvironment: 'Client' | 'Server';
+  parameters: ToolParameter[];
+  implementationCode: string;
+  purpose: string;
+}
+
 export interface AIToolCall {
     name: string;
     arguments: Record<string, any>;

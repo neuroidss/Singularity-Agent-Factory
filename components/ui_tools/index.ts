@@ -1,16 +1,3 @@
-
-import type { LLMTool } from '../../types';
-import { applicationLayoutTools } from './application_layout';
-import { displayTools } from './displays';
-import { roboticsTools } from '../robotics_tools';
-import { agentViewTools } from './agent_views';
-import { configurationTools } from './configuration';
-
-
-export const PREDEFINED_UI_TOOLS: LLMTool[] = [
-  ...applicationLayoutTools,
-  ...displayTools,
-  ...agentViewTools,
-  ...configurationTools,
-  ...roboticsTools.filter(t => t.category === 'UI Component'),
-];
+// This file is intentionally left blank.
+// Tool definitions have been moved to bootstrap_tools.ts and are loaded programmatically.
+export {};

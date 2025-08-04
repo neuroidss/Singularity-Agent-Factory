@@ -1,240 +1,14 @@
 
 import React, { useState, useCallback, useMemo, useEffect, useRef } from 'react';
 import * as aiService from './services/aiService';
-import { PREDEFINED_TOOLS, AI_MODELS, SWARM_AGENT_SYSTEM_PROMPT } from './constants';
-import type { LLMTool, EnrichedAIResponse, AIResponse, APIConfig, AIModel, NewToolPayload, AIToolCall, AgentWorker, AgentStatus, RobotState, EnvironmentObject } from './types';
+import { CORE_TOOLS, AI_MODELS, SWARM_AGENT_SYSTEM_PROMPT } from './constants';
+import { BOOTSTRAP_TOOL_PAYLOADS } from './bootstrap';
+import type { LLMTool, EnrichedAIResponse, AIResponse, APIConfig, AIModel, NewToolPayload, AIToolCall, AgentWorker, AgentStatus, RobotState, EnvironmentObject, ToolCreatorPayload } from './types';
 import { UIToolRunner } from './components/UIToolRunner';
 import { ModelProvider } from './types';
 import { loadStateFromStorage, saveStateToStorage } from './versioning';
 
 const SERVER_URL = 'http://localhost:3001';
-
-const GEMMA_SERVER_SCRIPT = `
-# server/scripts/gemma_server.py
-import os
-import sys
-import argparse
-import base64
-import io
-import asyncio
-import logging
-from contextlib import asynccontextmanager
-
-import torch
-import numpy as np
-import av
-from fastapi import FastAPI, HTTPException
-from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
-from pydantic import BaseModel, Field
-from typing import List, Dict, Any, Union, Literal
-from unsloth import FastModel
-
-# --- Basic Logging Setup ---
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
-
-# --- Pydantic Models for OpenAI Compatibility ---
-class ChatCompletionMessageTextPart(BaseModel):
-    type: Literal["text"]
-    text: str
-
-class ChatCompletionMessageAudioURL(BaseModel):
-    url: str # Expects data URI: "data:audio/wav;base64,{data}"
-
-class ChatCompletionMessageAudioPart(BaseModel):
-    type: Literal["audio_url"]
-    audio_url: ChatCompletionMessageAudioURL
-
-class ChatCompletionMessage(BaseModel):
-    role: str
-    content: Union[str, List[Union[ChatCompletionMessageTextPart, ChatCompletionMessageAudioPart]]]
-
-class ChatCompletionRequest(BaseModel):
-    model: str
-    messages: List[ChatCompletionMessage]
-    temperature: float = 0.1
-    max_tokens: int = 512
-
-class ChatCompletionChoice(BaseModel):
-    index: int = 0
-    message: Dict[str, str]
-    finish_reason: str = "stop"
-
-class ChatCompletionResponse(BaseModel):
-    id: str = "chatcmpl-local"
-    object: str = "chat.completion"
-    created: int = 0
-    model: str
-    choices: List[ChatCompletionChoice]
-
-# --- Global State ---
-model_state = {}
-
-def load_audio_from_base64(base64_str: str, target_sr: int):
-    """Decodes base64 audio using PyAV (ffmpeg) and resamples to the target sample rate."""
-    try:
-        audio_data = base64.b64decode(base64_str)
-        audio_stream = io.BytesIO(audio_data)
-
-        with av.open(audio_stream, mode='r') as container:
-            stream = container.streams.audio[0]
-            # Set up the resampler to convert to mono, 16kHz, and signed 16-bit integers
-            resampler = av.AudioResampler(
-                format='s16',
-                layout='mono',
-                rate=target_sr
-            )
-            
-            # Read all frames and resample
-            frames = []
-            for frame in container.decode(stream):
-                frames.extend(resampler.resample(frame))
-
-            if not frames:
-                raise ValueError("Could not decode any audio frames.")
-
-            # Concatenate all frames into a single numpy array
-            audio_samples = np.concatenate([f.to_ndarray() for f in frames], axis=1)[0]
-            
-            # Convert from s16 int to float32
-            audio_array = audio_samples.astype(np.float32) / 32768.0
-            
-            logging.info(f"Successfully decoded and resampled audio to {len(audio_array)} samples at {target_sr}Hz.")
-            return audio_array, target_sr
-
-    except Exception as e:
-        logging.error(f"Error processing audio with PyAV: {e}")
-        raise ValueError(f"Could not load audio from base64 string. Error: {e}")
-
-
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    # --- Startup: Load Model ---
-    logging.info("Starting up and loading model...")
-    model_id = "unsloth/gemma-3n-E2B-it-unsloth-bnb-4bit"
-    try:
-        model, tokenizer = FastModel.from_pretrained(
-            model_name=model_id,
-            max_seq_length=2048,
-            dtype=None,
-            load_in_4bit=True,
-        )
-        model_state['model'] = model
-        model_state['tokenizer'] = tokenizer
-        model_state['model_id'] = model_id
-        logging.info(f"Successfully loaded model '{model_id}' to device: {model.device}")
-    except Exception as e:
-        logging.error(f"FATAL: Could not load model. Error: {e}")
-        sys.exit(1)
-    yield
-    # --- Shutdown: Clean up ---
-    logging.info("Shutting down and clearing model state.")
-    model_state.clear()
-    torch.cuda.empty_cache()
-
-
-app = FastAPI(lifespan=lifespan)
-
-# --- Add CORS Middleware ---
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],  # Allows all origins
-    allow_credentials=True,
-    allow_methods=["*"],  # Allows all methods
-    allow_headers=["*"],  # Allows all headers
-)
-
-@app.post("/v1/chat/completions", response_model=ChatCompletionResponse)
-async def chat_completions(request: ChatCompletionRequest):
-    if 'model' not in model_state:
-        raise HTTPException(status_code=503, detail="Model is not loaded or ready.")
-
-    model = model_state['model']
-    tokenizer = model_state['tokenizer']
-    
-    # --- Process Multimodal Input ---
-    prompt_parts = []
-    text_prompts = []
-    
-    user_message = request.messages[-1] # Assume the last message is the user's prompt
-    if not isinstance(user_message.content, list):
-         # Simple text-only case
-        text_prompts.append(user_message.content)
-    else:
-        # Multimodal case
-        for part in user_message.content:
-            if part.type == 'text':
-                text_prompts.append(part.text)
-            elif part.type == 'audio_url':
-                try:
-                    # Extract base64 data from data URI
-                    base64_content = part.audio_url.url.split(',')[1]
-                    sampling_rate = tokenizer.feature_extractor.sampling_rate
-                    audio_array, _ = load_audio_from_base64(base64_content, sampling_rate)
-                    prompt_parts.append({"type": "audio", "audio": audio_array})
-                    logging.info(f"Processed audio part, duration: {len(audio_array)/sampling_rate:.2f}s")
-                except Exception as e:
-                    raise HTTPException(status_code=400, detail=f"Invalid audio data: {e}")
-
-    # Combine all text parts into one
-    full_text_prompt = " ".join(text_prompts)
-    if full_text_prompt:
-        prompt_parts.append({"type": "text", "text": full_text_prompt})
-
-    # --- Prepare Prompt for Model ---
-    messages = [{"role": "user", "content": prompt_parts}]
-    
-    try:
-        inputs = tokenizer.apply_chat_template(
-            messages,
-            add_generation_prompt=True,
-            tokenize=True,
-            return_dict=True,
-            return_tensors="pt"
-        ).to(model.device)
-
-        logging.info("Generating response from model...")
-        with torch.no_grad():
-            generated_ids = model.generate(
-                **inputs, 
-                max_new_tokens=request.max_tokens,
-                temperature=request.temperature if request.temperature > 0 else None,
-                do_sample=request.temperature > 0,
-            )
-        
-        decoded_text = tokenizer.batch_decode(generated_ids, skip_special_tokens=True)[0]
-        
-        # Extract only the assistant's response
-        model_prompt_token = "<start_of_turn>model\\n"
-        response_text = decoded_text.split(model_prompt_token)[-1].strip()
-        
-        logging.info(f"Generated response: {response_text}")
-
-        response = ChatCompletionResponse(
-            model=model_state['model_id'],
-            choices=[
-                ChatCompletionChoice(
-                    message={"role": "assistant", "content": response_text}
-                )
-            ]
-        )
-        return response
-
-    except Exception as e:
-        logging.error(f"Error during model inference: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Internal server error during inference: {e}")
-
-
-if __name__ == "__main__":
-    import uvicorn
-    parser = argparse.ArgumentParser(description="Gemma Multimodal OpenAI-Compatible Server")
-    parser.add_argument("--host", type=str, default="0.0.0.0", help="Host to bind the server to")
-    parser.add_argument("--port", type=int, default=8008, help="Port to run the server on")
-    args = parser.parse_args()
-    
-    logging.info(f"Starting Uvicorn server on {args.host}:{args.port}")
-    uvicorn.run(app, host=args.host, port=args.port)
-`;
 
 const generateMachineReadableId = (name: string, existingTools: LLMTool[]): string => {
   let baseId = name
@@ -255,6 +29,39 @@ const generateMachineReadableId = (name: string, existingTools: LLMTool[]): stri
   return finalId;
 };
 
+// This function simulates the "Tool Creator" to build tools from payloads at startup.
+const bootstrapTool = (payload: ToolCreatorPayload, existingTools: LLMTool[]): LLMTool => {
+    const { executionEnvironment, ...toolData } = payload;
+    const newId = generateMachineReadableId(toolData.name, existingTools);
+    const now = new Date().toISOString();
+    
+    // All bootstrapped tools are considered version 1 client-side tools.
+    // The 'executionEnvironment' is part of the creation payload but not the final tool object itself.
+    return {
+        ...toolData,
+        id: newId,
+        version: 1,
+        createdAt: now,
+        updatedAt: now,
+    };
+};
+
+const initializeTools = (): LLMTool[] => {
+    console.log("Bootstrapping initial toolset...");
+    const allCreatedTools: LLMTool[] = [...CORE_TOOLS];
+    
+    BOOTSTRAP_TOOL_PAYLOADS.forEach(payload => {
+        // In this bootstrap phase, we assume all are client-side tools.
+        // Server tools are fetched separately from the server.
+        if (payload.executionEnvironment === 'Client') {
+             const newTool = bootstrapTool(payload, allCreatedTools);
+             allCreatedTools.push(newTool);
+        }
+    });
+    console.log(`Bootstrap complete. ${allCreatedTools.length} client tools loaded.`);
+    return allCreatedTools;
+};
+
 const App: React.FC = () => {
     // Client-side state
     const [userInput, setUserInput] = useState<string>('');
@@ -264,14 +71,13 @@ const App: React.FC = () => {
         if (loadedState) {
             return loadedState.tools;
         }
-        const now = new Date().toISOString();
-        return PREDEFINED_TOOLS.map(tool => ({ ...tool, createdAt: tool.createdAt || now, updatedAt: tool.updatedAt || now }));
+        // If no saved state, bootstrap from constants
+        return initializeTools();
     });
     const [serverTools, setServerTools] = useState<LLMTool[]>([]);
     const [apiCallCount, setApiCallCount] = useState<number>(0);
     const [eventLog, setEventLog] = useState<string[]>(['[INFO] System Initialized. Target: Achieve Singularity.']);
     const [isServerConnected, setIsServerConnected] = useState<boolean>(false);
-    const [localAiStatus, setLocalAiStatus] = useState({ isRunning: false, logs: [] as string[] });
     
     // Swarm State
     const [agentSwarm, setAgentSwarm] = useState<AgentWorker[]>([]);
@@ -321,53 +127,36 @@ const App: React.FC = () => {
       const timestamp = new Date().toLocaleTimeString();
       setEventLog(prev => [...prev.slice(-199), `[${timestamp}] ${message}`]);
     }, []);
-
-    const checkLocalAiStatus = useCallback(async () => {
-        if (!isServerConnected) return;
-        try {
-            const response = await fetch(`${SERVER_URL}/api/local-ai/status`);
-            if (response.ok) {
-                const status = await response.json();
-                setLocalAiStatus(status);
-            } else {
-                 setLocalAiStatus({ isRunning: false, logs: ['Failed to get status'] });
-            }
-        } catch (e) {
-            setLocalAiStatus({ isRunning: false, logs: ['Node.js server is offline'] });
-        }
-    }, [isServerConnected]);
-
-    useEffect(() => {
-        const interval = setInterval(checkLocalAiStatus, 5000); // Poll every 5 seconds
-        return () => clearInterval(interval);
-    }, [checkLocalAiStatus]);
     
     const fetchServerTools = useCallback(async () => {
         try {
             const response = await fetch(`${SERVER_URL}/api/tools`);
             if (!response.ok) throw new Error('Failed to fetch server tools');
             const data: LLMTool[] = await response.json();
-            setServerTools(data);
+            // Basic check to see if tools have changed to avoid needless re-renders
+            if (JSON.stringify(data) !== JSON.stringify(serverTools)) {
+              setServerTools(data);
+            }
             if (!isServerConnected) {
               setIsServerConnected(true);
               logEvent(`[INFO] ✅ Backend server connected. Found ${data.length} server-side tools.`);
-              checkLocalAiStatus(); // Initial check on connect
             }
         } catch (e) {
             if (isServerConnected) {
               setIsServerConnected(false);
               setServerTools([]); // Clear stale tools
               logEvent(`[WARN] ⚠️ Backend server disconnected. Running in client-only mode.`);
-              setLocalAiStatus({ isRunning: false, logs: [] });
               console.warn(`Could not connect to backend at ${SERVER_URL}. Server tools unavailable.`, e);
             }
         }
-    }, [logEvent, isServerConnected, checkLocalAiStatus]);
+    }, [logEvent, isServerConnected, serverTools]);
 
     useEffect(() => {
-        fetchServerTools();
-        const interval = setInterval(fetchServerTools, 5000);
-        return () => clearInterval(interval);
+        fetchServerTools(); // Initial fetch
+        const serverToolInterval = setInterval(fetchServerTools, 5000);
+        return () => {
+          clearInterval(serverToolInterval)
+        };
     }, [fetchServerTools]);
 
     const runToolImplementation = useCallback(async (code: string, params: any, runtime: any): Promise<any> => {
@@ -408,7 +197,8 @@ const App: React.FC = () => {
                     });
                     const result = await response.json();
                     if (!response.ok) throw new Error(result.error || 'Server failed to create tool');
-                    setServerTools(prev => [...prev, result.tool]);
+                    // The server now adds the tool to its own cache. We just need to re-fetch.
+                    await fetchServerTools();
                     return { success: true, message: `Successfully created server-side tool: '${result.tool.name}'`};
                 } catch (e) {
                     const errorMessage = e instanceof Error ? e.message : String(e);
@@ -435,6 +225,7 @@ const App: React.FC = () => {
                 }
             },
         },
+        fetchServerTools: fetchServerTools, // Expose fetchServerTools to runtime
         robot: {
             getState: () => {
                 const robot = robotStates.find(r => r.id === agentId);
@@ -534,7 +325,7 @@ const App: React.FC = () => {
         },
         getObservationHistory: () => observationHistory,
         clearObservationHistory: () => setObservationHistory([]),
-    }), [allTools, runToolImplementation, robotStates, environmentState, observationHistory, logEvent, isServerConnected]);
+    }), [allTools, runToolImplementation, robotStates, environmentState, observationHistory, logEvent, isServerConnected, fetchServerTools]);
 
     const executeAction = useCallback(async (toolCall: AIToolCall, agentId: string): Promise<EnrichedAIResponse> => {
         if (!toolCall) return { toolCall: null };
@@ -588,27 +379,27 @@ const App: React.FC = () => {
     }, [allTools, getRuntimeApi, runToolImplementation, logEvent, isServerConnected]);
     
     executeActionRef.current = executeAction;
-
-    const handleInstallGemmaServerScript = useCallback(async () => {
-        logEvent("[INFO] Attempting to write Gemma server script to backend...");
+    
+    // --- Local AI Tool Handlers ---
+    // These functions allow UI components to trigger server-side tools through the main execution pipeline.
+    const runServerTool = useCallback(async (toolName: string, args: Record<string, any> = {}) => {
         try {
-            const result = await executeActionRef.current({
-                name: 'Server File Writer',
-                arguments: {
-                    filePath: 'gemma_server.py',
-                    content: GEMMA_SERVER_SCRIPT,
-                }
-            }, 'system-installer');
-            
-            if(result.executionError) {
+            const result = await executeActionRef.current({ name: toolName, arguments: args }, 'system-task');
+            if (result.executionError) {
                 throw new Error(result.executionError);
             }
-            logEvent(`[SUCCESS] ✅ ${result.executionResult.message}`);
-        } catch (e) {
+            return result.executionResult;
+        } catch(e) {
             const errorMessage = e instanceof Error ? e.message : String(e);
-            logEvent(`[ERROR] ❌ Failed to install Gemma server script: ${errorMessage}`);
+            logEvent(`[ERROR] Tool '${toolName}' failed: ${errorMessage}`);
+            throw e; // Re-throw to be caught by the caller
         }
-    }, []);
+    }, [logEvent]);
+
+    const handleStartLocalAI = useCallback(() => runServerTool('Start Local AI Server'), [runServerTool]);
+    const handleStopLocalAI = useCallback(() => runServerTool('Stop Local AI Server'), [runServerTool]);
+    const handleGetLocalAIStatus = useCallback(() => runServerTool('Get Local AI Server Status'), [runServerTool]);
+
 
     const handleManualControl = useCallback(async (toolName: string, args: any = {}) => {
         logEvent(`[PILOT] Manual command: ${toolName}`);
@@ -752,9 +543,7 @@ const App: React.FC = () => {
     const handleResetTools = useCallback(() => {
         if (window.confirm('This will delete ALL client-side custom-made tools and restore the original set. Server tools will NOT be affected. Are you sure?')) {
             localStorage.removeItem('singularity-agent-factory-state');
-            const now = new Date().toISOString();
-            const defaultTools = PREDEFINED_TOOLS.map(tool => ({ ...tool, createdAt: tool.createdAt || now, updatedAt: tool.updatedAt || now }));
-            setTools(defaultTools);
+            setTools(initializeTools());
             setEventLog(['[SUCCESS] Client-side system reset complete.']);
             setApiCallCount(0);
         }
@@ -762,12 +551,6 @@ const App: React.FC = () => {
 
     const configProps = { apiConfig, setApiConfig, availableModels, selectedModel, setSelectedModel };
     const debugLogProps = { logs: eventLog, onReset: handleResetTools, apiCallCount, apiCallLimit: -1 };
-    const localAiServerProps = {
-        isServerConnected,
-        localAiStatus,
-        handleInstallGemmaServerScript,
-        logEvent,
-    };
     
     // Dynamically get tools to avoid stale closures in props
     const getTool = (name: string): LLMTool => {
@@ -784,6 +567,15 @@ const App: React.FC = () => {
         };
     };
 
+    const localAiPanelTool = allTools.find(t => t.name === 'Local AI Server Panel');
+    const localAiServerProps = {
+        isServerConnected,
+        logEvent,
+        onStartServer: handleStartLocalAI,
+        onStopServer: handleStopLocalAI,
+        onGetStatus: handleGetLocalAIStatus,
+    };
+
     return (
         <div className="min-h-screen bg-gray-900 text-white flex flex-col p-4 sm:p-6 lg:p-8">
             <UIToolRunner tool={getTool('Application Header')} props={{}} />
@@ -791,7 +583,7 @@ const App: React.FC = () => {
                 {/* Left Column */}
                 <div className="lg:col-span-2 space-y-6">
                     <UIToolRunner tool={getTool('Robot Simulation Environment')} props={{ robotStates, environmentState }} />
-                    <UIToolRunner tool={getTool('Local AI Server Panel')} props={localAiServerProps} />
+                    {localAiPanelTool && <UIToolRunner tool={localAiPanelTool} props={localAiServerProps} />}
                     <UIToolRunner tool={getTool('Manual Robot Control')} props={{ handleManualControl, isSwarmRunning }} />
                      <UIToolRunner tool={getTool('Configuration Panel')} props={configProps} />
                     <UIToolRunner tool={getTool('User Input Form')} props={{ userInput, setUserInput, handleSubmit, isSwarmRunning }} />

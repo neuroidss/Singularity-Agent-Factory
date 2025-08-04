@@ -2,8 +2,7 @@
 import React from 'react';
 import type { LLMTool, AIModel } from './types';
 import { ModelProvider } from './types';
-import { PREDEFINED_UI_TOOLS } from './components/ui_tools/index';
-import { roboticsTools } from './components/robotics_tools';
+import { BOOTSTRAP_TOOL_PAYLOADS } from './bootstrap';
 
 export const AI_MODELS: AIModel[] = [
     { id: 'gemini-2.5-flash', name: 'Gemini 2.5 Flash', provider: ModelProvider.GoogleAI },
@@ -64,7 +63,7 @@ export const SWARM_AGENT_SYSTEM_PROMPT = `You are a specialist agent within a co
 *   If the goal has been fully achieved, you MUST call the "Task Complete" tool.`;
 
 
-const CORE_AUTOMATION_TOOLS: LLMTool[] = [
+export const CORE_TOOLS: LLMTool[] = [
   {
     id: 'task_complete',
     name: 'Task Complete',
@@ -72,6 +71,7 @@ const CORE_AUTOMATION_TOOLS: LLMTool[] = [
     category: 'Automation',
     version: 1,
     cost: 0,
+    purpose: "To provide a definitive end-point for multi-step tasks, allowing the swarm to know when its goal has been reached.",
     parameters: [
       { name: 'reason', type: 'string', description: 'A brief summary of why the task is considered complete.', required: true },
     ],
@@ -85,6 +85,7 @@ const CORE_AUTOMATION_TOOLS: LLMTool[] = [
     description: "Creates or overwrites a file on the server's filesystem, typically for scripts (e.g., Python) or config files. The path is relative to the server's 'scripts' directory.",
     category: 'Functional',
     version: 1,
+    purpose: "To provide the foundational capability for an agent to create its own server-side logic and assets.",
     parameters: [
       { name: 'filePath', type: 'string', description: "The name of the file to create within the server's 'scripts' directory (e.g., 'my_script.py').", required: true },
       { name: 'content', type: 'string', description: 'The full content to write to the file.', required: true },
@@ -102,6 +103,7 @@ const CORE_AUTOMATION_TOOLS: LLMTool[] = [
     description: "Creates a new tool and adds it to the agent's capabilities. This is the primary mechanism for the agent to acquire new skills. Can create tools on the client or server.",
     category: 'Automation',
     version: 4,
+    purpose: "The 'MCP creation MCP'. This is the core of self-improvement, allowing the agent to build new capabilities for itself and the swarm.",
     parameters: [
       { name: 'name', type: 'string', description: 'The unique, human-readable name for the new tool.', required: true },
       { name: 'description', type: 'string', description: 'A clear, concise description of what the tool does.', required: true },
@@ -152,6 +154,7 @@ const CORE_AUTOMATION_TOOLS: LLMTool[] = [
     description: 'Creates a new, high-level "Automation" tool by combining a sequence of other tool calls into a single, reusable workflow. These workflows run on the client.',
     category: 'Automation',
     version: 1,
+    purpose: "To allow the agent to learn and automate repetitive tasks, creating higher-level skills from basic components.",
     parameters: [
       { name: 'name', type: 'string', description: 'The unique, human-readable name for the new workflow tool.', required: true },
       { name: 'description', type: 'string', description: 'A clear, concise description of what the entire workflow accomplishes.', required: true },
@@ -193,78 +196,34 @@ const CORE_AUTOMATION_TOOLS: LLMTool[] = [
       return { success: true, message: \`Successfully created new workflow tool: '\${name}'.\` };
     `
   },
-    {
-    id: 'create_skill_from_observation',
-    name: 'Create Skill From Observation',
-    description: "Analyzes the recent history of manual actions and creates a new, reusable tool (a workflow) from that sequence. This is how the agent learns patterns from a pilot.",
-    category: 'Automation',
-    version: 1,
-    parameters: [
-      { name: 'skillName', type: 'string', description: 'A descriptive name for the new skill to be created (e.g., "PatrolSquarePattern").', required: true },
-      { name: 'skillDescription', type: 'string', description: 'A clear description of what the new skill or movement pattern does.', required: true },
-    ],
-    implementationCode: `
-      const { skillName, skillDescription } = args;
-      const observedActions = runtime.getObservationHistory();
-
-      if (observedActions.length < 2) {
-        throw new Error("Not enough actions observed to create a skill. Manually perform at least 2 actions first.");
-      }
-
-      const steps = observedActions.map(action => ({
-        toolName: action.name,
-        arguments: action.arguments,
-      }));
-
-      // Use runtime to call another tool, the Workflow Creator
-      await runtime.tools.run('Workflow Creator', {
-        name: skillName,
-        description: skillDescription,
-        purpose: 'To automate a sequence of actions observed from manual user control.',
-        steps: steps,
-      });
-
-      // Clear the observation history after creating the skill
-      runtime.clearObservationHistory();
-
-      return { success: true, message: \`Successfully created new skill '\${skillName}' based on \${observedActions.length} observed actions.\` };
-    `
-  },
   {
-    id: 'start_gemma_server',
-    name: 'Start Gemma Server',
-    description: 'Starts the local Python AI server. This keeps the Gemma model loaded in memory for fast, continuous multimodal processing.',
-    category: 'Functional',
-    version: 1,
-    parameters: [],
-    implementationCode: `
-      if (!runtime.server.isConnected()) throw new Error("Backend is not connected.");
-      const response = await fetch(\`\${runtime.server.getUrl()}/api/local-ai/start\`, { method: 'POST' });
-      const result = await response.json();
-      if (!response.ok) throw new Error(result.error || 'Failed to start server.');
-      return result;
-    `
-  },
-  {
-    id: 'stop_gemma_server',
-    name: 'Stop Gemma Server',
-    description: 'Stops the local Python AI server, freeing up GPU memory.',
-    category: 'Functional',
-    version: 1,
-    parameters: [],
-    implementationCode: `
-      if (!runtime.server.isConnected()) throw new Error("Backend is not connected.");
-      const response = await fetch(\`\${runtime.server.getUrl()}/api/local-ai/stop\`, { method: 'POST' });
-      const result = await response.json();
-      if (!response.ok) throw new Error(result.error || 'Failed to stop server.');
-      return result;
-    `
-  }
+      id: 'system_reload_tools',
+      name: 'System Reload Tools',
+      description: 'Forces the backend server to re-read its tools.json file, loading any new or modified tools into memory without a restart.',
+      category: 'Functional',
+      version: 1,
+      purpose: "To give the agent direct control over its server-side capabilities, allowing for dynamic updates without manual intervention.",
+      parameters: [],
+      implementationCode: `
+        if (!runtime.server.isConnected()) {
+          throw new Error("Cannot reload server tools: The backend server is not connected.");
+        }
+        const response = await fetch(\`\${runtime.server.getUrl()}/api/execute\`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ name: 'System_Reload_Tools', arguments: {} })
+        });
+        const result = await response.json();
+        if (!response.ok) {
+           throw new Error(result.error || 'Server failed to reload tools');
+        }
+        // Manually trigger a fetch of the updated tools to refresh the client UI
+        await runtime.fetchServerTools();
+        return result;
+      `
+    }
 ];
 
-
-export const PREDEFINED_TOOLS: LLMTool[] = [
-  ...CORE_AUTOMATION_TOOLS,
-  ...PREDEFINED_UI_TOOLS,
-  ...roboticsTools.filter(t => t.category !== 'UI Component'),
-];
+// All other tools are now defined as "bootstrap payloads" in bootstrap/index.ts
+// This fulfills the requirement of representing tools as if they were created by the meta-MCP.
+export { BOOTSTRAP_TOOL_PAYLOADS };

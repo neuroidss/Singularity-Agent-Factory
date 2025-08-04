@@ -16,25 +16,27 @@ const PORT = 3001;
 const TOOLS_DB_PATH = path.join(__dirname, 'tools.json');
 const SCRIPTS_DIR = path.join(__dirname, 'scripts');
 
-// --- In-memory state for managed processes ---
+// --- In-memory state ---
+let serverToolsCache: LLMTool[] = [];
 let gemmaProcess: ChildProcess | null = null;
 let gemmaLogs: string[] = [];
 const MAX_LOGS = 100;
 
-// Ensure directories exist
-fs.mkdir(SCRIPTS_DIR, { recursive: true });
-
 // --- Middleware ---
 app.use(cors()); // Allow requests from the frontend
-app.use(express.json()); // Parse JSON bodies
+app.use('/', express.json()); // Parse JSON bodies
 
 // --- Utility Functions ---
-const readTools = async (): Promise<LLMTool[]> => {
+const readToolsAndLoadCache = async (): Promise<LLMTool[]> => {
     try {
         await fs.access(TOOLS_DB_PATH);
         const data = await fs.readFile(TOOLS_DB_PATH, 'utf-8');
-        return JSON.parse(data) as LLMTool[];
+        serverToolsCache = JSON.parse(data) as LLMTool[];
+        console.log(`[INFO] Loaded ${serverToolsCache.length} tools into server cache.`);
+        return serverToolsCache;
     } catch (error) {
+        serverToolsCache = [];
+        console.log('[INFO] tools.json not found or empty. Initializing with 0 server tools.');
         return [];
     }
 };
@@ -65,13 +67,12 @@ const addLog = (log: string) => {
 
 // --- API Endpoints ---
 
-// Get all server-side tools
-app.get('/api/tools', async (req, res) => {
-    const tools = await readTools();
-    res.json(tools);
+// Get all server-side tools from the cache
+app.get('/api/tools', (req, res) => {
+    res.json(serverToolsCache);
 });
 
-// Create a new server-side tool
+// Create a new server-side tool and add it to cache + file
 app.post('/api/tools/create', async (req, res) => {
     try {
         const payload: NewToolPayload = req.body;
@@ -81,35 +82,114 @@ app.post('/api/tools/create', async (req, res) => {
         if (payload.category !== 'Server') {
             return res.status(400).json({ error: "Tools created on the server must have the category 'Server'." });
         }
-        const tools = await readTools();
-        if (tools.some(t => t.name === payload.name)) {
+        const currentTools = [...serverToolsCache];
+        if (currentTools.some(t => t.name === payload.name)) {
             return res.status(409).json({ error: `A tool with the name '${payload.name}' already exists.` });
         }
         const newTool: LLMTool = {
             ...payload,
-            id: generateMachineReadableId(payload.name, tools),
+            id: generateMachineReadableId(payload.name, currentTools),
             version: 1,
             createdAt: new Date().toISOString(),
             updatedAt: new Date().toISOString(),
         };
-        tools.push(newTool);
-        await writeTools(tools);
-        res.status(201).json({ message: 'Server tool created successfully', tool: newTool });
+        currentTools.push(newTool);
+        await writeTools(currentTools);
+        serverToolsCache = currentTools; // Update the live cache
+        
+        console.log(`[INFO] New tool '${newTool.name}' created and loaded into memory.`);
+        res.status(201).json({ message: 'Server tool created and loaded successfully', tool: newTool });
     } catch (error) {
         console.error('Error creating tool:', error);
         res.status(500).json({ error: 'Internal Server Error' });
     }
 });
 
-// Execute a server-side tool
+// --- Local AI Server Logic ---
+const startLocalAiServer = async () => {
+    if (gemmaProcess) {
+        throw new Error('Local AI server is already running.');
+    }
+    const scriptPath = path.join(SCRIPTS_DIR, 'gemma_server.py');
+    try {
+        await fs.access(scriptPath);
+    } catch (error) {
+        const message = 'Cannot start server: gemma_server.py does not exist. It must be created by an agent first.';
+        addLog(`[ERROR] ${message}`);
+        console.error(`[STARTUP_FAIL] Attempted to start local AI, but script was not found at ${scriptPath}`);
+        throw new Error(message);
+    }
+    
+    const pythonExecutable = path.join(__dirname, '..', 'venv', 'bin', 'python');
+    addLog('Starting local AI server...');
+    gemmaProcess = spawn(pythonExecutable, [scriptPath]);
+    
+    gemmaProcess.stdout?.on('data', (data) => addLog(data.toString().trim()));
+    gemmaProcess.stderr?.on('data', (data) => addLog(data.toString().trim()));
+    gemmaProcess.on('close', (code) => {
+        addLog(`Server process exited with code ${code}.`);
+        gemmaProcess = null;
+    });
+    gemmaProcess.on('error', (err) => {
+        addLog(`[FATAL] Failed to start server process: ${err.message}`);
+        gemmaProcess = null;
+    });
+    return { message: 'Local AI server process started.' };
+};
+
+const stopLocalAiServer = () => {
+     if (!gemmaProcess || !gemmaProcess.pid) {
+        throw new Error('Local AI server is not running.');
+    }
+    addLog('Stopping local AI server...');
+    gemmaProcess.kill('SIGTERM');
+    gemmaProcess = null;
+    return { message: 'Local AI server stop signal sent.' };
+};
+
+const getLocalAiServerStatus = () => {
+    return {
+        isRunning: gemmaProcess !== null && gemmaProcess.pid !== undefined,
+        pid: gemmaProcess?.pid,
+        logs: gemmaLogs,
+    };
+};
+
+
+// Execute a server-side tool or a special command
 app.post('/api/execute', async (req, res) => {
     const { name, arguments: args }: AIToolCall = req.body;
     if (!name) return res.status(400).json({ error: 'Tool name is required.' });
 
-    const tools = await readTools();
-    const toolToExecute = tools.find(t => t.name === name);
-    if (!toolToExecute) return res.status(404).json({ error: `Server-side tool '${name}' not found.` });
+    // Handle special, built-in server commands
+    if (name === 'System_Reload_Tools') {
+        console.log('[COMMAND] Received System_Reload_Tools command. Re-reading tools.json...');
+        await readToolsAndLoadCache();
+        return res.json({ success: true, message: `Successfully reloaded ${serverToolsCache.length} tools from disk.` });
+    }
     
+    const toolToExecute = serverToolsCache.find(t => t.name === name);
+    if (!toolToExecute) return res.status(404).json({ error: `Server-side tool '${name}' not found in the live registry.` });
+    
+    // Handle built-in server functions identified by special implementation code
+    try {
+        switch (toolToExecute.implementationCode) {
+            case 'start_local_ai':
+                const startResult = await startLocalAiServer();
+                return res.json({ success: true, ...startResult });
+            case 'stop_local_ai':
+                const stopResult = stopLocalAiServer();
+                return res.json({ success: true, ...stopResult });
+            case 'status_local_ai':
+                const statusResult = getLocalAiServerStatus();
+                return res.json({ success: true, message: "Status retrieved", ...statusResult });
+        }
+    } catch(e) {
+        const errorMessage = e instanceof Error ? e.message : 'Unknown error during built-in command execution.';
+        return res.status(500).json({ error: errorMessage });
+    }
+    
+    // Handle user-defined shell commands
     let command = toolToExecute.implementationCode;
     if (args) {
         for (const key in args) {
@@ -160,66 +240,14 @@ app.post('/api/files/write', async (req, res) => {
     }
 });
 
-
-// --- Local AI Server Management ---
-
-app.post('/api/local-ai/start', (req, res) => {
-    if (gemmaProcess) {
-        return res.status(400).json({ error: 'Local AI server is already running.' });
-    }
-    
-    const scriptPath = path.join(SCRIPTS_DIR, 'gemma_server.py');
-    const pythonExecutable = path.join(__dirname, '..', 'venv', 'bin', 'python');
-    
-    addLog('Starting local AI server...');
-    gemmaProcess = spawn(pythonExecutable, [scriptPath]);
-    
-    gemmaProcess.stdout?.on('data', (data) => {
-        addLog(data.toString().trim());
-    });
-
-    gemmaProcess.stderr?.on('data', (data) => {
-        // Removed [ERROR] prefix as libraries like unsloth log progress to stderr
-        addLog(data.toString().trim());
-    });
-
-    gemmaProcess.on('close', (code) => {
-        addLog(`Server process exited with code ${code}.`);
-        gemmaProcess = null;
-    });
-    
-    gemmaProcess.on('error', (err) => {
-        addLog(`[FATAL] Failed to start server process: ${err.message}`);
-        gemmaProcess = null;
-    });
-
-    res.status(200).json({ message: 'Local AI server process started.' });
-});
-
-app.post('/api/local-ai/stop', (req, res) => {
-    if (!gemmaProcess || !gemmaProcess.pid) {
-        return res.status(400).json({ error: 'Local AI server is not running.' });
-    }
-    
-    addLog('Stopping local AI server...');
-    gemmaProcess.kill('SIGTERM'); // Send termination signal
-    gemmaProcess = null;
-    
-    res.status(200).json({ message: 'Local AI server stop signal sent.' });
-});
-
-app.get('/api/local-ai/status', (req, res) => {
-    res.status(200).json({
-        isRunning: gemmaProcess !== null && gemmaProcess.pid !== undefined,
-        pid: gemmaProcess?.pid,
-        logs: gemmaLogs,
-    });
-});
-
-
 // --- Server Start ---
-app.listen(PORT, () => {
+app.listen(PORT, async () => {
     console.log(`Singularity Agent Factory Backend Server listening on http://localhost:${PORT}`);
     console.log('This server allows the AI to execute local commands and write files.');
+    
+    // Ensure directories exist before any operations that might need them
+    await fs.mkdir(SCRIPTS_DIR, { recursive: true });
+    
+    await readToolsAndLoadCache(); // Initial load of tools into memory
     console.warn('SECURITY WARNING: This server can execute arbitrary code. Do not expose it to the internet.');
 });
