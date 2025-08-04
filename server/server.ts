@@ -1,11 +1,10 @@
 
 // server/server.ts
-import express, { Request, Response } from 'express';
+import express from 'express';
 import cors from 'cors';
 import fs from 'fs/promises';
 import path from 'path';
-import { exec } from 'child_process';
-import multer from 'multer';
+import { exec, spawn, ChildProcess } from 'child_process';
 import type { LLMTool, NewToolPayload, AIToolCall } from '../types';
 import { fileURLToPath } from 'url';
 
@@ -16,28 +15,18 @@ const app = express();
 const PORT = 3001;
 const TOOLS_DB_PATH = path.join(__dirname, 'tools.json');
 const SCRIPTS_DIR = path.join(__dirname, 'scripts');
-const UPLOADS_DIR = path.join(__dirname, 'uploads');
+
+// --- In-memory state for managed processes ---
+let gemmaProcess: ChildProcess | null = null;
+let gemmaLogs: string[] = [];
+const MAX_LOGS = 100;
 
 // Ensure directories exist
 fs.mkdir(SCRIPTS_DIR, { recursive: true });
-fs.mkdir(UPLOADS_DIR, { recursive: true });
 
 // --- Middleware ---
 app.use(cors()); // Allow requests from the frontend
 app.use(express.json()); // Parse JSON bodies
-
-// --- Multer Setup for File Uploads ---
-const storage = multer.diskStorage({
-  destination: (req, file, cb) => {
-    cb(null, UPLOADS_DIR);
-  },
-  filename: (req, file, cb) => {
-    // Create a unique filename to avoid collisions
-    cb(null, `${Date.now()}-${file.originalname}`);
-  },
-});
-const upload = multer({ storage });
-
 
 // --- Utility Functions ---
 const readTools = async (): Promise<LLMTool[]> => {
@@ -67,16 +56,23 @@ const generateMachineReadableId = (name: string, existingTools: LLMTool[]): stri
   return finalId;
 };
 
+const addLog = (log: string) => {
+    gemmaLogs.push(log);
+    if (gemmaLogs.length > MAX_LOGS) {
+        gemmaLogs.shift();
+    }
+};
+
 // --- API Endpoints ---
 
 // Get all server-side tools
-app.get('/api/tools', async (req: Request, res: Response) => {
+app.get('/api/tools', async (req, res) => {
     const tools = await readTools();
     res.json(tools);
 });
 
 // Create a new server-side tool
-app.post('/api/tools/create', async (req: Request, res: Response) => {
+app.post('/api/tools/create', async (req, res) => {
     try {
         const payload: NewToolPayload = req.body;
         if (!payload.name || !payload.description || !payload.category || !payload.implementationCode) {
@@ -106,7 +102,7 @@ app.post('/api/tools/create', async (req: Request, res: Response) => {
 });
 
 // Execute a server-side tool
-app.post('/api/execute', async (req: Request, res: Response) => {
+app.post('/api/execute', async (req, res) => {
     const { name, arguments: args }: AIToolCall = req.body;
     if (!name) return res.status(400).json({ error: 'Tool name is required.' });
 
@@ -138,7 +134,7 @@ app.post('/api/execute', async (req: Request, res: Response) => {
 });
 
 // Create/write a file on the server
-app.post('/api/files/write', async (req: Request, res: Response) => {
+app.post('/api/files/write', async (req, res) => {
     try {
         const { filePath, content } = req.body;
         if (!filePath || typeof content !== 'string') {
@@ -164,33 +160,59 @@ app.post('/api/files/write', async (req: Request, res: Response) => {
     }
 });
 
-// Process an uploaded audio file
-app.post('/api/audio/process', upload.single('audioFile'), async (req: Request, res: Response) => {
-    const { toolName } = req.body;
+
+// --- Local AI Server Management ---
+
+app.post('/api/local-ai/start', (req, res) => {
+    if (gemmaProcess) {
+        return res.status(400).json({ error: 'Local AI server is already running.' });
+    }
     
-    if (!(req as any).file) return res.status(400).json({ error: 'No audio file uploaded.' });
-    if (!toolName) return res.status(400).json({ error: 'Tool name for processing is required.' });
+    const scriptPath = path.join(SCRIPTS_DIR, 'gemma_server.py');
+    const pythonExecutable = path.join(__dirname, '..', 'venv', 'bin', 'python');
+    
+    addLog('Starting local AI server...');
+    gemmaProcess = spawn(pythonExecutable, [scriptPath]);
+    
+    gemmaProcess.stdout?.on('data', (data) => {
+        addLog(data.toString().trim());
+    });
 
-    const tools = await readTools();
-    const toolToExecute = tools.find(t => t.name === toolName);
-    if (!toolToExecute) return res.status(404).json({ error: `Server-side tool '${toolName}' not found.` });
+    gemmaProcess.stderr?.on('data', (data) => {
+        // Removed [ERROR] prefix as libraries like unsloth log progress to stderr
+        addLog(data.toString().trim());
+    });
 
-    const audioFilePath = (req as any).file.path;
-    let command = toolToExecute.implementationCode.replace(/\$\{audioFilePath\}/g, audioFilePath);
+    gemmaProcess.on('close', (code) => {
+        addLog(`Server process exited with code ${code}.`);
+        gemmaProcess = null;
+    });
+    
+    gemmaProcess.on('error', (err) => {
+        addLog(`[FATAL] Failed to start server process: ${err.message}`);
+        gemmaProcess = null;
+    });
 
-    exec(command, { timeout: 120000 }, async (error, stdout, stderr) => {
-        // Cleanup: delete the temporary file regardless of outcome
-        try {
-            await fs.unlink(audioFilePath);
-        } catch (unlinkError) {
-            console.error(`Failed to delete temp audio file: ${audioFilePath}`, unlinkError);
-        }
+    res.status(200).json({ message: 'Local AI server process started.' });
+});
 
-        if (error) {
-            console.error(`Exec error for tool '${toolName}':`, error);
-            return res.status(500).json({ error: `Tool execution failed: ${error.message}`, stdout, stderr });
-        }
-        res.json({ success: true, message: `Tool '${toolName}' executed successfully.`, stdout, stderr });
+app.post('/api/local-ai/stop', (req, res) => {
+    if (!gemmaProcess || !gemmaProcess.pid) {
+        return res.status(400).json({ error: 'Local AI server is not running.' });
+    }
+    
+    addLog('Stopping local AI server...');
+    gemmaProcess.kill('SIGTERM'); // Send termination signal
+    gemmaProcess = null;
+    
+    res.status(200).json({ message: 'Local AI server stop signal sent.' });
+});
+
+app.get('/api/local-ai/status', (req, res) => {
+    res.status(200).json({
+        isRunning: gemmaProcess !== null && gemmaProcess.pid !== undefined,
+        pid: gemmaProcess?.pid,
+        logs: gemmaLogs,
     });
 });
 

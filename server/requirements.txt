@@ -10,3 +10,8 @@ librosa
 bitsandbytes
 unsloth[colab-new]
 resampy
+fastapi
+uvicorn
+python-multipart
+soundfile
+pydantic<2

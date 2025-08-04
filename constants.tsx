@@ -4,10 +4,10 @@ import type { LLMTool, AIModel } from './types';
 import { ModelProvider } from './types';
 import { PREDEFINED_UI_TOOLS } from './components/ui_tools/index';
 import { roboticsTools } from './components/robotics_tools';
-import { mediaTools } from './components/media_tools';
 
 export const AI_MODELS: AIModel[] = [
     { id: 'gemini-2.5-flash', name: 'Gemini 2.5 Flash', provider: ModelProvider.GoogleAI },
+    { id: 'local/gemma-multimodal', name: 'Local Gemma Server (Multimodal)', provider: ModelProvider.OpenAI_API },
     { id: 'gemini-2.5-flash-lite', name: 'Gemini 2.5 Flash-Lite', provider: ModelProvider.GoogleAI },
     { id: 'gemini-2.0-flash', name: 'Gemini 2.0 Flash', provider: ModelProvider.GoogleAI },
     { id: 'gemini-2.0-flash-lite', name: 'Gemini 2.0 Flash-Lite', provider: ModelProvider.GoogleAI },
@@ -108,7 +108,7 @@ const CORE_AUTOMATION_TOOLS: LLMTool[] = [
       { name: 'category', type: 'string', description: "The tool's category: 'UI Component', 'Functional', 'Automation', or 'Server'.", required: true },
       { name: 'executionEnvironment', type: 'string', description: "Where the tool should run: 'Client' or 'Server'. 'UI Component' must be 'Client'. 'Server' tools can execute shell commands.", required: true },
       { name: 'parameters', type: 'array', description: 'An array of objects defining the parameters the tool accepts.', required: true },
-      { name: 'implementationCode', type: 'string', description: 'The JavaScript/JSX (for Client) or shell command/script (for Server) code that implements the tool.', required: true },
+      { name: 'implementationCode', type: 'string', description: 'The JavaScript/JSX (for Client) or shell command/script (for Server) code that implements the tool.', required:true },
       { name: 'purpose', type: 'string', description: 'A clear explanation of why this tool is being created and what problem it solves. This is crucial for the "Will to Meaning".', required: true },
     ],
     implementationCode: `
@@ -230,6 +230,36 @@ const CORE_AUTOMATION_TOOLS: LLMTool[] = [
       return { success: true, message: \`Successfully created new skill '\${skillName}' based on \${observedActions.length} observed actions.\` };
     `
   },
+  {
+    id: 'start_gemma_server',
+    name: 'Start Gemma Server',
+    description: 'Starts the local Python AI server. This keeps the Gemma model loaded in memory for fast, continuous multimodal processing.',
+    category: 'Functional',
+    version: 1,
+    parameters: [],
+    implementationCode: `
+      if (!runtime.server.isConnected()) throw new Error("Backend is not connected.");
+      const response = await fetch(\`\${runtime.server.getUrl()}/api/local-ai/start\`, { method: 'POST' });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error || 'Failed to start server.');
+      return result;
+    `
+  },
+  {
+    id: 'stop_gemma_server',
+    name: 'Stop Gemma Server',
+    description: 'Stops the local Python AI server, freeing up GPU memory.',
+    category: 'Functional',
+    version: 1,
+    parameters: [],
+    implementationCode: `
+      if (!runtime.server.isConnected()) throw new Error("Backend is not connected.");
+      const response = await fetch(\`\${runtime.server.getUrl()}/api/local-ai/stop\`, { method: 'POST' });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error || 'Failed to stop server.');
+      return result;
+    `
+  }
 ];
 
 
@@ -237,5 +267,4 @@ export const PREDEFINED_TOOLS: LLMTool[] = [
   ...CORE_AUTOMATION_TOOLS,
   ...PREDEFINED_UI_TOOLS,
   ...roboticsTools.filter(t => t.category !== 'UI Component'),
-  ...mediaTools,
 ];

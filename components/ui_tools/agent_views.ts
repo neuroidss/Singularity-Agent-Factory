@@ -3,186 +3,198 @@ import type { LLMTool } from '../../types';
 
 export const agentViewTools: LLMTool[] = [
     {
-    id: 'audio_testbed',
-    name: 'Audio Testbed',
-    description: 'A UI component for recording audio and sending it to the server for processing with an AI-created tool.',
+    id: 'local_ai_server_panel',
+    name: 'Local AI Server Panel',
+    description: 'A control panel for managing a local, persistent, multimodal AI server (Gemma). Allows starting, stopping, and testing the server.',
     category: 'UI Component',
-    version: 6,
+    version: 5,
     parameters: [
-      { name: 'isRecording', type: 'boolean', description: 'Whether audio is currently being recorded.', required: true },
-      { name: 'isProcessingAudio', type: 'boolean', description: 'Whether the server is currently processing audio.', required: true },
-      { name: 'audioResult', type: 'string', description: 'The transcription or result from the audio processing.', required: false },
-      { name: 'recordedAudioUrl', type: 'string', description: 'The local URL of the recorded audio for playback.', required: false },
-      { name: 'handleStartRecording', type: 'object', description: 'Function to call to start recording.', required: true },
-      { name: 'handleStopRecording', type: 'object', description: 'Function to call to stop recording.', required: true },
-      { name: 'handleAudioUpload', type: 'object', description: 'Function to call to upload audio to the server.', required: true },
-      { name: 'isServerConnected', type: 'boolean', description: 'Whether the backend server is connected.', required: true },
-      { name: 'allTools', type: 'array', description: 'A list of all available tools to check for existence.', required: true },
-      { name: 'handleCreateGemmaTool', type: 'object', description: 'Function to create the Gemma audio processor tool.', required: true },
-      { name: 'recordingMimeType', type: 'string', description: 'The currently selected audio MIME type for recording.', required: true },
-      { name: 'setRecordingMimeType', type: 'object', description: 'Function to update the selected MIME type.', required: true },
-      { name: 'recordingBitrate', type: 'number', description: 'The current recording bitrate.', required: true },
-      { name: 'setRecordingBitrate', type: 'object', description: 'Function to update the recording bitrate.', required: true },
-      { name: 'supportedMimeTypes', type: 'array', description: 'List of MIME types supported by the browser.', required: true },
-      { name: 'recordingTime', type: 'number', description: 'The current duration of the recording in seconds.', required: true },
-      { name: 'analyserNode', type: 'object', description: 'The Web Audio API AnalyserNode for visualization.', required: false },
+      { name: 'isServerConnected', type: 'boolean', description: 'Whether the main Node.js backend is connected.', required: true },
+      { name: 'localAiStatus', type: 'object', description: 'An object containing the status of the local AI server ({ isRunning, logs }).', required: true },
+      { name: 'handleInstallGemmaServerScript', type: 'object', description: 'Function to install the Python server script.', required: true },
+      { name: 'logEvent', type: 'object', description: 'Function to log events to the main debug log.', required: true },
     ],
     implementationCode: `
-      const [isCreatingTool, setIsCreatingTool] = React.useState(false);
-      const canvasRef = React.useRef(null);
-
-      const gemmaToolExists = allTools.some(t => t.name === "Gemma Audio Processor");
-      const canRecord = isServerConnected && gemmaToolExists && supportedMimeTypes.length > 0;
-      
-      let statusText = "Ready to record";
-      if (!isServerConnected) statusText = "Server is offline";
-      else if (!gemmaToolExists) statusText = "Audio processor tool not found";
-      else if (isRecording) statusText = "Recording in progress...";
-      else if (isProcessingAudio) statusText = "Processing on server...";
-      else if (audioResult) statusText = "Processing complete!";
-      else if (recordedAudioUrl) statusText = "Ready for playback or upload";
-
-      const timer = React.useMemo(() => {
-        const minutes = Math.floor(recordingTime / 60).toString().padStart(2, '0');
-        const seconds = (recordingTime % 60).toString().padStart(2, '0');
-        return \`\${minutes}:\${seconds}\`;
-      }, [recordingTime]);
+      const [isRecording, setIsRecording] = React.useState(false);
+      const [isProcessing, setIsProcessing] = React.useState(false);
+      const [recordedAudioBlob, setRecordedAudioBlob] = React.useState(null);
+      const [testResult, setTestResult] = React.useState('');
+      const [isInstalling, setIsInstalling] = React.useState(false);
+      const mediaRecorderRef = React.useRef(null);
+      const audioChunksRef = React.useRef([]);
+      const logsContainerRef = React.useRef(null);
 
       React.useEffect(() => {
-        const canvas = canvasRef.current;
-        if (!canvas) return;
-        const resizeObserver = new ResizeObserver(() => {
-            canvas.width = canvas.offsetWidth * window.devicePixelRatio;
-            canvas.height = canvas.offsetHeight * window.devicePixelRatio;
-        });
-        resizeObserver.observe(canvas);
-        return () => resizeObserver.disconnect();
-      }, []);
+        if (logsContainerRef.current) {
+            logsContainerRef.current.scrollTop = logsContainerRef.current.scrollHeight;
+        }
+      }, [localAiStatus.logs]);
 
-      React.useEffect(() => {
-        if (!analyserNode || !canvasRef.current) return;
-        
-        const canvas = canvasRef.current;
-        const canvasCtx = canvas.getContext('2d');
-        
-        analyserNode.fftSize = 256;
-        const bufferLength = analyserNode.frequencyBinCount;
-        const dataArray = new Uint8Array(bufferLength);
-        
-        let animationFrameId;
-
-        const draw = () => {
-            animationFrameId = requestAnimationFrame(draw);
-            analyserNode.getByteFrequencyData(dataArray);
-            
-            canvasCtx.fillStyle = 'rgba(30, 41, 59, 1)'; // bg-gray-800
-            canvasCtx.fillRect(0, 0, canvas.width, canvas.height);
-            
-            const barWidth = (canvas.width / bufferLength) * 1.5;
-            let x = 0;
-            
-            for(let i = 0; i < bufferLength; i++) {
-                const barHeight = (dataArray[i] / 255) * canvas.height;
-                const hue = i * 2.5;
-                canvasCtx.fillStyle = 'hsl(' + hue + ', 80%, 60%)';
-                canvasCtx.fillRect(x, canvas.height - barHeight, barWidth, barHeight);
-                x += barWidth + 2;
-            }
-        };
-        draw();
-        
-        return () => {
-            cancelAnimationFrame(animationFrameId);
-             if (canvasCtx) {
-                canvasCtx.fillStyle = 'rgba(30, 41, 59, 1)';
-                canvasCtx.fillRect(0, 0, canvas.width, canvas.height);
-            }
-        };
-      }, [analyserNode]);
-
-      const handleCreateClick = async () => {
-        setIsCreatingTool(true);
+      const handleServerAction = async (action) => {
+        if (!isServerConnected) {
+          logEvent('[ERROR] Node.js server is not connected.');
+          return;
+        }
+        logEvent(\`[INFO] Attempting to \${action} local AI server...\`);
         try {
-          await handleCreateGemmaTool();
-        } finally {
-          setIsCreatingTool(false);
+          const response = await fetch(\`http://localhost:3001/api/local-ai/\${action}\`, { method: 'POST' });
+          const result = await response.json();
+          if (!response.ok) throw new Error(result.error);
+          logEvent(\`[SUCCESS] \${result.message}\`);
+        } catch (e) {
+          logEvent(\`[ERROR] Failed to \${action} server: \${e.message}\`);
         }
       };
       
-      const renderContent = () => {
-        if (isServerConnected && !gemmaToolExists) {
-            return (
-                <div className="text-center p-4">
-                    <p className="text-sm text-yellow-300 mb-4">The 'Gemma Audio Processor' tool is missing on the server.</p>
-                    <button
-                        onClick={handleCreateClick}
-                        disabled={isCreatingTool}
-                        className="w-full bg-purple-600 text-white font-semibold py-2.5 px-4 rounded-lg hover:bg-purple-700 disabled:bg-purple-900/50 disabled:cursor-not-allowed flex items-center justify-center"
-                    >
-                         {isCreatingTool && <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white mr-2"></div>}
-                        {isCreatingTool ? 'Creating Tool...' : 'Auto-Create Audio Tool'}
-                    </button>
-                </div>
-            )
-        }
-        
-        return (
-          <>
-            <div className="text-center text-4xl font-bold text-gray-200 my-3 tracking-widest">{timer}</div>
-            <div className="text-center text-indigo-300 font-semibold h-6 mb-4">{statusText}</div>
-
-            <div className="flex items-center justify-center gap-3 flex-wrap my-4">
-                 <button onClick={isRecording ? handleStopRecording : handleStartRecording} disabled={!canRecord || isProcessingAudio} className={\`px-6 py-3 font-bold text-white rounded-full flex items-center gap-2 transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed \${isRecording ? 'bg-red-600 hover:bg-red-700 animate-pulse' : 'bg-green-600 hover:bg-green-700'}\`}>
-                    <div className={\`w-3 h-3 rounded-full \${isRecording ? 'bg-white' : 'bg-red-300'}\`}></div>
-                    {isRecording ? 'Stop' : 'Record'}
-                 </button>
-                 <button onClick={handleAudioUpload} disabled={!recordedAudioUrl || isProcessingAudio || isRecording} className="px-6 py-3 font-bold text-white rounded-full flex items-center gap-2 transition-all duration-200 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed">
-                    {isProcessingAudio ? <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div> : '🚀'}
-                    {isProcessingAudio ? 'Processing...' : 'Send to Server'}
-                 </button>
-            </div>
-            
-            {recordedAudioUrl && !isProcessingAudio && !isRecording && (
-              <div className="mt-4 p-3 bg-black/20 rounded-lg border border-gray-600">
-                <audio controls src={recordedAudioUrl} className="w-full h-10">
-                  Your browser does not support the audio element.
-                </audio>
-              </div>
-            )}
-
-            {audioResult && (
-              <div className="mt-4">
-                <h4 className="font-semibold text-gray-300">Server Response:</h4>
-                <pre className="mt-1 text-sm text-cyan-200 bg-black/30 p-3 rounded-md whitespace-pre-wrap">{audioResult}</pre>
-              </div>
-            )}
-
-            <div className="mt-6 p-3 bg-black/20 rounded-lg border border-gray-600 grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <div>
-                    <label htmlFor="mime-type-select" className="block text-xs font-medium text-gray-300 mb-1">Recording Format</label>
-                    <select id="mime-type-select" value={recordingMimeType} onChange={(e) => setRecordingMimeType(e.target.value)} disabled={isRecording || isProcessingAudio} className="w-full bg-gray-700 border border-gray-600 rounded-lg p-2 text-xs focus:ring-2 focus:ring-indigo-500 disabled:opacity-50">
-                        {supportedMimeTypes.map(type => (<option key={type} value={type}>{type}</option>))}
-                    </select>
-                </div>
-                <div>
-                    <label htmlFor="bitrate-input" className="block text-xs font-medium text-gray-300 mb-1">Bitrate (bits/sec)</label>
-                    <input type="number" id="bitrate-input" step="8000" value={recordingBitrate} onChange={(e) => setRecordingBitrate(Number(e.target.value))} disabled={isRecording || isProcessingAudio || recordingMimeType.includes('wav')} className="w-full bg-gray-700 border border-gray-600 rounded-lg p-2 text-xs focus:ring-2 focus:ring-indigo-500 disabled:opacity-50" title={recordingMimeType.includes('wav') ? 'Bitrate does not apply to uncompressed WAV format' : ''} />
-                </div>
-            </div>
-          </>
-        )
+      const handleInstallClick = async () => {
+          setIsInstalling(true);
+          await handleInstallGemmaServerScript();
+          setIsInstalling(false);
       }
 
+      const handleStartRecording = async () => {
+        setTestResult('');
+        setRecordedAudioBlob(null);
+        audioChunksRef.current = [];
+        try {
+            const stream = await navigator.mediaDevices.getUserMedia({ 
+                audio: {
+                    echoCancellation: false,
+                    noiseSuppression: false,
+                    autoGainControl: false
+                }
+            });
+            const mimeType = 'audio/webm'; // Use webm for broad browser support. The server can handle it.
+            if (!MediaRecorder.isTypeSupported(mimeType)) {
+              logEvent(\`[ERROR] Audio recording failed: MimeType \${mimeType} is not supported.\`);
+              return;
+            }
+            mediaRecorderRef.current = new MediaRecorder(stream, { mimeType });
+            
+            mediaRecorderRef.current.ondataavailable = (event) => {
+                if (event.data.size > 0) audioChunksRef.current.push(event.data);
+            };
+            
+            mediaRecorderRef.current.onstop = () => {
+                const blob = new Blob(audioChunksRef.current, { type: mimeType });
+                setRecordedAudioBlob(blob);
+                
+                // Correctly stop the stream tracks to release the microphone
+                if (mediaRecorderRef.current && mediaRecorderRef.current.stream) {
+                    mediaRecorderRef.current.stream.getTracks().forEach(track => track.stop());
+                }
+                
+                setIsRecording(false); // Update UI state after blob is created
+            };
+
+            mediaRecorderRef.current.start();
+            setIsRecording(true);
+        } catch (err) {
+            logEvent(\`[ERROR] Audio recording failed: \${err.message}\`);
+        }
+      };
+
+      const handleStopRecording = () => {
+        if (mediaRecorderRef.current && mediaRecorderRef.current.state === "recording") {
+          mediaRecorderRef.current.stop();
+          // Do not set isRecording to false here. The 'onstop' event handler will do it.
+        }
+      };
+
+      const handleAudioTest = async () => {
+        if (!recordedAudioBlob) {
+            logEvent('[ERROR] No audio recorded to test.');
+            return;
+        }
+        setIsProcessing(true);
+        setTestResult('');
+        try {
+            const reader = new FileReader();
+            reader.readAsDataURL(recordedAudioBlob);
+            reader.onloadend = async () => {
+                const base64Audio = reader.result;
+                const body = {
+                    model: 'local/gemma-multimodal',
+                    messages: [
+                        { role: 'user', content: [
+                            { type: 'text', text: 'Transcribe this audio.' },
+                            { type: 'audio_url', audio_url: { url: base64Audio } }
+                        ]}
+                    ]
+                };
+                const response = await fetch('http://localhost:8008/v1/chat/completions', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(body)
+                });
+                const result = await response.json();
+                if (!response.ok) throw new Error(result.detail || 'Test request failed');
+                const transcription = result.choices[0]?.message?.content || 'No transcription found.';
+                setTestResult(transcription);
+                logEvent('[SUCCESS] Local AI server test completed.');
+            };
+        } catch (e) {
+            const errorMsg = \`Local AI server test failed: \${e.message}. Is it running on port 8008?\`;
+            logEvent(\`[ERROR] \${errorMsg}\`);
+            setTestResult(errorMsg);
+        } finally {
+            setIsProcessing(false);
+        }
+      };
+
       return (
-        <div className="bg-gray-800/60 border border-gray-700 rounded-xl p-4">
-          <div className="text-center mb-3">
-              <h3 className="text-lg font-bold text-indigo-300">Audio Testbed</h3>
-              <p className="text-xs text-gray-400">Record audio, see it visualized, and send it for transcription.</p>
+        <div className="bg-gray-800/60 border border-gray-700 rounded-xl p-4 space-y-4">
+          <div>
+            <h3 className="text-lg font-bold text-indigo-300">Local AI Server</h3>
+            <div className="flex items-center gap-2 mt-1">
+              <div className={\`w-3 h-3 rounded-full \${localAiStatus.isRunning ? 'bg-green-500 animate-pulse' : 'bg-red-500'}\`}></div>
+              <p className="text-sm text-gray-300">
+                Status: {localAiStatus.isRunning ? 'Running' : 'Stopped'}
+              </p>
+            </div>
           </div>
-          <div className="bg-gray-800 rounded-lg p-2 my-2 h-24 w-full">
-            <canvas ref={canvasRef} className="w-full h-full"></canvas>
+          
+          <div className="flex flex-wrap gap-2">
+            <button onClick={handleInstallClick} disabled={!isServerConnected || isInstalling} className="flex-1 bg-purple-600 text-white font-semibold py-2 px-4 rounded-lg hover:bg-purple-700 disabled:bg-gray-600 disabled:cursor-not-allowed">
+                {isInstalling ? 'Installing...' : 'Install/Update Script'}
+            </button>
+            <button onClick={() => handleServerAction('start')} disabled={!isServerConnected || localAiStatus.isRunning} className="flex-1 bg-green-600 text-white font-semibold py-2 px-4 rounded-lg hover:bg-green-700 disabled:bg-gray-600 disabled:cursor-not-allowed">Start Server</button>
+            <button onClick={() => handleServerAction('stop')} disabled={!isServerConnected || !localAiStatus.isRunning} className="flex-1 bg-red-600 text-white font-semibold py-2 px-4 rounded-lg hover:bg-red-700 disabled:bg-gray-600 disabled:cursor-not-allowed">Stop Server</button>
           </div>
-          {renderContent()}
+
+          <div>
+              <h4 className="font-semibold text-gray-300 text-sm mb-1">Server Logs</h4>
+              <div ref={logsContainerRef} className="h-24 bg-black/30 p-2 rounded text-xs font-mono overflow-y-auto scroll-smooth">
+                  {localAiStatus.logs && localAiStatus.logs.length > 0 ? localAiStatus.logs.map((log, index) => (
+                      <div key={index} className="text-slate-400 break-words">{log}</div>
+                  )) : <p className="text-slate-500">No logs yet. Start the server to see output.</p>}
+              </div>
+          </div>
+
+          <div>
+              <h4 className="font-semibold text-gray-300 text-sm mb-2">Multimodal Test</h4>
+              <div className="flex items-center justify-center gap-2 flex-wrap">
+                  <button onClick={isRecording ? handleStopRecording : handleStartRecording} disabled={!localAiStatus.isRunning || isProcessing} className={\`px-4 py-2 font-bold text-white rounded-lg flex items-center gap-2 transition-all duration-200 disabled:opacity-50 \${isRecording ? 'bg-red-600 hover:bg-red-700 animate-pulse' : 'bg-cyan-600 hover:bg-cyan-700'}\`}>
+                    {isRecording ? 'Stop Recording' : 'Record Audio'}
+                  </button>
+                  <button onClick={handleAudioTest} disabled={!recordedAudioBlob || isProcessing || isRecording} className="px-4 py-2 font-bold text-white rounded-lg flex items-center gap-2 transition-all duration-200 bg-blue-600 hover:bg-blue-700 disabled:opacity-50">
+                    {isProcessing ? <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div> : '🧪'}
+                    {isProcessing ? 'Testing...' : 'Test Audio'}
+                  </button>
+              </div>
+              {recordedAudioBlob && !isRecording && (
+                <div className="mt-2 text-center">
+                  <audio controls src={URL.createObjectURL(recordedAudioBlob)} className="w-full h-10" />
+                </div>
+              )}
+              {testResult && (
+                  <div className="mt-2">
+                    <h5 className="font-semibold text-gray-400 text-xs">Test Result:</h5>
+                    <pre className="mt-1 text-sm text-cyan-200 bg-black/30 p-2 rounded-md whitespace-pre-wrap">{testResult}</pre>
+                  </div>
+              )}
+          </div>
+
         </div>
       );
     `
