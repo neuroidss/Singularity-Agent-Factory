@@ -3,7 +3,7 @@ import React, { useState, useCallback, useMemo, useEffect, useRef } from 'react'
 import * as aiService from './services/aiService';
 import { CORE_TOOLS, AI_MODELS, SWARM_AGENT_SYSTEM_PROMPT } from './constants';
 import { BOOTSTRAP_TOOL_PAYLOADS } from './bootstrap';
-import type { LLMTool, EnrichedAIResponse, AIResponse, APIConfig, AIModel, NewToolPayload, AIToolCall, AgentWorker, AgentStatus, RobotState, EnvironmentObject, ToolCreatorPayload } from './types';
+import type { LLMTool, EnrichedAIResponse, AIResponse, APIConfig, AIModel, NewToolPayload, AIToolCall, AgentWorker, AgentStatus, RobotState, EnvironmentObject, ToolCreatorPayload, WorkflowStep } from './types';
 import { UIToolRunner } from './components/UIToolRunner';
 import { ModelProvider } from './types';
 import { loadStateFromStorage, saveStateToStorage } from './versioning';
@@ -78,6 +78,13 @@ const App: React.FC = () => {
     const [apiCallCount, setApiCallCount] = useState<number>(0);
     const [eventLog, setEventLog] = useState<string[]>(['[INFO] System Initialized. Target: Achieve Singularity.']);
     const [isServerConnected, setIsServerConnected] = useState<boolean>(false);
+    
+    // KiCad Workflow State
+    const [pcbArtifacts, setPcbArtifacts] = useState<{ boardName: string, topImage: string, bottomImage: string, fabZipPath: string } | null>(null);
+    const [kicadLog, setKicadLog] = useState<string[]>([]);
+    const [isKicadGenerating, setIsKicadGenerating] = useState<boolean>(false);
+    const [kicadWorkflowPlan, setKicadWorkflowPlan] = useState<WorkflowStep[] | null>(null);
+    const [currentKicadArtifact, setCurrentKicadArtifact] = useState<{title: string, path: string | null, svgPath: string | null} | null>(null);
     
     // Swarm State
     const [agentSwarm, setAgentSwarm] = useState<AgentWorker[]>([]);
@@ -325,6 +332,10 @@ const App: React.FC = () => {
         },
         getObservationHistory: () => observationHistory,
         clearObservationHistory: () => setObservationHistory([]),
+        // Add a new API for workflows to update the UI
+        updatePcbArtifacts: (artifacts) => {
+            setPcbArtifacts(artifacts);
+        },
     }), [allTools, runToolImplementation, robotStates, environmentState, observationHistory, logEvent, isServerConnected, fetchServerTools]);
 
     const executeAction = useCallback(async (toolCall: AIToolCall, agentId: string): Promise<EnrichedAIResponse> => {
@@ -356,7 +367,7 @@ const App: React.FC = () => {
                    throw new Error(result.error || 'Server execution failed with unknown error');
                 }
                 enrichedResult.executionResult = result;
-                logEvent(`[INFO] ✅ [SERVER] ${result?.message || `Tool "${toolToExecute.name}" executed by server.`}`);
+                logEvent(`[INFO] ✅ [SERVER] ${result?.stdout || result?.message || `Tool "${toolToExecute.name}" executed by server.`}`);
             } catch (execError) {
                  const errorMessage = execError instanceof Error ? execError.message : String(execError);
                  enrichedResult.executionError = errorMessage;
@@ -515,6 +526,7 @@ const App: React.FC = () => {
         swarmIterationCounter.current = 0;
         swarmAgentIdCounter.current = 3;
         setUserInput('');
+        setPcbArtifacts(null); // Clear any previous PCB results
         const timestamp = new Date().toLocaleTimeString();
         setEventLog([`[${timestamp}] [INFO] 🚀 Starting swarm task: "${initialTask}"`]); // Clear previous logs and set the starting message
         const initialAgents: AgentWorker[] = Array.from({ length: 3 }, (_, i) => ({ id: `agent-${i + 1}`, status: 'idle', lastAction: 'Awaiting instructions', error: null, result: null }));
@@ -549,6 +561,156 @@ const App: React.FC = () => {
         }
     }, []);
 
+    // --- KiCad Workflow Handlers ---
+    const logKicadEvent = useCallback((message: string) => {
+        setKicadLog(prev => [...prev.slice(-99), message]);
+    }, []);
+
+    const handleGenerateKicadPlan = useCallback(async (prompt: string) => {
+        setIsKicadGenerating(true);
+        setKicadLog([]);
+        setPcbArtifacts(null);
+        setCurrentKicadArtifact(null);
+        setKicadWorkflowPlan(null);
+        logKicadEvent("🚀 Starting KiCad Generation Workflow...");
+
+        const boardName = `brd_${Date.now()}`;
+        logKicadEvent(`Board name set to: ${boardName}`);
+
+        const systemPrompt = `
+You are an expert KiCad automation engineer. Your task is to convert a user's request into a precise sequence of tool calls.
+You MUST output a single, valid JSON array of objects, where each object represents a tool call. Do not add any other text or markdown.
+
+The available tools are:
+1. "Define KiCad Component": { "boardName": string, "ref": string, "partDescription": string, "value": string, "footprint": string, "pinCount": number }
+2. "Create KiCad Netlist": { "boardName": string, "connectionsJson": stringified_json_array }
+   - connectionsJson is a JSON string of: [{ "net_name": string, "pin_connections": string[] }]
+3. "Create Initial PCB": { "boardName": string }
+4. "Autoroute PCB": { "boardName": string }
+5. "Export Fabrication Files": { "boardName": string }
+
+CRITICAL INSTRUCTIONS:
+- You MUST use the exact boardName provided in the user prompt for ALL tool calls.
+- The 'connectionsJson' parameter for 'Create KiCad Netlist' MUST be a string containing valid JSON.
+- When defining components:
+  - For specific parts from a KiCad library (e.g., a resistor, a specific IC), set 'pinCount' to 0 and use the format 'Library:Part' for the 'value' argument (e.g., 'Device:R', 'Connector_Generic:Conn_01x07', 'Texas_Instruments:ADS131M08').
+  - For generic connectors where you only need a symbol with a certain number of pins, provide a non-zero 'pinCount' (e.g., 7) and a descriptive 'value' (e.g., 'XIAO Header'). The script will automatically use a generic 'Conn_01x{pinCount}' symbol for it.
+- The entire output MUST be a single JSON array, like this: [ { "toolName": "...", "arguments": {...} }, ... ]
+- The sequence of calls must be logical: Define all components, then create the netlist, then create PCB, then route, then fabricate.
+        `;
+    
+        const userPromptForAI = `User Request: "${prompt}"\n\nUse this boardName for all steps: "${boardName}"`;
+
+        try {
+            logKicadEvent(`🧠 Asking ${selectedModel.name} to generate workflow plan...`);
+            const workflowSteps = await aiService.generateStructuredResponse(
+                userPromptForAI,
+                systemPrompt,
+                selectedModel,
+                apiConfig,
+                logKicadEvent // onProgress
+            );
+            
+            if (!Array.isArray(workflowSteps)) {
+                throw new Error("AI did not return a valid array of workflow steps.");
+            }
+            setKicadWorkflowPlan(workflowSteps);
+            logKicadEvent(`✅ Workflow plan received with ${workflowSteps.length} steps. Ready to execute.`);
+
+        } catch(e) {
+            const errorMessage = e instanceof Error ? e.message : String(e);
+            logKicadEvent(`❌ ERROR: ${errorMessage}`);
+            logEvent(`[ERROR] KiCad plan generation failed: ${errorMessage}`);
+        } finally {
+            setIsKicadGenerating(false);
+        }
+    }, [logKicadEvent, logEvent, selectedModel, apiConfig]);
+    
+    const handleExecuteKicadPlan = useCallback(async () => {
+        if (!kicadWorkflowPlan) {
+            logKicadEvent("❌ Cannot execute: No plan has been generated.");
+            return;
+        }
+        setIsKicadGenerating(true);
+        logKicadEvent(`▶️ Executing ${kicadWorkflowPlan.length} steps...`);
+
+        try {
+             // Check if the KiCad tools are installed. If not, install them.
+            const requiredTools = ["Define KiCad Component", "Create KiCad Netlist", "Create Initial PCB", "Autoroute PCB", "Export Fabrication Files"];
+            const allToolNames = new Set(allTools.map(t => t.name));
+            const missingTools = requiredTools.filter(t => !allToolNames.has(t));
+
+            if (missingTools.length > 0) {
+                logKicadEvent("🔧 KiCad Engineering Suite not fully installed. Installing now...");
+                const installResult = await executeActionRef.current({ name: 'Install KiCad Engineering Suite', arguments: {} }, 'system-installer');
+                if (installResult.executionError) {
+                    throw new Error(`Failed to install KiCad suite: ${installResult.executionError}`);
+                }
+                logKicadEvent(`✅ ${installResult.executionResult.message}`);
+                // After installation, server tools are re-fetched automatically by the runtime.
+                // The updated tools will be available for the subsequent steps.
+            }
+
+
+            for (const [index, step] of kicadWorkflowPlan.entries()) {
+                logKicadEvent(`[${index+1}/${kicadWorkflowPlan.length}] ⚙️ Executing: ${step.toolName}...`);
+                const result = await executeActionRef.current({ name: step.toolName, arguments: step.arguments }, 'kicad-agent');
+                
+                if (result.executionError) {
+                    throw new Error(`Step '${step.toolName}' failed: ${result.executionError}`);
+                }
+                
+                // Server tools return JSON in stdout
+                const serverOutput = result.executionResult?.stdout;
+                if (serverOutput) {
+                    try {
+                        const parsedOutput = JSON.parse(serverOutput);
+                        logKicadEvent(`✔️ ${parsedOutput.message || `Success: ${step.toolName}`}`);
+
+                        const artifacts = parsedOutput.artifacts;
+                        if (artifacts) {
+                             const title = step.toolName.includes('Route') ? 'Routed Board' : 'Unrouted Board';
+                             const newArtifact = {
+                                title,
+                                path: artifacts.image_top || null,
+                                svgPath: artifacts.routed_svg || null
+                             };
+                             if (newArtifact.path || newArtifact.svgPath) {
+                                setCurrentKicadArtifact(newArtifact);
+                             }
+                        }
+                        
+                        if (artifacts?.fab_zip) {
+                             logKicadEvent("🎉 Fabrication successful! Displaying final 3D results.");
+                             setPcbArtifacts({
+                                boardName: artifacts.boardName,
+                                topImage: artifacts.image_top_3d,
+                                bottomImage: artifacts.image_bottom_3d,
+                                fabZipPath: artifacts.fab_zip
+                             });
+                             setCurrentKicadArtifact(null); // Clear intermediate artifact
+                        }
+
+                    } catch (e) {
+                        // Not all stdout is JSON, this is okay.
+                        logKicadEvent(`✔️ ${serverOutput.trim()}`);
+                    }
+                } else {
+                    logKicadEvent(`✔️ Success: ${step.toolName}`);
+                }
+            }
+            logKicadEvent("✅ Workflow Complete!");
+        } catch(e) {
+             const errorMessage = e instanceof Error ? e.message : String(e);
+            logKicadEvent(`❌ EXECUTION HALTED: ${errorMessage}`);
+            logEvent(`[ERROR] KiCad execution failed: ${errorMessage}`);
+        } finally {
+            setIsKicadGenerating(false);
+        }
+
+    }, [kicadWorkflowPlan, logKicadEvent, logEvent, allTools]);
+
+
     const configProps = { apiConfig, setApiConfig, availableModels, selectedModel, setSelectedModel };
     const debugLogProps = { logs: eventLog, onReset: handleResetTools, apiCallCount, apiCallLimit: -1 };
     
@@ -575,6 +737,22 @@ const App: React.FC = () => {
         onStopServer: handleStopLocalAI,
         onGetStatus: handleGetLocalAIStatus,
     };
+    
+    const pcbViewerProps = pcbArtifacts ? {
+        ...pcbArtifacts,
+        serverUrl: SERVER_URL,
+        onClose: () => setPcbArtifacts(null),
+    } : null;
+    
+    const kicadPanelProps = {
+        onGeneratePlan: handleGenerateKicadPlan,
+        onExecutePlan: handleExecuteKicadPlan,
+        kicadLog,
+        isGenerating: isKicadGenerating,
+        plan: kicadWorkflowPlan,
+        currentArtifact: currentKicadArtifact,
+        serverUrl: SERVER_URL,
+    };
 
     return (
         <div className="min-h-screen bg-gray-900 text-white flex flex-col p-4 sm:p-6 lg:p-8">
@@ -582,7 +760,12 @@ const App: React.FC = () => {
             <main className="flex-grow grid grid-cols-1 lg:grid-cols-5 gap-6 mt-4">
                 {/* Left Column */}
                 <div className="lg:col-span-2 space-y-6">
-                    <UIToolRunner tool={getTool('Robot Simulation Environment')} props={{ robotStates, environmentState }} />
+                    {pcbViewerProps ? (
+                        <UIToolRunner tool={getTool('KiCad PCB Viewer')} props={pcbViewerProps} />
+                    ) : (
+                         <UIToolRunner tool={getTool('Robot Simulation Environment')} props={{ robotStates, environmentState }} />
+                    )}
+                    <UIToolRunner tool={getTool('KiCad Design Automation Panel')} props={kicadPanelProps} />
                     {localAiPanelTool && <UIToolRunner tool={localAiPanelTool} props={localAiServerProps} />}
                     <UIToolRunner tool={getTool('Manual Robot Control')} props={{ handleManualControl, isSwarmRunning }} />
                      <UIToolRunner tool={getTool('Configuration Panel')} props={configProps} />

@@ -149,5 +149,54 @@ export const UI_DISPLAY_TOOLS: ToolCreatorPayload[] = [
             </div>
           );
         `
+    },
+    {
+        name: 'KiCad PCB Viewer',
+        description: 'Displays the 3D renders of a newly generated PCB and provides a download link for the fabrication files.',
+        category: 'UI Component',
+        executionEnvironment: 'Client',
+        purpose: 'To provide immediate visual feedback and access to the final product of the hardware engineering workflow.',
+        parameters: [
+            { name: 'boardName', type: 'string', description: 'The name of the generated board.', required: true },
+            { name: 'topImage', type: 'string', description: 'Server-relative path to the top view 3D render PNG.', required: true },
+            { name: 'bottomImage', type: 'string', description: 'Server-relative path to the bottom view 3D render PNG.', required: true },
+            { name: 'fabZipPath', type: 'string', description: 'Server-relative path to the fabrication ZIP file.', required: true },
+            { name: 'serverUrl', type: 'string', description: 'The base URL of the backend server.', required: true },
+            { name: 'onClose', type: 'object', description: 'Function to call to close the viewer.', required: true },
+        ],
+        implementationCode: `
+            const fullTopUrl = serverUrl + '/' + topImage;
+            const fullBottomUrl = serverUrl + '/' + bottomImage;
+            const fullZipUrl = serverUrl + '/' + fabZipPath;
+
+            return (
+                <div className="bg-gray-800/80 border-2 border-green-500/60 rounded-xl p-4 shadow-lg flex flex-col">
+                    <div className="flex justify-between items-center mb-3">
+                        <h3 className="text-lg font-bold text-green-300">PCB Engineering Complete</h3>
+                        <button onClick={onClose} className="text-gray-400 hover:text-white">&times;</button>
+                    </div>
+                    <p className="text-sm text-gray-300 mb-4">Generated board: <span className="font-mono text-green-400">{boardName}</span></p>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-4">
+                        <div>
+                            <p className="text-center font-semibold text-sm mb-2">Top View</p>
+                            <img src={fullTopUrl} alt="Top view of PCB" className="rounded-lg border-2 border-gray-600 w-full" />
+                        </div>
+                        <div>
+                            <p className="text-center font-semibold text-sm mb-2">Bottom View</p>
+                            <img src={fullBottomUrl} alt="Bottom view of PCB" className="rounded-lg border-2 border-gray-600 w-full" />
+                        </div>
+                    </div>
+
+                    <a
+                        href={fullZipUrl}
+                        download
+                        className="w-full text-center bg-green-600 text-white font-semibold py-2.5 px-4 rounded-lg hover:bg-green-700 transition-colors duration-200"
+                    >
+                        Download Fabrication Files (.zip)
+                    </a>
+                </div>
+            );
+        `
     }
 ];

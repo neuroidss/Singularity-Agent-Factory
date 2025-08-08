@@ -15,3 +15,4 @@ uvicorn
 python-multipart
 soundfile
 pydantic<2
+skidl

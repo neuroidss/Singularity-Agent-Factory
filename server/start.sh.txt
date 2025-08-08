@@ -2,5 +2,16 @@
 # This script starts the backend server.
 # Rename this file to start.sh and run `chmod +x start.sh` to make it executable.
 
+export KICAD_SYMBOL_DIR=/usr/share/kicad/symbols
+export KICAD6_SYMBOL_DIR=/usr/share/kicad/symbols
+export KICAD7_SYMBOL_DIR=/usr/share/kicad/symbols
+export KICAD8_SYMBOL_DIR=/usr/share/kicad/symbols
+export KICAD9_SYMBOL_DIR=/usr/share/kicad/symbols
+export KICAD_FOOTPRINT_DIR=/usr/share/kicad/footprints
+export KICAD6_FOOTPRINT_DIR=/usr/share/kicad/footprints
+export KICAD7_FOOTPRINT_DIR=/usr/share/kicad/footprints
+export KICAD8_FOOTPRINT_DIR=/usr/share/kicad/footprints
+export KICAD9_FOOTPRINT_DIR=/usr/share/kicad/footprints
+
 echo "🚀 Starting Singularity Agent Factory Backend Server..."
 npm start

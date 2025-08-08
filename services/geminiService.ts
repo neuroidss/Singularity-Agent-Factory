@@ -108,3 +108,37 @@ export const generateWithNativeTools = async (
         throw handleAPIError(error, rawResponseForDebug);
     }
 };
+
+export const generateJsonOutput = async (
+    userInput: string,
+    systemInstruction: string,
+    modelId: string,
+): Promise<string> => {
+    const ai = getAIClient();
+    let rawResponseForDebug = "";
+
+    try {
+        const fullSystemInstruction = `${systemInstruction}\n\nCRITICAL: Your entire response must be a single, valid JSON object, and nothing else. Do not wrap it in markdown backticks.`;
+        const response = await ai.models.generateContent({
+            model: modelId,
+            contents: userInput,
+            config: {
+                systemInstruction: fullSystemInstruction,
+                temperature: 0.0,
+                responseMimeType: "application/json",
+            },
+        });
+        
+        rawResponseForDebug = JSON.stringify(response, null, 2);
+        
+        // The response text is expected to be a valid JSON string
+        const text = response.text?.trim();
+        if (!text) {
+             throw new Error("AI returned an empty response.");
+        }
+        return text;
+
+    } catch (error) {
+        throw handleAPIError(error, rawResponseForDebug);
+    }
+};

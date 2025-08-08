@@ -1,4 +1,3 @@
-
 # Singularity Agent Factory
 
 **Live Demo:** [https://neuroidss.github.io/Singularity-Agent-Factory/](https://neuroidss.github.io/Singularity-Agent-Factory/)
@@ -49,13 +48,19 @@ To enable server-side tools (like running local Python scripts), follow these si
     ./install.sh
     ```
 
-4.  **Start the server:**
+4.  **Install Freerouting (Required for PCB Autorouting):**
+    The new autorouting feature depends on the external `freerouting` Java application.
+    - Download the JAR file from the official repository: [https://github.com/freerouting/freerouting/releases/latest](https://github.com/freerouting/freerouting/releases/latest)
+    - Rename the downloaded file to `freerouting.jar`.
+    - Place the `freerouting.jar` file inside the `server/scripts/` directory. The application is configured to find it there.
+
+5.  **Start the server:**
     ```bash
     ./start.sh
     ```
     The server will start on `http://localhost:3001`.
 
-5.  **Launch the Frontend:** Open `index.html` in your browser. It will automatically connect to the running server.
+6.  **Launch the Frontend:** Open `index.html` in your browser. It will automatically connect to the running server.
 
 ---
 

@@ -119,3 +119,7 @@ export interface KnowledgeGraph {
   nodes: KnowledgeGraphNode[];
   edges: KnowledgeGraphEdge[];
 }
+
+export type KicadSchematic = [string, string[], string][];
+
+export type KicadPlacement = [string, number, number, number, string, string, string][];
