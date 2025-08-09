@@ -1,6 +1,6 @@
 
 import { GoogleGenAI, Type, FunctionDeclaration, GenerateContentResponse } from "@google/genai";
-import type { AIResponse, LLMTool, ToolParameter } from "../types";
+import type { AIResponse, LLMTool, ToolParameter, AIToolCall } from "../types";
 
 const getAIClient = (): GoogleGenAI => {
     if (typeof process === 'undefined' || !process.env || !process.env.API_KEY) {
@@ -32,7 +32,7 @@ const buildGeminiTools = (tools: LLMTool[]): { functionDeclarations: FunctionDec
 
         tool.parameters.forEach(param => {
             if (param.type === 'array') {
-                properties[param.name] = { type: Type.ARRAY, description: param.description, items: { type: Type.OBJECT } };
+                properties[param.name] = { type: Type.ARRAY, description: param.description, items: { type: Type.STRING } };
             } else if (param.type === 'object') {
                  properties[param.name] = { type: Type.OBJECT, description: param.description };
             } else {
@@ -57,17 +57,23 @@ const buildGeminiTools = (tools: LLMTool[]): { functionDeclarations: FunctionDec
 };
 
 const parseNativeToolCall = (response: GenerateContentResponse, toolNameMap: Map<string, string>): AIResponse => {
-    const functionCallPart = response.candidates?.[0]?.content?.parts?.find(part => 'functionCall' in part);
-    if (functionCallPart && functionCallPart.functionCall) {
-        const { name, args } = functionCallPart.functionCall;
+    const functionCallParts = response.candidates?.[0]?.content?.parts?.filter(part => 'functionCall' in part);
+
+    if (!functionCallParts || functionCallParts.length === 0) {
+        return { toolCalls: null };
+    }
+
+    const toolCalls = functionCallParts.map(part => {
+        const { name, args } = part.functionCall!;
         const originalToolName = toolNameMap.get(name);
         if (!originalToolName) {
             console.warn(`AI called an unknown tool via Gemini (native): ${name}`);
-            return { toolCall: null };
+            return null;
         }
-        return { toolCall: { name: originalToolName, arguments: args || {} } };
-    }
-    return { toolCall: null };
+        return { name: originalToolName, arguments: args || {} };
+    }).filter((call): call is AIToolCall => call !== null);
+
+    return { toolCalls: toolCalls.length > 0 ? toolCalls : null };
 };
 
 const handleAPIError = (error: unknown, rawResponseForDebug?: string): Error => {
@@ -104,40 +110,6 @@ export const generateWithNativeTools = async (
         
         rawResponseForDebug = JSON.stringify(response, null, 2);
         return parseNativeToolCall(response, toolNameMap);
-    } catch (error) {
-        throw handleAPIError(error, rawResponseForDebug);
-    }
-};
-
-export const generateJsonOutput = async (
-    userInput: string,
-    systemInstruction: string,
-    modelId: string,
-): Promise<string> => {
-    const ai = getAIClient();
-    let rawResponseForDebug = "";
-
-    try {
-        const fullSystemInstruction = `${systemInstruction}\n\nCRITICAL: Your entire response must be a single, valid JSON object, and nothing else. Do not wrap it in markdown backticks.`;
-        const response = await ai.models.generateContent({
-            model: modelId,
-            contents: userInput,
-            config: {
-                systemInstruction: fullSystemInstruction,
-                temperature: 0.0,
-                responseMimeType: "application/json",
-            },
-        });
-        
-        rawResponseForDebug = JSON.stringify(response, null, 2);
-        
-        // The response text is expected to be a valid JSON string
-        const text = response.text?.trim();
-        if (!text) {
-             throw new Error("AI returned an empty response.");
-        }
-        return text;
-
     } catch (error) {
         throw handleAPIError(error, rawResponseForDebug);
     }

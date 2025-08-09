@@ -1,5 +1,5 @@
 
-import type { APIConfig } from "../types";
+import type { APIConfig, LLMTool, AIResponse, AIToolCall } from "../types";
 
 const OLLAMA_TIMEOUT = 600000; // 10 минут
 
@@ -19,17 +19,6 @@ const fetchWithTimeout = async (url: string, options: RequestInit, timeout: numb
         throw e;
     }
 };
-
-const createAPIBody = (model: string, system: string, user: string, temperature: number, format?: 'json') => ({
-    model,
-    system,
-    prompt: user,
-    stream: false,
-    format,
-    options: {
-        temperature,
-    },
-});
 
 const handleAPIError = async (response: Response) => {
     try {
@@ -58,23 +47,60 @@ const generateDetailedError = (error: unknown, host: string): Error => {
     return processingError;
 };
 
-const generate = async (
+const buildOllamaTools = (tools: LLMTool[]) => {
+    return tools.map(tool => ({
+        type: 'function',
+        function: {
+            name: tool.name.replace(/[^a-zA-Z0-9_]/g, '_'),
+            description: tool.description,
+            parameters: {
+                type: 'object',
+                properties: tool.parameters.reduce((obj, param) => {
+                    const typeMapping = { 'string': 'string', 'number': 'number', 'boolean': 'boolean', 'object': 'object', 'array': 'array' };
+                    obj[param.name] = { type: typeMapping[param.type] || 'string', description: param.description };
+                    if (param.type === 'array') {
+                       obj[param.name].items = { type: 'string' };
+                    }
+                    return obj;
+                }, {} as Record<string, any>),
+                required: tool.parameters.filter(p => p.required).map(p => p.name),
+            },
+        },
+    }));
+};
+
+
+export const generateWithTools = async (
     userInput: string,
     systemInstruction: string,
     modelId: string,
-    temperature: number,
     apiConfig: APIConfig,
-    format?: 'json'
-): Promise<string> => {
+    tools: LLMTool[]
+): Promise<AIResponse> => {
     const { ollamaHost } = apiConfig;
     if (!ollamaHost) {
         throw new Error("Ollama Host URL is not configured. Please set it in the API Configuration.");
     }
+    
+    const ollamaTools = buildOllamaTools(tools);
+    const toolNameMap = new Map(tools.map(t => [t.name.replace(/[^a-zA-Z0-9_]/g, '_'), t.name]));
+
+    const body = {
+        model: modelId,
+        messages: [
+            { role: 'system', content: systemInstruction },
+            { role: 'user', content: userInput }
+        ],
+        stream: false,
+        tools: ollamaTools.length > 0 ? ollamaTools : undefined,
+        options: {
+            temperature: 0.1,
+        },
+    };
 
     try {
-        const body = createAPIBody(modelId, systemInstruction, userInput, temperature, format);
         const response = await fetchWithTimeout(
-            `${ollamaHost}/api/generate`,
+            `${ollamaHost.replace(/\/+$/, '')}/api/chat`,
             {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -85,32 +111,27 @@ const generate = async (
 
         if (!response.ok) {
             await handleAPIError(response);
-            return format === 'json' ? '{}' : ''; // Should not be reached
+            return { toolCalls: null }; // Should not be reached
         }
 
         const data = await response.json();
-        return data.response || (format === 'json' ? '{}' : '');
+        const toolCallsData = data.message?.tool_calls;
+        
+        if (toolCallsData && Array.isArray(toolCallsData) && toolCallsData.length > 0) {
+            const toolCalls: AIToolCall[] = toolCallsData.map(tc => {
+                const toolCall = tc.function;
+                const originalName = toolNameMap.get(toolCall.name) || toolCall.name;
+                return {
+                    name: originalName,
+                    arguments: toolCall.arguments || {}
+                };
+            });
+            return { toolCalls };
+        }
+        
+        return { toolCalls: null };
+
     } catch (e) {
         throw generateDetailedError(e, ollamaHost);
     }
-};
-
-export const generateJsonOutput = async (
-    userInput: string,
-    systemInstruction: string,
-    modelId: string,
-    temperature: number,
-    apiConfig: APIConfig,
-): Promise<string> => {
-    return generate(userInput, systemInstruction, modelId, temperature, apiConfig, 'json');
-};
-
-export const generateText = async (
-    userInput: string,
-    systemInstruction: string,
-    modelId: string,
-    temperature: number,
-    apiConfig: APIConfig
-): Promise<string> => {
-    return generate(userInput, systemInstruction, modelId, temperature, apiConfig, undefined);
 };

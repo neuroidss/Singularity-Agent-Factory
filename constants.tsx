@@ -5,12 +5,12 @@ import { ModelProvider } from './types';
 import { BOOTSTRAP_TOOL_PAYLOADS } from './bootstrap';
 
 export const AI_MODELS: AIModel[] = [
-    { id: 'gemini-2.5-pro', name: 'Gemini 2.5 Pro', provider: ModelProvider.GoogleAI },
     { id: 'gemini-2.5-flash', name: 'Gemini 2.5 Flash', provider: ModelProvider.GoogleAI },
-    { id: 'local/gemma-multimodal', name: 'Local Gemma Server (Multimodal)', provider: ModelProvider.OpenAI_API },
+    { id: 'gemini-2.5-pro', name: 'Gemini 2.5 Pro', provider: ModelProvider.GoogleAI },
     { id: 'gemini-2.5-flash-lite', name: 'Gemini 2.5 Flash-Lite', provider: ModelProvider.GoogleAI },
     { id: 'gemini-2.0-flash', name: 'Gemini 2.0 Flash', provider: ModelProvider.GoogleAI },
     { id: 'gemini-2.0-flash-lite', name: 'Gemini 2.0 Flash-Lite', provider: ModelProvider.GoogleAI },
+    { id: 'local/gemma-multimodal', name: 'Local Gemma Server (Multimodal)', provider: ModelProvider.OpenAI_API },
     { id: 'hf.co/unsloth/Qwen3-Coder-30B-A3B-Instruct-GGUF:IQ2_M', name: 'Qwen3 Coder 30B A3B', provider: ModelProvider.OpenAI_API },
     { id: 'hf.co/unsloth/Qwen3-Coder-30B-A3B-Instruct-GGUF:IQ2_M', name: 'Qwen3 Coder 30B A3B', provider: ModelProvider.Ollama },
     { id: 'gemma3n:e4b', name: 'Gemma 3N E4B', provider: ModelProvider.Ollama },
@@ -26,26 +26,6 @@ export const AI_MODELS: AIModel[] = [
     { id: 'onnx-community/Qwen3-4B-ONNX', name: 'Qwen3-4B', provider: ModelProvider.HuggingFace },
     { id: 'onnx-community/Qwen3-1.7B-ONNX', name: 'Qwen3-1.7B', provider: ModelProvider.HuggingFace }
 ];
-
-export const STANDARD_TOOL_CALL_SYSTEM_PROMPT = `
-You have access to a set of tools. To answer the user's request, you must choose a single tool and call it.
-Your response MUST be a single, valid JSON object and nothing else. Do not add any text, reasoning, or markdown formatting.
-
-**JSON Response Format:**
-{
-  "name": "tool_name_to_call",
-  "arguments": {
-    "arg1": "value1",
-    "arg2": "value2"
-  }
-}
-
-If no tool is required or you cannot fulfill the request, respond with an empty JSON object: {}.
-
-Here are the available tools:
-{{TOOLS_JSON}}
-`;
-
 
 export const SWARM_AGENT_SYSTEM_PROMPT = `You are a specialist agent within a collaborative swarm. Your primary goal is to contribute to the swarm's overall objective by executing one single action.
 
@@ -222,6 +202,32 @@ export const CORE_TOOLS: LLMTool[] = [
         await runtime.fetchServerTools();
         return result;
       `
+    },
+    {
+      id: 'system_reset_server_tools',
+      name: 'System_Reset_Server_Tools',
+      description: 'Deletes all custom server-side tools from tools.json and reloads the server cache, effectively performing a factory reset on server capabilities.',
+      category: 'Functional',
+      version: 1,
+      purpose: "To provide a way to recover from a corrupted server state or to reset the agent's learned server skills without a manual server restart and file deletion.",
+      parameters: [],
+      implementationCode: `
+      if (!runtime.server.isConnected()) {
+        throw new Error("Cannot reset server tools: The backend server is not connected.");
+      }
+      const response = await fetch(\`\${runtime.server.getUrl()}/api/execute\`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name: 'System_Reset_Server_Tools', arguments: {} })
+      });
+      const result = await response.json();
+      if (!response.ok) {
+         throw new Error(result.error || 'Server failed to reset tools');
+      }
+      // Manually trigger a fetch of the updated tools to refresh the client UI
+      await runtime.fetchServerTools();
+      return result;
+    `
     }
 ];
 

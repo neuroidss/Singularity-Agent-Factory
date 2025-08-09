@@ -1,4 +1,5 @@
-import type { APIConfig } from "../types";
+
+import type { APIConfig, LLMTool, AIResponse, AIToolCall } from "../types";
 
 const OPENAI_TIMEOUT = 600000; // 10 минут
 
@@ -43,21 +44,43 @@ const handleAPIError = async (response: Response, baseUrl: string) => {
     throw new Error(message);
 };
 
-const generate = async (
+const buildOpenAITools = (tools: LLMTool[]) => {
+    return tools.map(tool => ({
+        type: 'function',
+        function: {
+            name: tool.name.replace(/[^a-zA-Z0-9_]/g, '_'),
+            description: tool.description,
+            parameters: {
+                type: 'object',
+                properties: tool.parameters.reduce((obj, param) => {
+                    const typeMapping = { 'string': 'string', 'number': 'number', 'boolean': 'boolean', 'object': 'object', 'array': 'array' };
+                    obj[param.name] = { type: typeMapping[param.type] || 'string', description: param.description };
+                     if (param.type === 'array') {
+                       obj[param.name].items = { type: 'string' }; // OpenAI schema requires item type
+                    }
+                    return obj;
+                }, {} as Record<string, any>),
+                required: tool.parameters.filter(p => p.required).map(p => p.name),
+            },
+        },
+    }));
+};
+
+export const generateWithTools = async (
     userInput: string,
     systemInstruction: string,
     modelId: string,
-    apiConfig: APIConfig
-): Promise<string> => {
+    apiConfig: APIConfig,
+    tools: LLMTool[]
+): Promise<AIResponse> => {
     const { openAIAPIKey, openAIBaseUrl } = apiConfig;
 
-    if (!openAIAPIKey) {
-        throw new Error("OpenAI API Key is missing. Please set it in the API Configuration.");
-    }
-    if (!openAIBaseUrl) {
-        throw new Error("OpenAI Base URL is missing. Please set it in the API Configuration.");
-    }
+    if (!openAIAPIKey) throw new Error("OpenAI API Key is missing.");
+    if (!openAIBaseUrl) throw new Error("OpenAI Base URL is missing.");
     
+    const openAITools = buildOpenAITools(tools);
+    const toolNameMap = new Map(tools.map(t => [t.name.replace(/[^a-zA-Z0-9_]/g, '_'), t.name]));
+
     const body = {
         model: modelId,
         messages: [
@@ -65,7 +88,8 @@ const generate = async (
             { role: 'user', content: userInput }
         ],
         temperature: 0.1,
-        response_format: { type: 'json_object' }
+        tools: openAITools.length > 0 ? openAITools : undefined,
+        tool_choice: openAITools.length > 0 ? "auto" : undefined,
     };
     
     try {
@@ -73,10 +97,7 @@ const generate = async (
             `${openAIBaseUrl.replace(/\/+$/, '')}/chat/completions`,
             {
                 method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'Authorization': `Bearer ${openAIAPIKey}`
-                },
+                headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${openAIAPIKey}` },
                 body: JSON.stringify(body)
             },
             OPENAI_TIMEOUT
@@ -84,11 +105,29 @@ const generate = async (
 
         if (!response.ok) {
             await handleAPIError(response, openAIBaseUrl);
-            return '{}'; // Should not be reached
+            return { toolCalls: null }; // Should not be reached
         }
 
         const data = await response.json();
-        return data.choices?.[0]?.message?.content?.trim() || '{}';
+        const toolCallsData = data.choices?.[0]?.message?.tool_calls;
+        
+        if (toolCallsData && Array.isArray(toolCallsData) && toolCallsData.length > 0) {
+            try {
+                const toolCalls: AIToolCall[] = toolCallsData.map(tc => {
+                    const toolCall = tc.function;
+                    const originalName = toolNameMap.get(toolCall.name) || toolCall.name;
+                    return {
+                        name: originalName,
+                        arguments: JSON.parse(toolCall.arguments || '{}')
+                    };
+                });
+                return { toolCalls };
+            } catch (e) {
+                throw new Error(`Failed to parse arguments from AI tool call: ${e.message}`);
+            }
+        }
+        
+        return { toolCalls: null };
 
     } catch (e) {
         if (e instanceof Error && e.message.toLowerCase().includes('failed to fetch')) {
@@ -96,13 +135,4 @@ const generate = async (
         }
         throw e;
     }
-};
-
-export const generateJsonOutput = async (
-    userInput: string,
-    systemInstruction: string,
-    modelId: string,
-    apiConfig: APIConfig,
-): Promise<string> => {
-    return generate(userInput, systemInstruction, modelId, apiConfig);
 };

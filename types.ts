@@ -56,7 +56,7 @@ export interface AIToolCall {
 }
 
 export interface AIResponse {
-  toolCall: AIToolCall | null;
+  toolCalls: AIToolCall[] | null;
 }
 
 export interface EnrichedAIResponse {
@@ -65,6 +65,8 @@ export interface EnrichedAIResponse {
   executionResult?: any;
   executionError?: string;
 }
+
+export type MainView = 'KICAD' | 'ROBOTICS' | 'KNOWLEDGE_GRAPH';
 
 export enum ModelProvider {
   GoogleAI = 'GoogleAI',

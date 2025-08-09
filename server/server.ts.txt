@@ -76,7 +76,7 @@ app.get('/api/tools', (req: express.Request, res: express.Response) => {
     res.json(serverToolsCache);
 });
 
-// Create a new server-side tool and add it to cache + file
+// Create a new server-side tool or update an existing one (upsert).
 app.post('/api/tools/create', async (req: express.Request, res: express.Response) => {
     try {
         const payload: NewToolPayload = req.body;
@@ -86,28 +86,47 @@ app.post('/api/tools/create', async (req: express.Request, res: express.Response
         if (payload.category !== 'Server') {
             return res.status(400).json({ error: "Tools created on the server must have the category 'Server'." });
         }
-        const currentTools = [...serverToolsCache];
-        if (currentTools.some(t => t.name === payload.name)) {
-            return res.status(409).json({ error: `A tool with the name '${payload.name}' already exists.` });
-        }
-        const newTool: LLMTool = {
-            ...payload,
-            id: generateMachineReadableId(payload.name, currentTools),
-            version: 1,
-            createdAt: new Date().toISOString(),
-            updatedAt: new Date().toISOString(),
-        };
-        currentTools.push(newTool);
-        await writeTools(currentTools);
-        serverToolsCache = currentTools; // Update the live cache
         
-        console.log(`[INFO] New tool '${newTool.name}' created and loaded into memory.`);
-        res.status(201).json({ message: 'Server tool created and loaded successfully', tool: newTool });
+        const currentTools = [...serverToolsCache];
+        const existingToolIndex = currentTools.findIndex(t => t.name === payload.name);
+
+        if (existingToolIndex !== -1) {
+            // --- UPDATE EXISTING TOOL ---
+            const existingTool = currentTools[existingToolIndex];
+            const updatedTool = {
+                ...existingTool,
+                ...payload, // Overwrite with new data from the payload
+                version: existingTool.version + 1, // Increment version on update
+                updatedAt: new Date().toISOString(),
+            };
+            currentTools[existingToolIndex] = updatedTool;
+            await writeTools(currentTools);
+            serverToolsCache = currentTools; // Update the live cache
+
+            console.log(`[INFO] Tool '${payload.name}' updated to version ${updatedTool.version}.`);
+            return res.status(200).json({ message: `Server tool '${payload.name}' updated successfully.`, tool: updatedTool });
+        } else {
+            // --- CREATE NEW TOOL ---
+            const newTool: LLMTool = {
+                ...payload,
+                id: generateMachineReadableId(payload.name, currentTools),
+                version: 1,
+                createdAt: new Date().toISOString(),
+                updatedAt: new Date().toISOString(),
+            };
+            currentTools.push(newTool);
+            await writeTools(currentTools);
+            serverToolsCache = currentTools; // Update the live cache
+            
+            console.log(`[INFO] New tool '${newTool.name}' created and loaded into memory.`);
+            return res.status(201).json({ message: 'Server tool created successfully', tool: newTool });
+        }
     } catch (error) {
-        console.error('Error creating tool:', error);
+        console.error('Error creating/updating tool:', error);
         res.status(500).json({ error: 'Internal Server Error' });
     }
 });
+
 
 // --- Local AI Server Logic ---
 const startLocalAiServer = async () => {
@@ -171,6 +190,18 @@ app.post('/api/execute', async (req: express.Request, res: express.Response) => 
         await readToolsAndLoadCache();
         return res.json({ success: true, message: `Successfully reloaded ${serverToolsCache.length} tools from disk.` });
     }
+    if (name === 'System_Reset_Server_Tools') {
+        console.log('[COMMAND] Received System_Reset_Server_Tools command. Deleting all custom tools...');
+        try {
+            await writeTools([]); // Write an empty array to the file
+            serverToolsCache = []; // Clear the in-memory cache
+            return res.json({ success: true, message: 'Successfully deleted all custom server-side tools.' });
+        } catch (error) {
+            const err = error as Error;
+            console.error('Error resetting server tools:', err.message);
+            return res.status(500).json({ error: 'Failed to reset server tools on disk.' });
+        }
+    }
     
     const toolToExecute = serverToolsCache.find(t => t.name === name);
     if (!toolToExecute) return res.status(404).json({ error: `Server-side tool '${name}' not found in the live registry.` });
@@ -197,12 +228,14 @@ app.post('/api/execute', async (req: express.Request, res: express.Response) => 
     let command = toolToExecute.implementationCode;
     if (args) {
         for (const key in args) {
-            // The argument values are passed directly into the command string.
-            // Security relies on the agent generating correct commands and the user
-            // running this in a secure, local environment as per the README warning.
-            // The previous over-aggressive sanitation was removed as it broke valid commands.
-            const value = String(args[key]);
-            command = command.replace(new RegExp(`\\$\\{${key}\\}`, 'g'), value);
+            let value = args[key];
+            // If the value is an object or array, stringify it as JSON.
+            if (typeof value === 'object' && value !== null) {
+                value = JSON.stringify(value);
+            }
+            // Escape single quotes for shell safety: ' -> '\''
+            const escapedValue = String(value).replace(/'/g, "'\\''");
+            command += ` --${key} '${escapedValue}'`;
         }
     }
 

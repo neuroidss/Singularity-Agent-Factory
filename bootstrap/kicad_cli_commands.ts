@@ -1,0 +1,541 @@
+
+//server/kicad_cli_commands.ts is typescript file with text variable with python code of server/kicad_cli_commands.py
+export const KICAD_CLI_COMMANDS_SCRIPT = `
+import os
+import sys
+import json
+import subprocess
+import time
+import re
+import zipfile
+import glob
+import traceback
+import ast
+import fcntl
+from math import sin, cos, acos, pi, sqrt, ceil, hypot
+
+# --- SKiDL is only needed for netlist generation ---
+try:
+    from skidl import *
+except ImportError:
+    # This will be handled gracefully in generate_netlist
+    pass
+
+# --- pcbnew is needed for PCB manipulation ---
+try:
+    import sys; sys.path.insert(0,'/usr/lib/python3/dist-packages');
+    import pcbnew
+except ImportError:
+    # This will be handled if a pcbnew-dependent command is run
+    pass
+
+from kicad_dsn_utils import *
+
+# --- State File Configuration ---
+STATE_DIR = os.path.join(os.path.dirname(__file__), '..', 'assets')
+os.makedirs(STATE_DIR, exist_ok=True)
+# Freerouting configuration - assumes freerouting.jar is in the same directory as this script
+FREEROUTING_JAR_PATH = os.path.join(os.path.dirname(__file__), 'freerouting.jar')
+
+
+# --- Tool Implementations ---
+class AutoStopper:
+    """A stateful class to decide when to stop the autorouter."""
+    def __init__(self, patience=50, low_progress_threshold=10.0):
+        self.patience = patience
+        self.low_progress_threshold = low_progress_threshold
+        self.low_progress_count = 0
+
+    def __call__(self, msg):
+        if msg.get('msg_type') in ['progress', 'warn']:
+            message_text = msg.get('msg', '')
+            
+            # This regex captures the number of changes from both relevant message formats
+            match = re.search(r"(?:making|There were only) (\\\\d+\\\\.?\\\\d*) changes", message_text)
+
+            if match:
+                changes = float(match.group(1))
+                if changes < self.low_progress_threshold:
+                    self.low_progress_count += 1
+                else:
+                    self.low_progress_count = 0 # Reset if progress is good
+            
+            if self.low_progress_count >= self.patience:
+                print(f"INFO: Stopping autorouter due to low progress ({self.low_progress_count} consecutive rounds with < {self.low_progress_threshold} changes).", file=sys.stderr)
+                return True # Signal to stop
+        return False # Signal to continue
+
+def get_state_path(board_name, suffix):
+    return os.path.join(STATE_DIR, f"{board_name}_{suffix}")
+
+def log_and_return(message, data=None):
+    output = {"message": message}
+    if data:
+        output.update(data)
+    print(json.dumps(output))
+    sys.exit(0)
+
+def log_error_and_exit(message):
+    print(json.dumps({"error": message, "trace": traceback.format_exc()}), file=sys.stderr)
+    sys.exit(1)
+
+def run_subprocess(command):
+    return subprocess.Popen(command, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+
+def define_components(args):
+    """Adds a single component definition, exports its SVG footprint, and returns its dimensions."""
+    state_file = get_state_path(args.projectName, 'state.json')
+    lock_path = state_file + '.lock'
+    
+    svg_path_rel = None
+    dimensions = None
+
+    with open(lock_path, 'w') as lock_file:
+        fcntl.flock(lock_file, fcntl.LOCK_EX)
+        try:
+            try:
+                state = json.load(open(state_file)) if os.path.exists(state_file) else {}
+            except json.JSONDecodeError:
+                state = {}
+
+            if 'components' not in state: state['components'] = []
+            if 'nets' not in state: state['nets'] = []
+            
+            # --- SVG Export and Dimension Extraction ---
+            try:
+                if 'pcbnew' in sys.modules and args.footprintIdentifier and ':' in args.footprintIdentifier:
+                    library_name, footprint_name = args.footprintIdentifier.split(':', 1)
+                    footprint_dir = os.environ.get('KICAD_FOOTPRINT_DIR', '/usr/share/kicad/footprints')
+                    if not os.path.isdir(footprint_dir):
+                        footprint_dir = '/usr/share/kicad/modules' # Fallback for some systems
+
+                    library_path = os.path.join(footprint_dir, f"{library_name}.pretty")
+
+                    if os.path.isdir(library_path):
+                        # Export SVG
+                        final_svg_filename = f"{args.componentReference}_{footprint_name}.svg"
+                        final_svg_path_abs = os.path.join(STATE_DIR, final_svg_filename)
+                        
+                        cli_command = [
+                            'kicad-cli', 'fp', 'export', 'svg',
+                            '--footprint', footprint_name,
+                            '--output', STATE_DIR,
+                            '--layers', 'F.SilkS,F.CrtYd,F.Fab,F.Cu',
+                            '--black-and-white',
+                            library_path
+                        ]
+                        
+                        # kicad-cli outputs to <footprint_name>.svg, so we need to anticipate that and rename it
+                        temp_svg_path = os.path.join(STATE_DIR, f"{footprint_name}.svg")
+                        if os.path.exists(temp_svg_path): os.remove(temp_svg_path) # Clean up old temp file
+                        
+                        # Run the command
+                        subprocess.run(cli_command, check=True, capture_output=True, text=True)
+                        
+                        # Rename the output file
+                        if os.path.exists(temp_svg_path):
+                            if os.path.exists(final_svg_path_abs): os.remove(final_svg_path_abs) # Clean up old final file
+                            os.rename(temp_svg_path, final_svg_path_abs)
+                            svg_path_rel = os.path.relpath(final_svg_path_abs, os.path.join(os.path.dirname(__file__), '..')) # Relative to project root
+
+                        # Extract Dimensions
+                        footprint_file_path = os.path.join(library_path, f"{footprint_name}.kicad_mod")
+                        if os.path.exists(footprint_file_path):
+                            fp = pcbnew.FootprintLoad(library_path, footprint_name)
+                            if fp:
+                                bbox = fp.GetBoundingBox(True, False) # include pads, no text
+                                dimensions = {'width': pcbnew.ToMM(bbox.GetWidth()), 'height': pcbnew.ToMM(bbox.GetHeight())}
+            except Exception as e:
+                # Don't fail the whole step, just log a warning to stderr
+                print(f"Warning: Could not export SVG or get dimensions for {args.footprintIdentifier}. Reason: {e}", file=sys.stderr)
+
+            new_component = {
+                "ref": args.componentReference, "part": args.componentDescription,
+                "value": args.componentValue, "footprint": args.footprintIdentifier,
+                "pin_count": args.numberOfPins, "svgPath": svg_path_rel, "dimensions": dimensions,
+            }
+            # Update or add the component
+            state['components'] = [c for c in state['components'] if c['ref'] != new_component['ref']]
+            state['components'].append(new_component)
+            
+            with open(state_file, 'w') as f:
+                json.dump(state, f, indent=2)
+        finally:
+            fcntl.flock(lock_file, fcntl.LOCK_UN)
+
+    data_to_return = {}
+    if svg_path_rel: data_to_return['svgPath'] = svg_path_rel
+    if dimensions: data_to_return['dimensions'] = dimensions
+
+    log_and_return(f"Component {args.componentReference} defined.", data=data_to_return)
+
+def define_net(args):
+    """Adds a single net definition to the board's state file, with file locking."""
+    state_file = get_state_path(args.projectName, 'state.json')
+    lock_path = state_file + '.lock'
+    with open(lock_path, 'w') as lock_file:
+        fcntl.flock(lock_file, fcntl.LOCK_EX)
+        try:
+            try:
+                state = json.load(open(state_file)) if os.path.exists(state_file) else {}
+            except json.JSONDecodeError:
+                state = {}
+            
+            if 'components' not in state: state['components'] = []
+            if 'nets' not in state: state['nets'] = []
+            
+            raw_pins_arg = args.pins
+            pins_data = []
+            try:
+                parsed_pins = json.loads(raw_pins_arg)
+                if isinstance(parsed_pins, list) and all(isinstance(p, str) for p in parsed_pins):
+                    pins_data = parsed_pins
+                else:
+                    log_error_and_exit(f"Invalid --pins format. Parsed as JSON, but was not a list of strings. Input: '{raw_pins_arg}'")
+            except json.JSONDecodeError:
+                pins_data = [p.strip() for p in raw_pins_arg.split(',') if p.strip()]
+
+            if not pins_data:
+                log_error_and_exit(f"No valid pins found in argument: '{raw_pins_arg}'")
+
+            new_net = { "name": args.netName, "pins": pins_data }
+            # Remove existing net with same name to allow updates
+            state['nets'] = [n for n in state['nets'] if n['name'] != new_net['name']]
+            state['nets'].append(new_net)
+
+            with open(state_file, 'w') as f:
+                json.dump(state, f, indent=2)
+        finally:
+             fcntl.flock(lock_file, fcntl.LOCK_UN)
+    
+    log_and_return(f"Net '{args.netName}' defined successfully with {len(pins_data)} pins.")
+
+
+def generate_netlist(args):
+    """Generates a KiCad netlist file using SKiDL from the project state file."""
+    if 'skidl' not in sys.modules:
+        log_error_and_exit("SKiDL library not found. Please install it ('pip install skidl') to use this tool.")
+    
+    reset() # Reset SKiDL's internal state before each run
+
+    state_file = get_state_path(args.projectName, 'state.json')
+    if not os.path.exists(state_file):
+        log_error_and_exit("State file not found. Please define components and nets first.")
+
+    state = json.load(open(state_file))
+    
+    circuit = Circuit()
+
+    with circuit:
+        for comp_data in state.get("components", []):
+            try:
+                if comp_data.get("pin_count", 0) > 0:
+                     p = Part(tool=SKIDL, name=comp_data['part'], ref=comp_data['ref'], footprint=comp_data['footprint'])
+                     p.value = comp_data['value']
+                     p += [Pin(num=i) for i in range(1, comp_data['pin_count'] + 1)]
+                else:
+                     Part(lib=f"{comp_data['value'].split(':')[0]}.kicad_sym", name=comp_data['value'].split(':')[1], ref=comp_data['ref'], footprint=comp_data['footprint'])
+            except Exception as e:
+                log_error_and_exit(f"Failed to create SKiDL part for {comp_data['ref']}: {e}. Ensure the library is available or provide a pin_count.")
+
+        nets_data = state.get("nets", [])
+        for net_obj in nets_data:
+            net_name = net_obj['name']
+            pins_to_connect_str = net_obj['pins']
+            
+            net = Net(net_name)
+            pins_to_connect = []
+            for pin_str in pins_to_connect_str:
+                match = re.match(r'([A-Za-z]+[0-9]+)-([0-9A-Za-z_]+)', pin_str)
+                if not match:
+                    log_error_and_exit(f"Invalid pin format '{pin_str}' in net '{net_name}'. Expected format 'REF-PIN'.")
+                ref, pin_num = match.groups()
+                part = next((p for p in circuit.parts if str(p.ref) == ref), None)
+                if not part:
+                    log_error_and_exit(f"Part with reference '{ref}' not found in circuit for connection.")
+                
+                pins_to_connect.append(part[pin_num])
+            
+            net += tuple(pins_to_connect)
+    
+    netlist_path = get_state_path(args.projectName, 'netlist.net')
+    circuit.generate_netlist(file_=netlist_path)
+    
+    log_and_return(f"Netlist generated successfully at {netlist_path}.")
+
+def create_initial_pcb(args):
+    """Creates a blank PCB file and imports the netlist using kinet2pcb."""
+    netlist_path = get_state_path(args.projectName, 'netlist.net')
+    pcb_path = get_state_path(args.projectName, 'pcb.kicad_pcb')
+
+    if not os.path.exists(netlist_path):
+        log_error_and_exit("Netlist file not found. Please generate the netlist first.")
+
+    try:
+        command = ['kinet2pcb', '-i', netlist_path, '-o', pcb_path]
+        result = subprocess.run(command, check=True, capture_output=True, text=True)
+    except FileNotFoundError:
+        log_error_and_exit("The 'kinet2pcb' command was not found. Please ensure KiCad's bin directory is in your system's PATH.")
+    except subprocess.CalledProcessError as e:
+        log_error_and_exit(f"An error occurred while running kinet2pcb. Stderr: {e.stderr}. Stdout: {e.stdout}")
+    except Exception as e:
+        log_error_and_exit(f"An unexpected error occurred during initial PCB creation: {str(e)}")
+
+    if not os.path.exists(pcb_path):
+        log_error_and_exit(f"kinet2pcb ran without error, but the output PCB file '{os.path.basename(pcb_path)}' was not created.")
+
+    log_and_return(f"Initial PCB created at {pcb_path} from netlist using kinet2pcb.")
+
+def create_board_outline(args):
+    pcb_path = get_state_path(args.projectName, 'pcb.kicad_pcb')
+    if not os.path.exists(pcb_path):
+        log_error_and_exit("PCB file not found. Create the initial PCB first.")
+
+    board = pcbnew.LoadBoard(pcb_path)
+    
+    for drawing in board.GetDrawings():
+        if drawing.GetLayerName() == 'Edge.Cuts':
+            board.Remove(drawing)
+
+    width_mm, height_mm = args.boardWidthMillimeters, args.boardHeightMillimeters
+    
+    if width_mm <= 0 or height_mm <= 0:
+        # Auto-size logic
+        footprints_bbox = pcbnew.BOX2I()
+        all_footprints = list(board.Footprints())
+        
+        if not all_footprints:
+            width_mm, height_mm = 20, 20
+            x_offset, y_offset = pcbnew.FromMM(5), pcbnew.FromMM(5)
+            w_nm, h_nm = pcbnew.FromMM(width_mm), pcbnew.FromMM(height_mm)
+        else:
+            for fp in all_footprints:
+                footprints_bbox.Merge(fp.GetBoundingBox(True, False))
+
+            margin_x = max(pcbnew.FromMM(2), int(footprints_bbox.GetWidth() * 0.1))
+            margin_y = max(pcbnew.FromMM(2), int(footprints_bbox.GetHeight() * 0.1))
+            footprints_bbox.Inflate(margin_x, margin_y)
+            
+            x_offset = footprints_bbox.GetX()
+            y_offset = footprints_bbox.GetY()
+            w_nm = footprints_bbox.GetWidth()
+            h_nm = footprints_bbox.GetHeight()
+            width_mm = pcbnew.ToMM(w_nm)
+            height_mm = pcbnew.ToMM(h_nm)
+    else:
+        x_offset, y_offset = pcbnew.FromMM(5), pcbnew.FromMM(5)
+        w_nm, h_nm = pcbnew.FromMM(width_mm), pcbnew.FromMM(height_mm)
+
+    points = [
+        pcbnew.VECTOR2I(x_offset, y_offset), pcbnew.VECTOR2I(x_offset + w_nm, y_offset),
+        pcbnew.VECTOR2I(x_offset + w_nm, y_offset + h_nm), pcbnew.VECTOR2I(x_offset, y_offset + h_nm),
+        pcbnew.VECTOR2I(x_offset, y_offset)
+    ]
+    
+    for i in range(len(points) - 1):
+        seg = pcbnew.PCB_SHAPE(board, pcbnew.S_SEGMENT)
+        seg.SetStart(points[i]); seg.SetEnd(points[i+1]); seg.SetLayer(pcbnew.Edge_Cuts); seg.SetWidth(pcbnew.FromMM(0.1))
+        board.Add(seg)
+    
+    pcbnew.SaveBoard(pcb_path, board)
+    log_and_return(f"Board outline created/updated ({width_mm:.2f}mm x {height_mm:.2f}mm).")
+
+def arrange_components(args):
+    pcb_path = get_state_path(args.projectName, 'pcb.kicad_pcb')
+    if not os.path.exists(pcb_path):
+        log_error_and_exit("PCB file not found.")
+    
+    board = pcbnew.LoadBoard(pcb_path)
+    board.BuildConnectivity()
+    footprints = list(board.Footprints())
+
+    edge_cuts = merge_all_drawings(board, 'Edge.Cuts')
+    if not edge_cuts:
+        log_error_and_exit("No Edge.Cuts layer found to define board boundary.")
+    
+    all_x = [p[0] for p in edge_cuts[0]]; all_y = [p[1] for p in edge_cuts[0]]
+    min_x, max_x = min(all_x), max(all_x); min_y, max_y = min(all_y), max(all_y)
+
+    layout_data = {
+        "board_outline": {
+            "x": pcbnew.ToMM(min_x), "y": pcbnew.ToMM(min_y),
+            "width": pcbnew.ToMM(max_x - min_x), "height": pcbnew.ToMM(max_y - min_y),
+        },
+        "components": [], "nets": []
+    }
+    
+    num_footprints = len(footprints); grid_size = ceil(sqrt(num_footprints))
+    cell_w = (max_x - min_x) / grid_size; cell_h = (max_y - min_y) / grid_size
+
+    for i, fp in enumerate(footprints):
+        row, col = divmod(i, grid_size)
+        x = min_x + (col + 0.5) * cell_w; y = min_y + (row + 0.5) * cell_h
+        fp.SetPosition(pcbnew.VECTOR2I(int(x), int(y)))
+        
+        bbox = fp.GetBoundingBox(False, False)
+        layout_data["components"].append({
+            "ref": fp.GetReference(), "x": pcbnew.ToMM(x), "y": pcbnew.ToMM(y),
+            "width": pcbnew.ToMM(bbox.GetWidth()), "height": pcbnew.ToMM(bbox.GetHeight()),
+        })
+
+    pad_type_vec = [pcbnew.PCB_PAD_T]
+    
+    for net_info in board.GetNetsByNetcode().values():
+        net_name = net_info.GetNetname()
+        if net_name:
+             pads_on_net = board.GetConnectivity().GetNetItems(net_info.GetNetCode(), pad_type_vec)
+             pins = [f"{pad.GetParent().GetReference()}-{pad.GetPadName()}" for pad in pads_on_net]
+             if pins: layout_data["nets"].append({"name": net_name, "pins": pins})
+
+    placed_png = get_state_path(args.projectName, 'placed.png')
+    plot_controller = pcbnew.PLOT_CONTROLLER(board)
+    plot_options = plot_controller.GetPlotOptions()
+    plot_options.SetOutputDirectory(STATE_DIR); plot_options.SetFormat(pcbnew.PLOT_FORMAT_PNG)
+    plot_options.SetColorMode(True); plot_options.SetScale(2)
+    plot_controller.SetLayer(pcbnew.F_Cu)
+    plot_controller.OpenPlotfile("placed", pcbnew.PLOT_FORMAT_PNG, "Placed Components")
+    plot_controller.PlotLayer()
+    
+    pcbnew.SaveBoard(pcb_path, board)
+
+    log_and_return(
+        "Workflow paused for interactive layout.",
+        {
+            "layout_data": layout_data,
+            "artifacts": {"placed_png": os.path.relpath(placed_png, STATE_DIR)}
+        }
+    )
+
+def update_component_positions(args):
+    pcb_path = get_state_path(args.projectName, 'pcb.kicad_pcb')
+    if not os.path.exists(pcb_path):
+        log_error_and_exit("PCB file not found.")
+    
+    board = pcbnew.LoadBoard(pcb_path)
+    positions = json.loads(args.componentPositionsJSON)
+
+    for ref, pos in positions.items():
+        fp = board.FindFootprintByReference(ref)
+        if fp:
+            fp.SetPosition(pcbnew.VECTOR2I(pcbnew.FromMM(pos['x']), pcbnew.FromMM(pos['y'])))
+    
+    pcbnew.SaveBoard(pcb_path, board)
+    log_and_return("Component positions updated successfully.")
+
+
+def autoroute_pcb(args):
+    pcb_path = get_state_path(args.projectName, 'pcb.kicad_pcb')
+    dsn_path = get_state_path(args.projectName, 'design.dsn')
+    ses_path = get_state_path(args.projectName, 'routed.ses')
+    
+    if not os.path.exists(pcb_path):
+        log_error_and_exit("PCB file not found.")
+
+    board = pcbnew.LoadBoard(pcb_path)
+
+    dsn_content = board_to_dsn(pcb_path, board, include_zones=False)
+    with open(dsn_path, 'w') as f:
+        f.write(str(dsn_content))
+
+    if not os.path.exists(FREEROUTING_JAR_PATH):
+        log_error_and_exit(f"FreeRouting JAR not found at {FREEROUTING_JAR_PATH}")
+    
+    command = ["java", "-jar", FREEROUTING_JAR_PATH, "-de", dsn_path, "-do", ses_path, "-mp", "10", "-ep", "10"]
+    proc = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    
+    auto_stopper = AutoStopper(patience=10, low_progress_threshold=5.0)
+    stop_routing = False
+    
+    while proc.poll() is None:
+        line = proc.stderr.readline()
+        if line:
+            print("FREEROUTING: " + line.strip(), file=sys.stderr)
+            if auto_stopper({'msg_type': 'progress', 'msg': line.strip()}):
+                proc.terminate()
+                stop_routing = True
+                break
+        else:
+            time.sleep(0.1)
+    
+    if proc.returncode != 0 and not stop_routing:
+        log_error_and_exit(f"FreeRouting failed. Check server logs. Last output: {proc.stderr.read()}")
+    
+    if not os.path.exists(ses_path):
+        log_error_and_exit("Routed session file (.ses) not created by FreeRouting.")
+        
+    for track in list(board.GetTracks()):
+         board.Remove(track)
+
+    pcbnew.ImportSES(board, ses_path, True)
+    pcbnew.SaveBoard(pcb_path, board)
+
+    routed_svg_path = get_state_path(args.projectName, 'routed.svg')
+    plot_controller = pcbnew.PLOT_CONTROLLER(board)
+    plot_options = plot_controller.GetPlotOptions()
+    plot_options.SetOutputDirectory(STATE_DIR); plot_options.SetPlotFrameRef(False)
+    plot_options.SetScale(2); plot_options.SetColorMode(True)
+    
+    plot_options.SetFormat(pcbnew.PLOT_FORMAT_SVG)
+    layers_to_plot = [
+        (pcbnew.F_Cu, pcbnew.PLT_COLOR_GREEN), (pcbnew.B_Cu, pcbnew.PLT_COLOR_RED),
+        (pcbnew.Edge_Cuts, pcbnew.PLT_COLOR_YELLOW)
+    ]
+    for layer_id, color in layers_to_plot:
+        plot_controller.SetLayer(layer_id)
+        plot_controller.SetLayerColor(layer_id, color)
+    plot_controller.OpenPlotfile("routed", pcbnew.PLOT_FORMAT_SVG, "Routed Board")
+    plot_controller.PlotLayers(pcbnew.LSET.AllCuMask())
+
+    log_and_return("Autorouting complete.", {"artifacts": {"routed_svg": os.path.relpath(routed_svg_path, STATE_DIR)}})
+
+
+def export_fabrication_files(args):
+    pcb_path = get_state_path(args.projectName, 'pcb.kicad_pcb')
+    fab_dir = os.path.join(STATE_DIR, f"{args.projectName}_fab")
+    os.makedirs(fab_dir, exist_ok=True)
+
+    board = pcbnew.LoadBoard(pcb_path)
+    pctl = pcbnew.PLOT_CONTROLLER(board)
+    popt = pctl.GetPlotOptions()
+
+    popt.SetOutputDirectory(fab_dir); popt.SetPlotFrameRef(False)
+    popt.SetGerberOptions(pcbnew.GERBER_OPTIONS.KL_SUBTRACT_SOLDER_MASK_FROM_SILK)
+    popt.SetUseGerberProtelExtensions(True)
+    
+    gerber_layers = [
+        ("F.Cu", pcbnew.F_Cu), ("B.Cu", pcbnew.B_Cu), ("F.Paste", pcbnew.F_Paste), ("B.Paste", pcbnew.B_Paste),
+        ("F.SilkS", pcbnew.F_SilkS), ("B.SilkS", pcbnew.B_SilkS), ("F.Mask", pcbnew.F_Mask), ("B.Mask", pcbnew.B_Mask),
+        ("Edge.Cuts", pcbnew.Edge_Cuts)
+    ]
+    for name, layer_id in gerber_layers:
+        pctl.SetLayer(layer_id)
+        pctl.OpenPlotfile(name, pcbnew.PLOT_FORMAT_GERBER, f"Gerber {name}")
+        pctl.PlotLayer()
+    pctl.ClosePlot()
+    
+    drlwriter = pcbnew.EXCELLON_WRITER(board)
+    drlwriter.SetMapFileFormat(pcbnew.PLOT_FORMAT_GERBER)
+    drlwriter.SetOptions(False, True, pcbnew.VECTOR2I(0,0), False)
+    drlwriter.CreateDrillandMapFiles(fab_dir, True, False)
+    
+    temp_vrml_path = os.path.join(fab_dir, 'temp.vrml')
+    board.ExportVRML(temp_vrml_path, 0, True, False, None, 2.0)
+    top_png_path = get_state_path(args.projectName, 'render_top.png')
+    bottom_png_path = get_state_path(args.projectName, 'render_bottom.png')
+    
+    subprocess.run(['kicad-cli', 'pcb', 'render', '--output', top_png_path, '--camera-top', pcb_path], check=True, capture_output=True)
+    subprocess.run(['kicad-cli', 'pcb', 'render', '--output', bottom_png_path, '--camera-bottom', pcb_path], check=True, capture_output=True)
+
+    zip_path = os.path.join(STATE_DIR, f"{args.projectName}_fab.zip")
+    with zipfile.ZipFile(zip_path, 'w') as zf:
+        for file in glob.glob(os.path.join(fab_dir, '*')):
+            zf.write(file, os.path.basename(file))
+    
+    log_and_return("Fabrication files exported and zipped.", {
+        "artifacts": {
+            "boardName": args.projectName,
+            "image_top_3d": os.path.relpath(top_png_path, STATE_DIR),
+            "image_bottom_3d": os.path.relpath(bottom_png_path, STATE_DIR),
+            "fab_zip": os.path.relpath(zip_path, STATE_DIR)
+        }
+    })

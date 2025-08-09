@@ -4,7 +4,30 @@ import * as geminiService from './geminiService';
 import * as openAIService from './openAIService';
 import * as ollamaService from './ollamaService';
 import * as huggingFaceService from './huggingFaceService';
-import { STANDARD_TOOL_CALL_SYSTEM_PROMPT } from '../constants';
+
+// This prompt is now only used as a fallback for providers that don't support native tool calling.
+const JSON_TOOL_CALL_SYSTEM_PROMPT = `
+You have access to a set of tools. To answer the user's request, you must choose one or more tools and call them.
+Your response MUST be a valid JSON object representing a single tool call, OR a JSON array of tool call objects. Do not add any text, reasoning, or markdown formatting.
+
+**Single Tool Call Format:**
+{
+  "name": "tool_name_to_call",
+  "arguments": { "arg1": "value1" }
+}
+
+**Multiple Tool Calls Format (for parallel execution):**
+[
+  { "name": "tool_1", "arguments": { "arg_a": "val_a" } },
+  { "name": "tool_2", "arguments": { "arg_b": "val_b" } }
+]
+
+If no tool is required, respond with an empty JSON object: {}.
+
+Here are the available tools:
+{{TOOLS_JSON}}
+`;
+
 
 const parseJsonOrNull = (jsonString: string): any => {
     if (!jsonString) return null;
@@ -22,13 +45,28 @@ const parseJsonOrNull = (jsonString: string): any => {
 
 const parseToolCallResponse = (responseText: string): AIResponse => {
     const parsed = parseJsonOrNull(responseText);
-    if (!parsed || Object.keys(parsed).length === 0 || !parsed.name) {
-        return { toolCall: null };
+    if (!parsed || Object.keys(parsed).length === 0) {
+        return { toolCalls: null };
     }
-    if (typeof parsed.arguments === 'undefined') {
-        parsed.arguments = {};
+
+    // Handle both a single tool call object and an array of them
+    const toolCallObjects = Array.isArray(parsed) ? parsed : [parsed];
+
+    const validToolCalls = toolCallObjects
+        .map(call => {
+            if (!call || typeof call !== 'object' || !call.name) return null;
+            if (typeof call.arguments === 'undefined') {
+                call.arguments = {};
+            }
+            return { name: call.name, arguments: call.arguments };
+        })
+        .filter(Boolean); // filter out any nulls
+
+    if (validToolCalls.length === 0) {
+        return { toolCalls: null };
     }
-    return { toolCall: { name: parsed.name, arguments: parsed.arguments } };
+
+    return { toolCalls: validToolCalls as any[] };
 };
 
 export const generateResponse = async (
@@ -43,26 +81,17 @@ export const generateResponse = async (
         case ModelProvider.GoogleAI:
             return geminiService.generateWithNativeTools(userInput, systemInstruction, model.id, relevantTools);
         
-        case ModelProvider.OpenAI_API: {
-            const toolsForPrompt = relevantTools.map(t => ({ name: t.name, description: t.description, parameters: t.parameters }));
-            const toolDefinitions = JSON.stringify(toolsForPrompt, null, 2);
-            const fullSystemInstruction = systemInstruction + '\n\n' + STANDARD_TOOL_CALL_SYSTEM_PROMPT.replace('{{TOOLS_JSON}}', toolDefinitions);
-            const responseText = await openAIService.generateJsonOutput(userInput, fullSystemInstruction, model.id, apiConfig);
-            return parseToolCallResponse(responseText);
-        }
+        case ModelProvider.OpenAI_API:
+             return openAIService.generateWithTools(userInput, systemInstruction, model.id, apiConfig, relevantTools);
 
-        case ModelProvider.Ollama: {
-            const toolsForPrompt = relevantTools.map(t => ({ name: t.name, description: t.description, parameters: t.parameters }));
-            const toolDefinitions = JSON.stringify(toolsForPrompt, null, 2);
-            const fullSystemInstruction = systemInstruction + '\n\n' + STANDARD_TOOL_CALL_SYSTEM_PROMPT.replace('{{TOOLS_JSON}}', toolDefinitions);
-            const responseText = await ollamaService.generateJsonOutput(userInput, fullSystemInstruction, model.id, 0.1, apiConfig);
-            return parseToolCallResponse(responseText);
-        }
+        case ModelProvider.Ollama:
+            return ollamaService.generateWithTools(userInput, systemInstruction, model.id, apiConfig, relevantTools);
         
         case ModelProvider.HuggingFace: {
+            // HuggingFace pipeline doesn't support native tool calling, so we fall back to JSON prompting.
             const toolsForPrompt = relevantTools.map(t => ({ name: t.name, description: t.description, parameters: t.parameters }));
             const toolDefinitions = JSON.stringify(toolsForPrompt, null, 2);
-            const fullSystemInstruction = systemInstruction + '\n\n' + STANDARD_TOOL_CALL_SYSTEM_PROMPT.replace('{{TOOLS_JSON}}', toolDefinitions);
+            const fullSystemInstruction = systemInstruction + '\n\n' + JSON_TOOL_CALL_SYSTEM_PROMPT.replace('{{TOOLS_JSON}}', toolDefinitions);
             const responseText = await huggingFaceService.generateJsonOutput(userInput, fullSystemInstruction, model.id, 0.1, apiConfig, onProgress);
             return parseToolCallResponse(responseText);
         }
@@ -70,42 +99,4 @@ export const generateResponse = async (
         default:
             throw new Error(`Unsupported model provider: ${model.provider}`);
     }
-};
-
-export const generateStructuredResponse = async (
-    userInput: string,
-    systemInstruction: string,
-    model: AIModel,
-    apiConfig: APIConfig,
-    onProgress: (message: string) => void,
-): Promise<any> => {
-     let responseText: string;
-     // This service needs to call a provider that supports JSON output.
-     switch (model.provider) {
-        case ModelProvider.GoogleAI:
-             responseText = await geminiService.generateJsonOutput(userInput, systemInstruction, model.id);
-             break;
-
-        case ModelProvider.OpenAI_API:
-            responseText = await openAIService.generateJsonOutput(userInput, systemInstruction, model.id, apiConfig);
-            break;
-
-        case ModelProvider.Ollama:
-            responseText = await ollamaService.generateJsonOutput(userInput, systemInstruction, model.id, 0.1, apiConfig);
-            break;
-        
-        case ModelProvider.HuggingFace:
-             responseText = await huggingFaceService.generateJsonOutput(userInput, systemInstruction, model.id, 0.1, apiConfig, onProgress);
-             break;
-
-        default:
-            throw new Error(`Unsupported model provider for structured JSON: ${model.provider}`);
-    }
-
-    const parsed = parseJsonOrNull(responseText);
-    if (parsed === null) {
-        console.error("Failed to parse structured JSON from AI:", responseText);
-        throw new Error(`AI returned invalid or empty JSON.`);
-    }
-    return parsed;
 };
