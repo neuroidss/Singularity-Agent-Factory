@@ -2,6 +2,7 @@
 import React, { useMemo } from 'react';
 import type { LLMTool, UIToolRunnerProps } from '../types';
 import DebugLogView from './ui_tools/DebugLogView';
+import * as Icons from './icons';
 
 // Tell TypeScript about the global Babel object from the script tag in index.html
 declare var Babel: any;
@@ -73,8 +74,11 @@ export const UIToolRunner: React.FC<UIToolRunnerComponentProps> = ({ tool, props
         presets: ['react']
       });
       
-      const componentFactory = new Function('React', 'UIToolRunner', `return ${transformedCode}`);
-      return componentFactory(React, UIToolRunner);
+      const iconNames = Object.keys(Icons);
+      const iconComponents = Object.values(Icons);
+      
+      const componentFactory = new Function('React', 'UIToolRunner', ...iconNames, `return ${transformedCode}`);
+      return componentFactory(React, UIToolRunner, ...iconComponents);
 
     } catch (e) {
       console.error(`Error compiling UI tool '${tool.name}':`, e);

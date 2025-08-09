@@ -257,7 +257,7 @@ export const useAppRuntime = (props: UseAppRuntimeProps) => {
     executeActionRef.current = executeAction;
     
     const processRequest = useCallback(async (
-        prompt: string,
+        prompt: { text: string; files: any[] },
         systemInstruction: string,
         agentId: string
     ): Promise<EnrichedAIResponse[] | null> => {

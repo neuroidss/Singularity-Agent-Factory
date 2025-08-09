@@ -1,4 +1,5 @@
 
+
 import { GoogleGenAI, Type, FunctionDeclaration, GenerateContentResponse } from "@google/genai";
 import type { AIResponse, LLMTool, ToolParameter, AIToolCall } from "../types";
 
@@ -34,7 +35,7 @@ const buildGeminiTools = (tools: LLMTool[]): { functionDeclarations: FunctionDec
             if (param.type === 'array') {
                 properties[param.name] = { type: Type.ARRAY, description: param.description, items: { type: Type.STRING } };
             } else if (param.type === 'object') {
-                 properties[param.name] = { type: Type.OBJECT, description: param.description };
+                 properties[param.name] = { type: Type.OBJECT, description: param.description, properties: {} }; // Note: Cannot be an empty object, but we'll allow it for now.
             } else {
                 properties[param.name] = { type: mapTypeToGemini(param.type), description: param.description };
             }
@@ -76,11 +77,28 @@ const parseNativeToolCall = (response: GenerateContentResponse, toolNameMap: Map
     return { toolCalls: toolCalls.length > 0 ? toolCalls : null };
 };
 
-const handleAPIError = (error: unknown, rawResponseForDebug?: string): Error => {
+const handleAPIError = (error: unknown, requestForDebug?: any, rawResponseForDebug?: string): Error => {
     console.error("Error in Gemini Service:", error);
+    if (requestForDebug) {
+        try {
+            // Create a debug-friendly version of the request, truncating large file data.
+            const debugRequest = JSON.parse(JSON.stringify(requestForDebug)); // Deep copy
+            if (debugRequest.contents && typeof debugRequest.contents === 'object' && Array.isArray(debugRequest.contents.parts)) {
+                debugRequest.contents.parts.forEach((part: any) => {
+                    if (part.inlineData && typeof part.inlineData.data === 'string') {
+                        part.inlineData.data = part.inlineData.data.substring(0, 100) + '... [TRUNCATED]';
+                    }
+                });
+            }
+            console.error("Failing Gemini Request Payload:", JSON.stringify(debugRequest, null, 2));
+        } catch(e) {
+            console.error("Failed to serialize the debug request payload:", e);
+        }
+    }
+
     const errorDetails = (error as any).message || (error as any).toString();
     const responseText = (error as any).response?.text;
-    const finalMessage = `AI processing failed: ${errorDetails}${responseText ? `\nResponse: ${responseText}` : ''}`;
+    const finalMessage = `AI processing failed: ${errorDetails}${responseText ? `\nResponse: ${responseText}` : ''}. Check the browser console for the full request payload.`;
     
     const processingError = new Error(finalMessage) as any;
     processingError.rawAIResponse = rawResponseForDebug || JSON.stringify(error, null, 2);
@@ -92,25 +110,78 @@ export const generateWithNativeTools = async (
     systemInstruction: string,
     modelId: string,
     relevantTools: LLMTool[],
+    files: { name: string, type: string, data: string }[] = []
 ): Promise<AIResponse> => {
     const ai = getAIClient();
     const { functionDeclarations, toolNameMap } = buildGeminiTools(relevantTools);
     let rawResponseForDebug = "";
 
-    try {
-        const response = await ai.models.generateContent({
-            model: modelId,
-            contents: userInput,
-            config: {
-                systemInstruction: systemInstruction,
-                temperature: 0.1,
-                tools: functionDeclarations.length > 0 ? [{ functionDeclarations }] : undefined,
+    const parts: any[] = [{ text: userInput }];
+    for (const file of files) {
+        parts.push({
+            inlineData: {
+                mimeType: file.type,
+                data: file.data,
             },
         });
+    }
+
+    const requestPayload = {
+        model: modelId,
+        contents: { parts }, // Always use the {parts: [...]} structure
+        config: {
+            systemInstruction: systemInstruction,
+            temperature: 0.1,
+            tools: functionDeclarations.length > 0 ? [{ functionDeclarations }] : undefined,
+        },
+    };
+
+    try {
+        const response = await ai.models.generateContent(requestPayload);
         
         rawResponseForDebug = JSON.stringify(response, null, 2);
         return parseNativeToolCall(response, toolNameMap);
     } catch (error) {
-        throw handleAPIError(error, rawResponseForDebug);
+        throw handleAPIError(error, requestPayload, rawResponseForDebug);
+    }
+};
+
+export const generateWithGoogleSearch = async (
+    prompt: string,
+    files: { name: string; type: string; data: string }[] = []
+): Promise<{ summary: string; sources: any[] }> => {
+    const ai = getAIClient();
+
+    const parts: any[] = [{ text: prompt }];
+    for (const file of files) {
+        parts.push({
+            inlineData: {
+                mimeType: file.type,
+                data: file.data,
+            },
+        });
+    }
+
+    const requestPayload = {
+        model: "gemini-2.5-flash",
+        contents: { parts }, // Always use the {parts: [...]} structure
+        config: {
+            tools: [{ googleSearch: {} }],
+        },
+    };
+    
+    let rawResponseForDebug = "";
+
+    try {
+        const response = await ai.models.generateContent(requestPayload);
+        rawResponseForDebug = JSON.stringify(response, null, 2);
+
+        const summary = response.text;
+        const groundingMetadata = response.candidates?.[0]?.groundingMetadata;
+        const sources = groundingMetadata?.groundingChunks?.map(chunk => chunk.web).filter(Boolean) || [];
+        
+        return { summary, sources };
+    } catch(error) {
+        throw handleAPIError(error, requestPayload, rawResponseForDebug);
     }
 };

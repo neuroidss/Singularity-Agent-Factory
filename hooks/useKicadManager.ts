@@ -4,7 +4,7 @@ import type { WorkflowStep, AIToolCall, EnrichedAIResponse, LLMTool, KnowledgeGr
 
 type UseKicadManagerProps = {
     logEvent: (message: string) => void;
-    startSwarmTask: (params: { task: string, systemPrompt: string | null }) => Promise<void>;
+    startSwarmTask: (params: { task: any, systemPrompt: string | null }) => Promise<void>;
 };
 
 export const useKicadManager = (props: UseKicadManagerProps) => {
@@ -22,7 +22,7 @@ export const useKicadManager = (props: UseKicadManagerProps) => {
         setKicadLog(prev => [...prev.slice(-99), message]);
     }, []);
 
-    const handleStartKicadTask = useCallback(async (prompt: string) => {
+    const handleStartKicadTask = useCallback(async (payload: { prompt: string; files: any[]; urls: string[]; useSearch: boolean; }) => {
         // Reset all states for the new task
         setKicadLog([]);
         setCurrentLayoutData(null);
@@ -39,28 +39,42 @@ export const useKicadManager = (props: UseKicadManagerProps) => {
 You are an expert KiCad automation engineer agent in a swarm. Your goal is to contribute to the creation of a PCB based on a user's request by calling one or more of the available KiCad tools.
 
 ## KiCad Workflow & Rules
-You MUST follow this sequence of operations. Check the action history to see what the previous agent did, and perform the NEXT logical step(s). The KiCad tools are already installed on the server.
+You MUST follow this sequence of operations. Check the action history to see what the previous agent did, and perform the NEXT logical step(s).
 
-1.  **Define ALL Components (Parallel Execution):** Your first step MUST be to define every single component from the user's request. You can and SHOULD call \\\`Define KiCad Component\\\` for all components in parallel in a single response.
-2.  **Define ALL Nets (Parallel Execution):** After all components are defined, you MUST define every single electrical net from the user's request. Call the \\\`Define KiCad Net\\\` tool for each net. This can be done in parallel.
-3.  **Generate Netlist:** Once ALL components AND nets are defined, call \\\`Generate KiCad Netlist\\\`.
-4.  **Create PCB:** After the netlist, call \\\`Create Initial PCB\\\`.
-5.  **Arrange Components:** After creating the PCB, call \\\`Arrange Components\\\`. This step triggers the client-side layout. You must decide if the agent should wait for user input (\`waitForUserInput: true\`) or proceed autonomously (\`waitForUserInput: false\`).
-6.  **Update Component Positions & Board Outline:** After the client-side layout is complete (either automatically or by the user clicking 'commit'), the agent will be re-invoked. This step is handled by the client, but the NEXT tool for the agent to call is **Autoroute PCB**.
-7.  **Autoroute:** After arrangement is committed, call \\\`Autoroute PCB\\\`.
-8.  **Export:** Finally, call \\\`Export Fabrication Files\\\`.
-9.  **Task Complete:** After exporting, you MUST call the \\\`Task Complete\\\` tool to signal the end of the workflow.
+1.  **Define ALL Components (Parallel Execution):** Your first step MUST be to define every single component from the user's request. Call \`Define KiCad Component\` for all components in parallel in a single response.
+2.  **Define ALL Placement Constraints (Parallel Execution):** If the request implies mechanical constraints (e.g., connectors must be X mm apart, circular layouts), define them using \`Define KiCad Placement Constraint\`. Do this after components are defined.
+3.  **Define ALL Nets (Parallel Execution):** After all components and constraints are defined, define every single electrical net. Call \`Define KiCad Net\` for each net in parallel.
+4.  **Generate Netlist:** After all components, constraints, and nets are defined, call \`Generate KiCad Netlist\`.
+5.  **Create PCB & Arrange:** Call \`Create Initial PCB\`, then immediately call \`Arrange Components\`. You must decide if the agent should wait for user input (\`waitForUserInput: true\`) or proceed autonomously (\`waitForUserInput: false\`).
+6.  **Create Board Outline:** After arrangement is committed, call \`Create Board Outline\`.
+    *   You can specify a rectangular shape with \`boardWidthMillimeters\` and \`boardHeightMillimeters\`.
+    *   **NEW:** You can create a circular board by setting \`shape='circle'\` and providing \`diameterMillimeters\`.
+    *   If you omit dimensions, the tool will automatically create an outline that fits all components.
+7.  **Autoroute:** After the outline is created, the next step is to call \`Autoroute PCB\`.
+8.  **Export:** Finally, call \`Export Fabrication Files\`.
+9.  **Task Complete:** After exporting, you MUST call the \`Task Complete\` tool.
 
 ## Critical Instructions
-*   **PARALLELISM:** When a step can be broken down into independent actions (like defining multiple components or nets), you MUST call the relevant tool for each action in a single turn.
-*   **PROJECT NAME:** You MUST use the exact 'projectName' provided for ALL tool calls. This is critical.
-*   **ONE LOGICAL STEP:** Your job is to decide and execute the next logical set of actions. The swarm will handle the rest.
+*   **Mezzanine Boards:** If asked to design a mezzanine or shield for a board like an Arduino or Seeed Xiao, DO NOT place the main board itself. INSTEAD, add standard 2.54mm pin header components (e.g., from the 'Connector_PinHeader_2.54mm' library) to represent the connection points. Connect the nets to these headers.
+*   **Circular Layouts:** For circular layouts (e.g., placing pogo pins in a ring), you MUST calculate the (x, y) coordinates for each component using trigonometry and apply them with \`Define KiCad Placement Constraint\`. Define a radius and calculate \`x = radius * cos(angle)\` and \`y = radius * sin(angle)\` for each component, incrementing the angle.
+*   **PARALLELISM:** When a step can be broken down into independent actions (like defining multiple components), you MUST call the relevant tool for all actions in parallel in a single turn.
+*   **PROJECT NAME:** You MUST use the exact 'projectName' provided for ALL tool calls.
 *   **CHECK HISTORY:** Carefully review the swarm's action history to determine what has already been done. DO NOT repeat a step.
 `;
     
-        const fullTaskPrompt = `User Request: "${prompt}"\n\nUse this project name for all steps: "${projectName}"`;
+        const nonEmptyUrls = payload.urls.filter(u => u.trim() !== '');
+        const augmentedPrompt = `${payload.prompt}\n\n${nonEmptyUrls.length > 0 ? `Reference URLs:\n${nonEmptyUrls.join('\n')}` : ''}`;
 
-        await startSwarmTask({ task: fullTaskPrompt, systemPrompt: kicadSystemPrompt });
+        const taskPayload = {
+            userRequest: {
+                text: augmentedPrompt,
+                files: payload.files, // Already base64 encoded
+            },
+            useSearch: payload.useSearch,
+            projectName: projectName,
+        };
+
+        await startSwarmTask({ task: taskPayload, systemPrompt: kicadSystemPrompt });
 
     }, [logKicadEvent, startSwarmTask]);
     

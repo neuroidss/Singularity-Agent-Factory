@@ -1,7 +1,6 @@
-
 import React, { useState, useCallback, useRef, useEffect } from 'react';
 import { SWARM_AGENT_SYSTEM_PROMPT } from '../constants';
-import * as aiService from '../services/aiService';
+import { contextualizeWithSearch } from '../services/aiService';
 import type { AgentWorker, EnrichedAIResponse, AgentStatus, RobotState, LLMTool, AIModel, APIConfig, AIResponse, KnowledgeGraph } from '../types';
 
 type UseSwarmManagerProps = {
@@ -22,7 +21,7 @@ export const useSwarmManager = (props: UseSwarmManagerProps) => {
 
     const [agentSwarm, setAgentSwarm] = useState<AgentWorker[]>([]);
     const [isSwarmRunning, setIsSwarmRunning] = useState(false);
-    const [currentUserTask, setCurrentUserTask] = useState<string>('');
+    const [currentUserTask, setCurrentUserTask] = useState<any>(null);
     const [currentSystemPrompt, setCurrentSystemPrompt] = useState<string>(SWARM_AGENT_SYSTEM_PROMPT);
     const [pauseState, setPauseState] = useState<PauseState>(null);
     
@@ -54,7 +53,7 @@ export const useSwarmManager = (props: UseSwarmManagerProps) => {
     }, []);
     
     const runSwarmCycle = useCallback(async (
-        processRequest: (prompt: string, systemInstruction: string, agentId: string) => Promise<EnrichedAIResponse[] | null>
+        processRequest: (prompt: any, systemInstruction: string, agentId: string) => Promise<EnrichedAIResponse[] | null>
     ) => {
         if (!isRunningRef.current) {
             return;
@@ -77,13 +76,48 @@ export const useSwarmManager = (props: UseSwarmManagerProps) => {
         try {
             setAgentSwarm(prev => prev.map(a => a.id === agent.id ? { ...a, status: 'working', lastAction: 'Thinking...', error: null } : a));
             
+            let finalUserRequestText = currentUserTask.userRequest.text;
+
+            // NEW: CONTEXTUALIZATION STEP
+            if (currentUserTask.useSearch) {
+                logEvent('🔎 Performing web search for additional context...');
+                try {
+                    const searchPrompt = `Based on the following user request and any provided files, find and summarize the key technical requirements, component datasheets, pinouts, and specifications needed to design a PCB. \n\nUser Request: "${currentUserTask.userRequest.text}"`;
+                    
+                    const searchResult = await contextualizeWithSearch({
+                        text: searchPrompt,
+                        files: currentUserTask.userRequest.files,
+                    });
+                    
+                    if (searchResult.summary) {
+                        const sourceList = searchResult.sources.map(s => `- ${s.title}: ${s.uri}`).join('\n');
+                        const searchContext = `Web Search Results:\nSummary: ${searchResult.summary}\nSources:\n${sourceList}`;
+                        
+                        finalUserRequestText = `The user's original request was: "${currentUserTask.userRequest.text}"\n\nTo help you, a pre-analysis was performed using web search. Use the following information to guide your decisions:\n\n---\n${searchContext}\n---`;
+                        
+                        logEvent('✨ Search complete. Context appended to agent prompt.');
+                        if (searchResult.sources.length > 0) {
+                            logEvent(`📚 Sources Found:\n${sourceList}`);
+                        }
+                    }
+                } catch (e) {
+                    const errorMessage = e instanceof Error ? e.message : String(e);
+                    logEvent(`[WARN] ⚠️ Web search step failed: ${errorMessage}. Proceeding without search context.`);
+                }
+            }
+
             const historyString = swarmHistoryRef.current.length > 0
                 ? `The following actions have already been performed:\n${swarmHistoryRef.current.map(r => `Action: ${r.toolCall?.name || 'Unknown'} - Result: ${r.executionError ? `FAILED (${r.executionError})` : `SUCCEEDED (${JSON.stringify(r.executionResult?.message || r.executionResult?.stdout)})`}`).join('\n')}`
                 : "No actions have been performed yet.";
             
-            const promptForAgent = `The overall goal is: "${currentUserTask}".\n\n${historyString}\n\nBased on this, what is the single next logical action or set of actions to perform? If the goal is complete, you MUST call the "Task Complete" tool.`;
+            const promptForAgent = `The overall goal is: "${finalUserRequestText}".\n\n${historyString}\n\nBased on this, what is the single next logical action or set of actions to perform? If the goal is complete, you MUST call the "Task Complete" tool.`;
             
-            const results = await processRequest(promptForAgent, currentSystemPrompt, agent.id);
+            const promptPayload = {
+                text: promptForAgent,
+                files: currentUserTask.userRequest.files,
+            };
+
+            const results = await processRequest(promptPayload, currentSystemPrompt, agent.id);
 
             console.log('[DEBUG_GRAPH] Swarm cycle received results:', JSON.stringify(results, null, 2));
 
@@ -152,13 +186,23 @@ export const useSwarmManager = (props: UseSwarmManagerProps) => {
         }
     }, [currentUserTask, logEvent, currentSystemPrompt, handleStopSwarm]);
 
-    const startSwarmTask = useCallback(async ({ task, systemPrompt }: { task: string, systemPrompt: string | null }) => {
+    const startSwarmTask = useCallback(async ({ task, systemPrompt }: { task: any, systemPrompt: string | null }) => {
         swarmHistoryRef.current = [];
         swarmIterationCounter.current = 0;
         
         const timestamp = new Date().toLocaleTimeString();
-        setEventLog(() => [`[${timestamp}] [INFO] 🚀 Starting task: "${task}"`]);
-        setCurrentUserTask(task);
+        setEventLog(() => [`[${timestamp}] [INFO] 🚀 Starting task...`]);
+
+        // Normalize the task payload to ensure a consistent structure
+        let finalTask = task;
+        if (typeof task === 'string') {
+            finalTask = {
+                userRequest: { text: task, files: [] },
+                useSearch: false,
+            };
+        }
+        
+        setCurrentUserTask(finalTask);
         setCurrentSystemPrompt(systemPrompt || SWARM_AGENT_SYSTEM_PROMPT);
         
         const initialAgents: AgentWorker[] = [{

@@ -9,40 +9,30 @@ export const UI_KNOWLEDGE_TOOLS: ToolCreatorPayload[] = [
         executionEnvironment: 'Client',
         purpose: 'To visualize complex relationships and allow for human-in-the-loop refinement of AI-generated component placements.',
         parameters: [
-            { name: 'graph', type: 'object', description: 'The graph data, containing nodes, edges, and optionally a board_outline.', required: true },
+            { name: 'graph', type: 'object', description: 'The graph data, containing nodes, edges, and optionally a board_outline and constraints.', required: true },
             { name: 'title', type: 'string', description: 'The title to display above the graph.', required: false },
             { name: 'onCommit', type: 'object', description: 'Callback function to submit the final layout and continue the workflow.', required: false },
             { name: 'serverUrl', type: 'string', description: 'Base URL of the server for loading assets.', required: true },
             { name: 'waitForUserInput', type: 'boolean', description: "If false, the simulation runs autonomously and commits when stable. If true, it waits for a manual button click.", required: false },
         ],
         implementationCode: `
-            // --- DEBUG LOGS ---
-            console.log('--- [DEBUG_GRAPH] Interactive Schematic Graph component is rendering ---');
-            console.log('[DEBUG_GRAPH] Props received:', { 
-                graph: graph ? JSON.parse(JSON.stringify(graph)) : null,
-                hasOnCommit: !!onCommit, 
-                title, 
-                waitForUserInput 
-            });
-            // --- END DEBUG LOGS ---
-
             if (!graph || !graph.nodes || graph.nodes.length === 0) {
-                 console.log('[DEBUG_GRAPH] Graph data is empty or has no nodes. Rendering placeholder.');
                  return (
                     <div className="bg-gray-800/80 border-2 border-yellow-500/60 rounded-xl p-4 shadow-lg h-full flex items-center justify-center">
                        <p className="text-gray-400">The schematic graph will be built here as the agent works.</p>
                     </div>
                 )
             }
-            console.log('[DEBUG_GRAPH] Graph has data. Proceeding to render SVG.');
 
-            const { board_outline, nodes: graphNodes, edges } = graph;
+            const { board_outline, nodes: graphNodes, edges, constraints } = graph;
             const isInteractiveMode = typeof waitForUserInput === 'undefined' ? true : waitForUserInput;
 
             const [simNodes, setSimNodes] = React.useState([]);
             const simNodesRef = React.useRef(simNodes);
             simNodesRef.current = simNodes;
             
+            const [constraintData, setConstraintData] = React.useState({ groups: {}, nodeToGroup: {} });
+
             const [isStable, setIsStable] = React.useState(false);
             const [showManualCommitButton, setShowManualCommitButton] = React.useState(isInteractiveMode);
             
@@ -64,6 +54,48 @@ export const UI_KNOWLEDGE_TOOLS: ToolCreatorPayload[] = [
                 const margin = Math.max(board_outline.width, board_outline.height) * 0.1;
                 return \`\${board_outline.x - margin} \${board_outline.y - margin} \${board_outline.width + margin*2} \${board_outline.height + margin*2}\`;
             }, [board_outline]);
+
+            React.useEffect(() => {
+                const groups = {}; // Map anchorId -> { nodes: Map<nodeId, {offsetX, offsetY, angle}> }
+                const nodeToGroup = {}; // Map any nodeId -> anchorId
+
+                if (constraints) {
+                    // Process relative_position first to establish groups
+                    constraints.forEach(c => {
+                        if (c.type === 'relative_position') {
+                            const [anchorId, childId] = c.components;
+                            // For simplicity, first component is always anchor
+                            if (!groups[anchorId]) {
+                                groups[anchorId] = { nodes: new Map([[anchorId, {offsetX: 0, offsetY: 0, angle: 0}]]) };
+                            }
+                            groups[anchorId].nodes.set(childId, { offsetX: c.offsetX_mm, offsetY: c.offsetY_mm, angle: 0 });
+                            
+                            // Update nodeToGroup for all members of the group
+                            for(const id of groups[anchorId].nodes.keys()) {
+                                nodeToGroup[id] = anchorId;
+                            }
+                        }
+                    });
+
+                    // Process fixed_orientation and apply to groups
+                    constraints.forEach(c => {
+                        if (c.type === 'fixed_orientation') {
+                            c.components.forEach(nodeId => {
+                                const anchorId = nodeToGroup[nodeId] || nodeId;
+                                if (!groups[anchorId]) {
+                                     groups[anchorId] = { nodes: new Map([[nodeId, {offsetX: 0, offsetY: 0, angle: 0}]]) };
+                                     nodeToGroup[nodeId] = anchorId;
+                                }
+                                // Apply angle to all nodes in the group
+                                for(const [id, data] of groups[anchorId].nodes.entries()){
+                                    data.angle = c.angle_deg;
+                                }
+                            });
+                        }
+                    });
+                }
+                setConstraintData({ groups, nodeToGroup });
+            }, [constraints]);
             
             const handleCommit = React.useCallback(() => {
                 if (hasAutoCommitted.current) return;
@@ -79,7 +111,6 @@ export const UI_KNOWLEDGE_TOOLS: ToolCreatorPayload[] = [
                     return acc;
                 }, {});
             
-                console.log('[DEBUG_GRAPH] Committing layout:', finalPositions);
                 if (onCommitRef.current) {
                     onCommitRef.current(finalPositions);
                 }
@@ -87,10 +118,8 @@ export const UI_KNOWLEDGE_TOOLS: ToolCreatorPayload[] = [
 
             React.useEffect(() => {
                 if (isStable && !isInteractiveMode && onCommitRef.current && !userHasInteractedRef.current && !hasAutoCommitted.current) {
-                    console.log('[DEBUG_GRAPH] Simulation stable. Starting 5-second auto-commit timer.');
                     autoCommitTimerRef.current = setTimeout(() => {
                         if (!userHasInteractedRef.current) {
-                            console.log('[DEBUG_GRAPH] Auto-commit timer expired. Committing layout.');
                             handleCommit();
                         }
                     }, 5000);
@@ -99,27 +128,20 @@ export const UI_KNOWLEDGE_TOOLS: ToolCreatorPayload[] = [
                 return () => {
                     if (autoCommitTimerRef.current) {
                         clearTimeout(autoCommitTimerRef.current);
-                        autoCommitTimerRef.current = null;
                     }
                 };
             }, [isStable, isInteractiveMode, handleCommit]);
 
             React.useEffect(() => {
                 const svgElement = containerRef.current;
-                if (!svgElement) {
-                    console.log('[DEBUG_GRAPH] SVG container ref not ready.');
-                    return;
-                }
+                if (!svgElement) return;
                 
                 hasAutoCommitted.current = false;
                 setIsStable(false);
                 simulationActive.current = true;
                 userHasInteractedRef.current = false;
                 setShowManualCommitButton(isInteractiveMode);
-                if (autoCommitTimerRef.current) {
-                    clearTimeout(autoCommitTimerRef.current);
-                    autoCommitTimerRef.current = null;
-                }
+                if (autoCommitTimerRef.current) clearTimeout(autoCommitTimerRef.current);
 
                 const initialNodes = graphNodes.map(node => ({
                     ...node,
@@ -197,12 +219,38 @@ export const UI_KNOWLEDGE_TOOLS: ToolCreatorPayload[] = [
                             if (isDraggingRef.current !== target.id) { target.vx -= fx; target.vy -= fy; }
                         }
 
-                         nextNodes.forEach(node => {
+                        // Apply velocities
+                        nextNodes.forEach(node => {
                             if (isDraggingRef.current !== node.id) {
                                 node.x += node.vx;
                                 node.y += node.vy;
-                                totalMovement += Math.abs(node.vx) + Math.abs(node.vy);
                             }
+                        });
+
+                        // Iteratively solve constraints
+                        for(let i=0; i < 5; i++){
+                            Object.values(constraintData.groups).forEach(group => {
+                                const anchorNode = nextNodes.find(n => n.id === group.anchor);
+                                if(!anchorNode) return;
+                                group.nodes.forEach((data, nodeId) => {
+                                    if(nodeId === group.anchor) return;
+                                    const childNode = nextNodes.find(n => n.id === nodeId);
+                                    if(childNode){
+                                        const targetX = anchorNode.x + data.offsetX;
+                                        const targetY = anchorNode.y + data.offsetY;
+                                        const errorX = childNode.x - targetX;
+                                        const errorY = childNode.y - targetY;
+                                        anchorNode.x += errorX * 0.1;
+                                        anchorNode.y += errorY * 0.1;
+                                        childNode.x -= errorX * 0.1;
+                                        childNode.y -= errorY * 0.1;
+                                    }
+                                });
+                            });
+                        }
+                        
+                        nextNodes.forEach(node => {
+                             totalMovement += Math.abs(node.vx) + Math.abs(node.vy);
                         });
 
 
@@ -225,28 +273,20 @@ export const UI_KNOWLEDGE_TOOLS: ToolCreatorPayload[] = [
                     if (animationFrameRef.current) cancelAnimationFrame(animationFrameRef.current);
                     simulationActive.current = false;
                 };
-            }, [graph, isLayoutMode, board_outline, serverUrl, isInteractiveMode]);
-
-            const startSimulation = () => {
-                if (!simulationActive.current) {
-                    simulationActive.current = true;
-                    animationFrameRef.current = requestAnimationFrame(animationFrameRef.current);
-                }
-            }
+            }, [graph, isLayoutMode, board_outline, serverUrl, isInteractiveMode, constraintData]);
             
             const handleMouseDown = (e, nodeId) => {
                 if (!userHasInteractedRef.current && !isInteractiveMode) {
                     userHasInteractedRef.current = true;
                     setShowManualCommitButton(true);
-                    if (autoCommitTimerRef.current) {
-                        clearTimeout(autoCommitTimerRef.current);
-                        autoCommitTimerRef.current = null;
-                        console.log('[DEBUG_GRAPH] User interaction detected. Auto-commit disabled.');
-                    }
+                    if (autoCommitTimerRef.current) clearTimeout(autoCommitTimerRef.current);
                 }
                 isDraggingRef.current = nodeId;
                 setIsStable(false);
-                if(!simulationActive.current) startSimulation();
+                if(!simulationActive.current) {
+                    simulationActive.current = true;
+                    animationFrameRef.current = requestAnimationFrame(animationFrameRef.current);
+                };
             };
 
             const handleMouseMove = (e) => {
@@ -254,8 +294,31 @@ export const UI_KNOWLEDGE_TOOLS: ToolCreatorPayload[] = [
                 const svg = containerRef.current;
                 const pt = svg.createSVGPoint(); pt.x = e.clientX; pt.y = e.clientY;
                 const { x, y } = pt.matrixTransform(svg.getScreenCTM().inverse());
-                setSimNodes(nodes => nodes.map(n => n.id === isDraggingRef.current ? { ...n, x, y } : n));
-                if (!simulationActive.current) { simulationActive.current = true; requestAnimationFrame(() => {}); }
+
+                const draggedNodeId = isDraggingRef.current;
+                const prevNode = simNodesRef.current.find(n => n.id === draggedNodeId);
+                if(!prevNode) return;
+
+                const dx = x - prevNode.x;
+                const dy = y - prevNode.y;
+
+                const anchorId = constraintData.nodeToGroup[draggedNodeId];
+
+                setSimNodes(nodes => nodes.map(n => {
+                    if (anchorId) { // Node is in a group
+                        if (constraintData.nodeToGroup[n.id] === anchorId) {
+                            return { ...n, x: n.x + dx, y: n.y + dy };
+                        }
+                    } else if (n.id === draggedNodeId) { // Not in group, just drag itself
+                        return { ...n, x, y };
+                    }
+                    return n;
+                }));
+
+                if (!simulationActive.current) {
+                    simulationActive.current = true;
+                    requestAnimationFrame(() => { simulationActive.current = false });
+                }
             };
             const handleMouseUp = () => { isDraggingRef.current = null; };
 
@@ -277,9 +340,14 @@ export const UI_KNOWLEDGE_TOOLS: ToolCreatorPayload[] = [
                                 const fullSvgUrl = hasFootprint ? \`\${serverUrl}/\${node.svgPath}\` : '';
                                 const effectiveWidth = node.dimensions?.width || node.width || 20;
                                 const effectiveHeight = node.dimensions?.height || node.height || 20;
+                                
+                                const anchorId = constraintData.nodeToGroup[node.id];
+                                const groupData = anchorId && constraintData.groups[anchorId];
+                                const nodeData = groupData && groupData.nodes.get(node.id);
+                                const angle = nodeData?.angle ?? 0;
 
                                 return (
-                                    <g key={node.id} transform={\`translate(\${node.x}, \${node.y})\`} onMouseDown={(e) => handleMouseDown(e, node.id)} className="cursor-move group">
+                                    <g key={node.id} transform={\`translate(\${node.x}, \${node.y}) rotate(\${angle})\`} onMouseDown={(e) => handleMouseDown(e, node.id)} className="cursor-move group">
                                         {hasFootprint ? (
                                             <image 
                                                 href={fullSvgUrl} 
@@ -292,7 +360,7 @@ export const UI_KNOWLEDGE_TOOLS: ToolCreatorPayload[] = [
                                         ) : (
                                             <circle r={10 + (node.pin_count || 0) * 0.5} className="fill-purple-900/80 stroke-purple-400 group-hover:stroke-yellow-400 transition-colors" strokeWidth="2" />
                                         )}
-                                        <text textAnchor="middle" y={effectiveHeight / 2 + (isLayoutMode ? 4 : 15)} className="fill-white font-semibold select-none stroke-black stroke-1" style={{ fontSize: isLayoutMode ? Math.min(effectiveWidth, effectiveHeight) / 4 : '12px', paintOrder: 'stroke' }}>
+                                        <text textAnchor="middle" y={effectiveHeight / 2 + (isLayoutMode ? 4 : 15)} transform={\`rotate(\${-angle})\`} className="fill-white font-semibold select-none stroke-black stroke-1" style={{ fontSize: isLayoutMode ? Math.min(effectiveWidth, effectiveHeight) / 4 : '12px', paintOrder: 'stroke' }}>
                                             {node.label}
                                         </text>
                                     </g>

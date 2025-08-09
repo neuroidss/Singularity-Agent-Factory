@@ -70,7 +70,7 @@ const parseToolCallResponse = (responseText: string): AIResponse => {
 };
 
 export const generateResponse = async (
-    userInput: string,
+    userInput: { text: string; files: any[] },
     systemInstruction: string,
     model: AIModel,
     apiConfig: APIConfig,
@@ -79,24 +79,31 @@ export const generateResponse = async (
 ): Promise<AIResponse> => {
     switch (model.provider) {
         case ModelProvider.GoogleAI:
-            return geminiService.generateWithNativeTools(userInput, systemInstruction, model.id, relevantTools);
+            return geminiService.generateWithNativeTools(userInput.text, systemInstruction, model.id, relevantTools, userInput.files);
         
         case ModelProvider.OpenAI_API:
-             return openAIService.generateWithTools(userInput, systemInstruction, model.id, apiConfig, relevantTools);
+             // OpenAI service currently only takes text.
+             return openAIService.generateWithTools(userInput.text, systemInstruction, model.id, apiConfig, relevantTools);
 
         case ModelProvider.Ollama:
-            return ollamaService.generateWithTools(userInput, systemInstruction, model.id, apiConfig, relevantTools);
+             // Ollama service currently only takes text.
+            return ollamaService.generateWithTools(userInput.text, systemInstruction, model.id, apiConfig, relevantTools);
         
         case ModelProvider.HuggingFace: {
             // HuggingFace pipeline doesn't support native tool calling, so we fall back to JSON prompting.
             const toolsForPrompt = relevantTools.map(t => ({ name: t.name, description: t.description, parameters: t.parameters }));
             const toolDefinitions = JSON.stringify(toolsForPrompt, null, 2);
             const fullSystemInstruction = systemInstruction + '\n\n' + JSON_TOOL_CALL_SYSTEM_PROMPT.replace('{{TOOLS_JSON}}', toolDefinitions);
-            const responseText = await huggingFaceService.generateJsonOutput(userInput, fullSystemInstruction, model.id, 0.1, apiConfig, onProgress);
+            const responseText = await huggingFaceService.generateJsonOutput(userInput.text, fullSystemInstruction, model.id, 0.1, apiConfig, onProgress);
             return parseToolCallResponse(responseText);
         }
 
         default:
             throw new Error(`Unsupported model provider: ${model.provider}`);
     }
+};
+
+export const contextualizeWithSearch = async (userInput: { text: string, files: any[] }): Promise<{ summary: string, sources: any[] }> => {
+    // For now, only Gemini supports this. We can add fallbacks for other providers later if needed.
+    return geminiService.generateWithGoogleSearch(userInput.text, userInput.files);
 };

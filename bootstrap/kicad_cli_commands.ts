@@ -53,7 +53,7 @@ class AutoStopper:
             message_text = msg.get('msg', '')
             
             # This regex captures the number of changes from both relevant message formats
-            match = re.search(r"(?:making|There were only) (\\d+\\.?\\d*) changes", message_text)
+            match = re.search(r"(?:making|There were only) (\\\\d+\\\\.?\\\\d*) changes", message_text)
 
             if match:
                 changes = float(match.group(1))
@@ -171,6 +171,47 @@ def define_components(args):
 
     log_and_return(f"Component {args.componentReference} defined.", data=data_to_return)
 
+def define_placement_constraint(args):
+    """Adds a placement constraint to the board's state file."""
+    state_file = get_state_path(args.projectName, 'state.json')
+    lock_path = state_file + '.lock'
+    with open(lock_path, 'w') as lock_file:
+        fcntl.flock(lock_file, fcntl.LOCK_EX)
+        try:
+            state = json.load(open(state_file)) if os.path.exists(state_file) else {}
+            if 'constraints' not in state: state['constraints'] = []
+            
+            try:
+                components = ast.literal_eval(args.components)
+                if not isinstance(components, list): raise ValueError()
+            except (ValueError, SyntaxError):
+                log_error_and_exit("Invalid --components format. Expected a Python-style list of strings, e.g., '[\\"J1\\", \\"J2\\"]'. Received: {}".format(args.components))
+
+            new_constraint = {
+                "type": args.type,
+                "components": components,
+            }
+            if args.type == 'relative_position':
+                if args.offsetX_mm is None or args.offsetY_mm is None:
+                    log_error_and_exit("offsetX_mm and offsetY_mm are required for 'relative_position' constraint.")
+                new_constraint['offsetX_mm'] = float(args.offsetX_mm)
+                new_constraint['offsetY_mm'] = float(args.offsetY_mm)
+            elif args.type == 'fixed_orientation':
+                if args.angle_deg is None:
+                    log_error_and_exit("angle_deg is required for 'fixed_orientation' constraint.")
+                new_constraint['angle_deg'] = float(args.angle_deg)
+            else:
+                log_error_and_exit(f"Unsupported constraint type: {args.type}")
+
+            state['constraints'].append(new_constraint)
+            
+            with open(state_file, 'w') as f:
+                json.dump(state, f, indent=2)
+        finally:
+             fcntl.flock(lock_file, fcntl.LOCK_UN)
+    
+    log_and_return(f"Placement constraint of type '{args.type}' defined for components {args.components}.")
+
 def define_net(args):
     """Adds a single net definition to the board's state file, with file locking."""
     state_file = get_state_path(args.projectName, 'state.json')
@@ -186,19 +227,15 @@ def define_net(args):
             if 'components' not in state: state['components'] = []
             if 'nets' not in state: state['nets'] = []
             
-            raw_pins_arg = args.pins
-            pins_data = []
             try:
-                parsed_pins = json.loads(raw_pins_arg)
-                if isinstance(parsed_pins, list) and all(isinstance(p, str) for p in parsed_pins):
-                    pins_data = parsed_pins
-                else:
-                    log_error_and_exit(f"Invalid --pins format. Parsed as JSON, but was not a list of strings. Input: '{raw_pins_arg}'")
-            except json.JSONDecodeError:
-                pins_data = [p.strip() for p in raw_pins_arg.split(',') if p.strip()]
+                pins_data = ast.literal_eval(args.pins)
+                if not isinstance(pins_data, list):
+                    raise ValueError("Input did not evaluate to a list.")
+            except (ValueError, SyntaxError):
+                log_error_and_exit(f"""Invalid --pins format. Expected a Python-style list of strings, e.g., '["U1-1", "R1-2"]'. Received: {args.pins}""")
 
             if not pins_data:
-                log_error_and_exit(f"No valid pins found in argument: '{raw_pins_arg}'")
+                log_error_and_exit(f"No valid pins found in argument: '{args.pins}'")
 
             new_net = { "name": args.netName, "pins": pins_data }
             # Remove existing net with same name to allow updates
@@ -295,52 +332,110 @@ def create_board_outline(args):
 
     board = pcbnew.LoadBoard(pcb_path)
     
-    for drawing in board.GetDrawings():
+    # Clear existing outline
+    for drawing in list(board.GetDrawings()): # Use list() to create a copy for safe removal
         if drawing.GetLayerName() == 'Edge.Cuts':
             board.Remove(drawing)
 
-    width_mm, height_mm = args.boardWidthMillimeters, args.boardHeightMillimeters
-    
-    if width_mm <= 0 or height_mm <= 0:
-        # Auto-size logic
-        footprints_bbox = pcbnew.BOX2I()
-        all_footprints = list(board.Footprints())
+    if args.shape == 'circle':
+        diameter_mm = args.diameterMillimeters
+        if diameter_mm <= 0:
+            # Auto-size logic for circle
+            footprints_bbox = pcbnew.BOX2I()
+            all_footprints = list(board.Footprints())
+            if not all_footprints:
+                 center = pcbnew.VECTOR2I(pcbnew.FromMM(25), pcbnew.FromMM(25))
+                 radius_nm = pcbnew.FromMM(20) # Default 40mm diameter for empty board
+            else:
+                for fp in all_footprints:
+                    footprints_bbox.Merge(fp.GetBoundingBox(True, False))
+                
+                center = footprints_bbox.Centre()
+                # Calculate radius to enclose the bounding box
+                max_dist_sq = 0
+                corners = [
+                    footprints_bbox.GetOrigin(),
+                    pcbnew.VECTOR2I(footprints_bbox.GetRight(), footprints_bbox.GetTop()),
+                    pcbnew.VECTOR2I(footprints_bbox.GetLeft(), footprints_bbox.GetBottom()),
+                    footprints_bbox.GetEnd()
+                ]
+                for corner in corners:
+                    dist_sq = center.SquaredDistance(corner)
+                    if dist_sq > max_dist_sq:
+                        max_dist_sq = dist_sq
+                
+                radius_nm = int(sqrt(max_dist_sq))
+                margin_nm = max(pcbnew.FromMM(2), int(radius_nm * 0.1))
+                radius_nm += margin_nm
+            
+            diameter_mm = pcbnew.ToMM(radius_nm * 2)
+
+        else: # Diameter is specified
+            radius_nm = pcbnew.FromMM(diameter_mm / 2.0)
+            # Center it around all components if they exist, otherwise place at a default location
+            footprints_bbox = pcbnew.BOX2I()
+            all_footprints = list(board.Footprints())
+            if all_footprints:
+                 for fp in all_footprints:
+                    footprints_bbox.Merge(fp.GetBoundingBox(True, False))
+                 center = footprints_bbox.Centre()
+            else:
+                 center = pcbnew.VECTOR2I(pcbnew.FromMM(diameter_mm/2 + 5), pcbnew.FromMM(diameter_mm/2 + 5))
+
+        # Create and add the circle
+        circle = pcbnew.PCB_SHAPE(board)
+        circle.SetShape(pcbnew.S_CIRCLE)
+        circle.SetLayer(pcbnew.Edge_Cuts)
+        circle.SetWidth(pcbnew.FromMM(0.1))
+        circle.SetStart(center) # Center point
+        circle.SetEnd(pcbnew.VECTOR2I(center.x + radius_nm, center.y)) # Point on circumference
+        board.Add(circle)
         
-        if not all_footprints:
-            width_mm, height_mm = 20, 20
+        message = f"Circular board outline created (diameter: {diameter_mm:.2f}mm)."
+
+    else: # Default to rectangle
+        width_mm, height_mm = args.boardWidthMillimeters, args.boardHeightMillimeters
+        
+        if width_mm <= 0 or height_mm <= 0:
+            footprints_bbox = pcbnew.BOX2I()
+            all_footprints = list(board.Footprints())
+            
+            if not all_footprints:
+                width_mm, height_mm = 20, 20
+                x_offset, y_offset = pcbnew.FromMM(5), pcbnew.FromMM(5)
+                w_nm, h_nm = pcbnew.FromMM(width_mm), pcbnew.FromMM(height_mm)
+            else:
+                for fp in all_footprints:
+                    footprints_bbox.Merge(fp.GetBoundingBox(True, False))
+
+                margin_x = max(pcbnew.FromMM(2), int(footprints_bbox.GetWidth() * 0.1))
+                margin_y = max(pcbnew.FromMM(2), int(footprints_bbox.GetHeight() * 0.1))
+                footprints_bbox.Inflate(margin_x, margin_y)
+                
+                x_offset, y_offset = footprints_bbox.GetX(), footprints_bbox.GetY()
+                w_nm, h_nm = footprints_bbox.GetWidth(), footprints_bbox.GetHeight()
+                width_mm, height_mm = pcbnew.ToMM(w_nm), pcbnew.ToMM(h_nm)
+        else:
             x_offset, y_offset = pcbnew.FromMM(5), pcbnew.FromMM(5)
             w_nm, h_nm = pcbnew.FromMM(width_mm), pcbnew.FromMM(height_mm)
-        else:
-            for fp in all_footprints:
-                footprints_bbox.Merge(fp.GetBoundingBox(True, False))
 
-            margin_x = max(pcbnew.FromMM(2), int(footprints_bbox.GetWidth() * 0.1))
-            margin_y = max(pcbnew.FromMM(2), int(footprints_bbox.GetHeight() * 0.1))
-            footprints_bbox.Inflate(margin_x, margin_y)
-            
-            x_offset = footprints_bbox.GetX()
-            y_offset = footprints_bbox.GetY()
-            w_nm = footprints_bbox.GetWidth()
-            h_nm = footprints_bbox.GetHeight()
-            width_mm = pcbnew.ToMM(w_nm)
-            height_mm = pcbnew.ToMM(h_nm)
-    else:
-        x_offset, y_offset = pcbnew.FromMM(5), pcbnew.FromMM(5)
-        w_nm, h_nm = pcbnew.FromMM(width_mm), pcbnew.FromMM(height_mm)
+        points = [
+            pcbnew.VECTOR2I(x_offset, y_offset), pcbnew.VECTOR2I(x_offset + w_nm, y_offset),
+            pcbnew.VECTOR2I(x_offset + w_nm, y_offset + h_nm), pcbnew.VECTOR2I(x_offset, y_offset + h_nm),
+            pcbnew.VECTOR2I(x_offset, y_offset)
+        ]
+        
+        for i in range(len(points) - 1):
+            seg = pcbnew.PCB_SHAPE(board)
+            seg.SetShape(pcbnew.S_SEGMENT)
+            seg.SetStart(points[i]); seg.SetEnd(points[i+1]); seg.SetLayer(pcbnew.Edge_Cuts); seg.SetWidth(pcbnew.FromMM(0.1))
+            board.Add(seg)
+        
+        message = f"Rectangular board outline created ({width_mm:.2f}mm x {height_mm:.2f}mm)."
 
-    points = [
-        pcbnew.VECTOR2I(x_offset, y_offset), pcbnew.VECTOR2I(x_offset + w_nm, y_offset),
-        pcbnew.VECTOR2I(x_offset + w_nm, y_offset + h_nm), pcbnew.VECTOR2I(x_offset, y_offset + h_nm),
-        pcbnew.VECTOR2I(x_offset, y_offset)
-    ]
-    
-    for i in range(len(points) - 1):
-        seg = pcbnew.PCB_SHAPE(board, pcbnew.S_SEGMENT)
-        seg.SetStart(points[i]); seg.SetEnd(points[i+1]); seg.SetLayer(pcbnew.Edge_Cuts); seg.SetWidth(pcbnew.FromMM(0.1))
-        board.Add(seg)
-    
     pcbnew.SaveBoard(pcb_path, board)
-    log_and_return(f"Board outline created/updated ({width_mm:.2f}mm x {height_mm:.2f}mm).")
+    log_and_return(message)
+
 
 def arrange_components(args):
     """
@@ -379,6 +474,7 @@ def arrange_components(args):
     layout_data = {
         "nodes": [],
         "edges": [],
+        "constraints": state_data.get("constraints", []),
         "board_outline": {
             "x": pcbnew.ToMM(min_x),
             "y": pcbnew.ToMM(min_y),
@@ -470,7 +566,8 @@ def update_component_positions(args):
     ]
     
     for i in range(len(points) - 1):
-        seg = pcbnew.PCB_SHAPE(board, pcbnew.S_SEGMENT)
+        seg = pcbnew.PCB_SHAPE(board)
+        seg.SetShape(pcbnew.S_SEGMENT)
         seg.SetStart(points[i]); seg.SetEnd(points[i+1]); seg.SetLayer(pcbnew.Edge_Cuts); seg.SetWidth(pcbnew.FromMM(0.1))
         board.Add(seg)
 

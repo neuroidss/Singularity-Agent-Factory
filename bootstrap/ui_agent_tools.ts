@@ -1,3 +1,4 @@
+
 import type { ToolCreatorPayload } from '../types';
 
 export const UI_AGENT_TOOLS: ToolCreatorPayload[] = [
@@ -52,7 +53,7 @@ export const UI_AGENT_TOOLS: ToolCreatorPayload[] = [
           { name: 'agentSwarm', type: 'array', description: 'The array of agent workers (usually just one).', required: true },
           { name: 'isSwarmRunning', type: 'boolean', description: 'Whether the agent is running.', required: true },
           { name: 'handleStopSwarm', type: 'object', description: 'Function to stop the agent task.', required: true },
-          { name: 'currentUserTask', type: 'string', description: 'The current high-level task for the agent.', required: true },
+          { name: 'currentUserTask', type: 'object', description: 'The current high-level task for the agent.', required: true },
         ],
         implementationCode: `
               const getStatusStyles = (status) => {
@@ -73,13 +74,17 @@ export const UI_AGENT_TOOLS: ToolCreatorPayload[] = [
                       </div>
                   );
               }
+
+              const taskText = typeof currentUserTask === 'string' 
+                ? currentUserTask 
+                : currentUserTask?.userRequest?.text || 'None';
       
               return (
                   <div className="bg-gray-800/60 border border-gray-700 rounded-xl p-4">
                        <div className="flex flex-col sm:flex-row justify-between items-center gap-2 mb-4">
                         <div>
                            <h3 className="text-lg font-bold text-indigo-300">Agent Status</h3>
-                           <p className="text-sm text-gray-400">Current Goal: {currentUserTask || 'None'}</p>
+                           <p className="text-sm text-gray-400">Current Goal: {taskText}</p>
                         </div>
                         <button
                             onClick={() => handleStopSwarm()}

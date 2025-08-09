@@ -1,4 +1,3 @@
-
 //this is typescript file with text variable with python code
 export const KICAD_CLI_MAIN_SCRIPT = `
 import sys
@@ -12,6 +11,7 @@ import ast
 # We are assuming all four .py files (kicad_cli.py, kicad_cli_commands.py, kicad_dsn_utils.py, kicad_ses_utils.py) are in the same directory.
 from kicad_cli_commands import (
     define_components,
+    define_placement_constraint,
     define_net,
     generate_netlist,
     create_initial_pcb,
@@ -58,10 +58,19 @@ def main():
     p_define.add_argument('--numberOfPins', type=int, default=0)
     p_define.set_defaults(func=define_components)
 
+    p_constraint = subparsers.add_parser('define_placement_constraint')
+    p_constraint.add_argument('--projectName', required=True)
+    p_constraint.add_argument('--type', required=True, help="Constraint type: 'relative_position' or 'fixed_orientation'")
+    p_constraint.add_argument('--components', required=True, help="Python list of component refs, e.g., '[\\"J1\\", \\"J2\\"]'")
+    p_constraint.add_argument('--offsetX_mm', type=float)
+    p_constraint.add_argument('--offsetY_mm', type=float)
+    p_constraint.add_argument('--angle_deg', type=float)
+    p_constraint.set_defaults(func=define_placement_constraint)
+
     p_define_net = subparsers.add_parser('define_net')
     p_define_net.add_argument('--projectName', required=True)
     p_define_net.add_argument('--netName', required=True)
-    p_define_net.add_argument('--pins', required=True, help='JSON string of an array of pin name strings.')
+    p_define_net.add_argument('--pins', required=True, help="Python list of pin name strings, e.g., '[\\"U1-1\\", \\"R1-2\\"]'.")
     p_define_net.set_defaults(func=define_net)
 
     p_gen_netlist = subparsers.add_parser('generate_netlist')
@@ -74,8 +83,10 @@ def main():
     
     p_outline = subparsers.add_parser('create_board_outline')
     p_outline.add_argument('--projectName', required=True)
+    p_outline.add_argument('--shape', type=str, default='rectangle', help="Shape of the board: 'rectangle' or 'circle'")
     p_outline.add_argument('--boardWidthMillimeters', type=float, default=0)
     p_outline.add_argument('--boardHeightMillimeters', type=float, default=0)
+    p_outline.add_argument('--diameterMillimeters', type=float, default=0)
     p_outline.set_defaults(func=create_board_outline)
 
     p_arrange = subparsers.add_parser('arrange_components')
@@ -103,4 +114,4 @@ def main():
 
 if __name__ == "__main__":
     main()
-`;
+`
