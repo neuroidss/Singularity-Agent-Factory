@@ -71,22 +71,22 @@ const KICAD_SERVER_TOOL_DEFINITIONS: ToolCreatorPayload[] = [
     },
     {
         name: 'Arrange Components',
-        description: 'Performs an initial automatic placement of components within the board outline. Pauses the workflow for user interaction.',
+        description: "Prepares the PCB for interactive or autonomous layout on the client-side. This tool extracts component and net data and sends it to the client's force-directed graph UI.",
         category: 'Server',
         executionEnvironment: 'Server',
-        purpose: 'To perform a rough, automated placement of components to serve as a starting point for manual refinement.',
+        purpose: 'To transition from schematic to physical layout by providing the client UI with all necessary data for an interactive or automated arrangement.',
         parameters: [
             { name: 'projectName', type: 'string', description: 'The unique name for this hardware project.', required: true },
-            { name: 'arrangementStrategy', type: 'string', description: "The algorithm to use for initial component placement. Recommended value is 'force-directed'.", required: true },
+            { name: 'waitForUserInput', type: 'boolean', description: "Set to 'true' to pause the workflow for interactive manual layout on the client. Set to 'false' to perform an autonomous layout on the client and continue the workflow automatically.", required: true },
         ],
         implementationCode: 'python scripts/kicad_cli.py arrange_components'
     },
     {
         name: 'Update KiCad Component Positions',
-        description: 'Updates the positions of components on the PCB after manual adjustment by the user.',
+        description: 'Updates the positions of components on the PCB after arrangement and automatically calculates and draws a new board outline to fit the placed components.',
         category: 'Server',
         executionEnvironment: 'Server',
-        purpose: 'To commit the refined component layout from the interactive UI back to the KiCad board file.',
+        purpose: 'To commit the refined component layout from the interactive UI back to the KiCad board file and create the final board outline.',
         parameters: [
             { name: 'projectName', type: 'string', description: 'The unique name for this hardware project.', required: true },
             { name: 'componentPositionsJSON', type: 'string', description: `A JSON string of an object mapping component references to their new {x, y} coordinates in mm. Example: '{"U1": {"x": 10, "y": 15}, "R1": {"x": 25, "y": 15}}'.`, required: true },
@@ -195,13 +195,11 @@ Here is the plan:
     *   A net named 'AIN5P' connecting pins: ["U1-8"]
     *   A net named 'AIN6P' connecting pins: ["U1-9"]
     *   A net named 'AIN7P' connecting pins: ["U1-12"]
-
 3.  Generate the netlist from the defined components and nets.
 4.  Create the initial PCB from the netlist.
-5.  Create the board outline automatically by setting board width and height to 0.
-6.  Arrange the components using the 'force-directed' arrangement strategy.
-7.  Autoroute the PCB.
-8.  Export the final fabrication files.\`);
+5.  Arrange the components. Set 'waitForUserInput' to false to let the agent decide when the layout is ready and continue autonomously. After the components are placed, the board outline will be automatically calculated to fit them.
+6.  Autoroute the PCB.
+7.  Export the final fabrication files.\`);
         const scrollContainerRef = React.useRef(null);
 
         React.useEffect(() => {
@@ -241,7 +239,7 @@ Here is the plan:
                     <h4 className="font-semibold text-gray-300 text-sm mb-1">Execution Log</h4>
                     <div ref={scrollContainerRef} className="flex-grow bg-black/20 rounded p-2 min-h-[100px] overflow-y-auto">
                        {kicadLog.length > 0 ? kicadLog.map((log, i) => {
-                            const color = log.includes('ERROR') ? 'text-red-400' : log.includes('Executing') || log.includes('Called') ? 'text-cyan-300' : 'text-slate-300';
+                            const color = log.includes('ERROR') ? 'text-red-400' : log.includes('Executing') || log.includes('Called') ? 'text-cyan-300' : log.includes('DEBUG') ? 'text-yellow-300' : 'text-slate-300';
                             return <div key={i} className={\`py-0.5 border-b border-slate-800 \${color} break-words\`}>{log}</div>
                         }) : <p className="text-slate-500 text-sm">Log is empty. Start a task to see agent output.</p>}
                     </div>
@@ -249,7 +247,7 @@ Here is the plan:
                     {currentArtifact && renderArtifact()}
 
                     <button onClick={() => onStartTask(prompt)} disabled={!prompt || isGenerating} className="mt-3 w-full bg-green-600 text-white font-semibold py-2.5 px-4 rounded-lg hover:bg-green-700 disabled:bg-gray-600">
-                       {isGenerating ? 'Swarm is Generating PCB...' : 'Generate PCB from Prompt'}
+                       {isGenerating ? 'Agent is Generating PCB...' : 'Generate PCB from Prompt'}
                     </button>
                 </div>
             </div>

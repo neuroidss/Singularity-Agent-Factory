@@ -1,4 +1,3 @@
-
 import type { ToolCreatorPayload } from '../types';
 
 export const UI_AGENT_TOOLS: ToolCreatorPayload[] = [
@@ -10,7 +9,7 @@ export const UI_AGENT_TOOLS: ToolCreatorPayload[] = [
         purpose: 'To allow a human pilot to control an agent directly, providing a mechanism for demonstrating complex behaviors that the agent can then learn from.',
         parameters: [
           { name: 'handleManualControl', type: 'object', description: 'Function to call for a manual action.', required: true },
-          { name: 'isSwarmRunning', type: 'boolean', description: 'Whether the agent swarm is currently active.', required: true },
+          { name: 'isSwarmRunning', type: 'boolean', description: 'Whether the agent is currently active.', required: true },
         ],
         implementationCode: `
           const ControlButton = ({ action, label, children, args = {} }) => (
@@ -26,7 +25,7 @@ export const UI_AGENT_TOOLS: ToolCreatorPayload[] = [
     
           return (
             <div className="bg-gray-800/60 border border-gray-700 rounded-xl p-4">
-              <h3 className="text-lg font-bold text-indigo-300 mb-2">Pilot Controls (Agent-1)</h3>
+              <h3 className="text-lg font-bold text-indigo-300 mb-2">Pilot Controls (agent-1)</h3>
               <p className="text-xs text-gray-400 mb-4">Control the lead robot directly. The agent can learn from your actions if you later use the "Create Skill From Observation" tool.</p>
               <div className="grid grid-cols-3 gap-2 text-center">
                 <div></div>
@@ -44,32 +43,33 @@ export const UI_AGENT_TOOLS: ToolCreatorPayload[] = [
         `
     },
     {
-        name: 'Agent Swarm Display',
-        description: 'Visualizes the status and activity of each agent in the swarm.',
+        name: 'Agent Status Display',
+        description: 'Visualizes the status and activity of the agent.',
         category: 'UI Component',
         executionEnvironment: 'Client',
-        purpose: 'To provide a real-time visualization of the agent swarm\'s collective state, actions, and health.',
+        purpose: "To provide a real-time visualization of the agent's state, actions, and health.",
         parameters: [
-          { name: 'agentSwarm', type: 'array', description: 'The array of agent workers.', required: true },
-          { name: 'isSwarmRunning', type: 'boolean', description: 'Whether the swarm is running.', required: true },
-          { name: 'handleStopSwarm', type: 'object', description: 'Function to stop the swarm task.', required: true },
-          { name: 'currentUserTask', type: 'string', description: 'The current high-level task for the swarm.', required: true },
+          { name: 'agentSwarm', type: 'array', description: 'The array of agent workers (usually just one).', required: true },
+          { name: 'isSwarmRunning', type: 'boolean', description: 'Whether the agent is running.', required: true },
+          { name: 'handleStopSwarm', type: 'object', description: 'Function to stop the agent task.', required: true },
+          { name: 'currentUserTask', type: 'string', description: 'The current high-level task for the agent.', required: true },
         ],
         implementationCode: `
               const getStatusStyles = (status) => {
                   switch (status) {
                       case 'working': return { bg: 'bg-blue-900/50', border: 'border-blue-500', text: 'text-blue-300', icon: '🧠' };
                       case 'succeeded': return { bg: 'bg-green-900/50', border: 'border-green-500', text: 'text-green-300', icon: '✅' };
+                      case 'paused': return { bg: 'bg-orange-900/50', border: 'border-orange-500', text: 'text-orange-300', icon: '⏸️' };
                       case 'failed': return { bg: 'bg-yellow-900/50', border: 'border-yellow-500', text: 'text-yellow-300', icon: '⚠️' };
                       case 'terminated': return { bg: 'bg-red-900/50', border: 'border-red-500', text: 'text-red-300', icon: '❌' };
                       default: return { bg: 'bg-gray-800/50', border: 'border-gray-600', text: 'text-gray-400', icon: '💤' }; // idle
                   }
               };
               
-              if (!isSwarmRunning && agentSwarm.length === 0) {
+              if (!isSwarmRunning && (!agentSwarm || agentSwarm.length === 0 || agentSwarm.every(a => a.status === 'idle'))) {
                   return (
                       <div className="bg-gray-800/60 border border-gray-700 rounded-xl p-4 h-full flex items-center justify-center">
-                          <p className="text-gray-400">Swarm is idle. Assign a task to activate.</p>
+                          <p className="text-gray-400">Agent is idle. Assign a task to activate.</p>
                       </div>
                   );
               }
@@ -78,20 +78,20 @@ export const UI_AGENT_TOOLS: ToolCreatorPayload[] = [
                   <div className="bg-gray-800/60 border border-gray-700 rounded-xl p-4">
                        <div className="flex flex-col sm:flex-row justify-between items-center gap-2 mb-4">
                         <div>
-                           <h3 className="text-lg font-bold text-indigo-300">Agent Swarm</h3>
-                           <p className="text-sm text-gray-400">Current Goal: {currentUserTask}</p>
+                           <h3 className="text-lg font-bold text-indigo-300">Agent Status</h3>
+                           <p className="text-sm text-gray-400">Current Goal: {currentUserTask || 'None'}</p>
                         </div>
                         <button
-                            onClick={handleStopSwarm}
+                            onClick={() => handleStopSwarm()}
                             disabled={!isSwarmRunning}
                             className="px-4 py-2 font-semibold rounded-lg transition-colors text-white bg-red-600 hover:bg-red-700 disabled:bg-gray-600 disabled:cursor-not-allowed"
                         >
-                            Stop Swarm
+                            Stop Task
                         </button>
                       </div>
       
-                      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-                          {agentSwarm.map(agent => {
+                      <div className="space-y-3">
+                          {agentSwarm && agentSwarm.map(agent => {
                               const styles = getStatusStyles(agent.status);
                               return (
                                   <div key={agent.id} className={\`\${styles.bg} border \${styles.border} rounded-lg p-3 transition-all\`} >
@@ -101,7 +101,7 @@ export const UI_AGENT_TOOLS: ToolCreatorPayload[] = [
                                       </div>
                                       <div className="text-xs text-slate-300 min-h-[40px] bg-black/20 p-2 rounded-md">
                                           <p className="font-semibold">Last Action:</p>
-                                          <p className="truncate">{agent.lastAction || 'None'}</p>
+                                          <p className="whitespace-pre-wrap break-words">{agent.lastAction || 'None'}</p>
                                       </div>
                                       {agent.error && <p className="text-xs text-red-400 mt-2">Error: {agent.error}</p>}
                                   </div>

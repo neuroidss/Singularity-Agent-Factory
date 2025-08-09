@@ -1,3 +1,4 @@
+
 //server/kicad_cli_commands.ts is typescript file with text variable with python code of server/kicad_cli_commands.py
 export const KICAD_CLI_COMMANDS_SCRIPT = `
 import os
@@ -342,71 +343,88 @@ def create_board_outline(args):
     log_and_return(f"Board outline created/updated ({width_mm:.2f}mm x {height_mm:.2f}mm).")
 
 def arrange_components(args):
+    """
+    This function no longer performs layout itself. It now extracts all necessary
+    data from the PCB and the project state file and sends it to the client
+    for interactive or autonomous layout in the browser.
+    """
     pcb_path = get_state_path(args.projectName, 'pcb.kicad_pcb')
+    state_file = get_state_path(args.projectName, 'state.json')
+
     if not os.path.exists(pcb_path):
-        log_error_and_exit("PCB file not found.")
-    
+        log_error_and_exit("PCB file not found for arrangement.")
+    if not os.path.exists(state_file):
+        log_error_and_exit("State file not found for arrangement.")
+
     board = pcbnew.LoadBoard(pcb_path)
     board.BuildConnectivity()
-    footprints = list(board.Footprints())
+    state_data = json.load(open(state_file))
 
     edge_cuts = merge_all_drawings(board, 'Edge.Cuts')
     if not edge_cuts:
-        log_error_and_exit("No Edge.Cuts layer found to define board boundary.")
-    
-    all_x = [p[0] for p in edge_cuts[0]]; all_y = [p[1] for p in edge_cuts[0]]
-    min_x, max_x = min(all_x), max(all_x); min_y, max_y = min(all_y), max(all_y)
+        # If no outline exists, create a temporary large one for layout purposes
+        board_bbox = board.ComputeBoundingBox(False)
+        if board_bbox.GetWidth() == 0 or board_bbox.GetHeight() == 0:
+             # If board is totally empty, make a default 50x50mm box
+             board_bbox = pcbnew.BOX2I(pcbnew.VECTOR2I(0,0), pcbnew.VECTOR2I(pcbnew.FromMM(50), pcbnew.FromMM(50)))
+        board_bbox.Inflate(pcbnew.FromMM(10), pcbnew.FromMM(10)) # Add a generous margin
+        min_x, max_x = board_bbox.GetX(), board_bbox.GetX() + board_bbox.GetWidth()
+        min_y, max_y = board_bbox.GetY(), board_bbox.GetY() + board_bbox.GetHeight()
+    else:
+        all_x = [p[0] for p in edge_cuts[0]]
+        all_y = [p[1] for p in edge_cuts[0]]
+        min_x, max_x = min(all_x), max(all_x)
+        min_y, max_y = min(all_y), max(all_y)
 
     layout_data = {
+        "nodes": [],
+        "edges": [],
         "board_outline": {
-            "x": pcbnew.ToMM(min_x), "y": pcbnew.ToMM(min_y),
-            "width": pcbnew.ToMM(max_x - min_x), "height": pcbnew.ToMM(max_y - min_y),
-        },
-        "components": [], "nets": []
+            "x": pcbnew.ToMM(min_x),
+            "y": pcbnew.ToMM(min_y),
+            "width": pcbnew.ToMM(max_x - min_x),
+            "height": pcbnew.ToMM(max_y - min_y),
+        }
     }
     
-    num_footprints = len(footprints); grid_size = ceil(sqrt(num_footprints))
-    cell_w = (max_x - min_x) / grid_size; cell_h = (max_y - min_y) / grid_size
-
-    for i, fp in enumerate(footprints):
-        row, col = divmod(i, grid_size)
-        x = min_x + (col + 0.5) * cell_w; y = min_y + (row + 0.5) * cell_h
-        fp.SetPosition(pcbnew.VECTOR2I(int(x), int(y)))
+    state_components_map = {comp['ref']: comp for comp in state_data.get('components', [])}
+    
+    for fp in board.Footprints():
+        ref = fp.GetReference()
+        state_comp = state_components_map.get(ref)
         
-        bbox = fp.GetBoundingBox(True, False) # include pads, no text
-        layout_data["components"].append({
-            "ref": fp.GetReference(), "x": pcbnew.ToMM(x), "y": pcbnew.ToMM(y),
-            "width": pcbnew.ToMM(bbox.GetWidth()), "height": pcbnew.ToMM(bbox.GetHeight()),
+        # Get dimensions either from the state file (more accurate) or by calculating BBox
+        if state_comp and state_comp.get('dimensions'):
+            width, height = state_comp['dimensions']['width'], state_comp['dimensions']['height']
+        else:
+            bbox = fp.GetBoundingBox(True, False)
+            width, height = pcbnew.ToMM(bbox.GetWidth()), pcbnew.ToMM(bbox.GetHeight())
+
+        layout_data["nodes"].append({
+            "id": ref,
+            "label": ref,
+            "x": pcbnew.ToMM(fp.GetPosition().x),
+            "y": pcbnew.ToMM(fp.GetPosition().y),
+            "width": width,
+            "height": height,
+            "svgPath": state_comp.get('svgPath') if state_comp else None,
+            "pin_count": state_comp.get('pin_count') if state_comp else 0
         })
 
-    pad_type_vec = [pcbnew.PCB_PAD_T]
-
-    for net_info in board.GetNetsByNetcode().values():
-        net_name = net_info.GetNetname()
-        if net_name:
-             pads_on_net_items = board.GetConnectivity().GetNetItems(net_info.GetNetCode(), pad_type_vec)
-             pads_on_net = [pcbnew.Cast_to_PAD(item) for item in pads_on_net_items if pcbnew.PAD.ClassOf(item)]
-             pins = [f"{pad.GetParent().GetReference()}-{pad.GetPadName()}" for pad in pads_on_net]
-             if pins: layout_data["nets"].append({"name": net_name, "pins": pins})
-
-    placed_png = get_state_path(args.projectName, 'placed.png')
-    plot_controller = pcbnew.PLOT_CONTROLLER(board)
-    plot_options = plot_controller.GetPlotOptions()
-    plot_options.SetOutputDirectory(STATE_DIR); plot_options.SetFormat(pcbnew.PLOT_FORMAT_PNG)
-    plot_options.SetBlackAndWhite(False); plot_options.SetScale(2)
-    plot_controller.SetLayer(pcbnew.F_Cu)
-    plot_controller.OpenPlotfile("placed", pcbnew.PLOT_FORMAT_PNG, "Placed Components")
-    plot_controller.PlotLayer()
+    # Use the nets from the state file as the source of truth for connections
+    for net in state_data.get('nets', []):
+        component_refs_on_net = list(set([pin.split('-')[0] for pin in net['pins']]))
+        for i in range(len(component_refs_on_net)):
+            for j in range(i + 1, len(component_refs_on_net)):
+                layout_data["edges"].append({
+                    "source": component_refs_on_net[i],
+                    "target": component_refs_on_net[j],
+                    "label": net['name']
+                })
     
-    pcbnew.SaveBoard(pcb_path, board)
+    message = "Extracted layout data. The client UI will now handle component arrangement."
+    log_and_return(message, {"layout_data": layout_data})
 
-    log_and_return(
-        "Workflow paused for interactive layout.",
-        {
-            "layout_data": layout_data,
-            "artifacts": {"placed_png": os.path.relpath(placed_png, STATE_DIR)}
-        }
-    )
 
 def update_component_positions(args):
     pcb_path = get_state_path(args.projectName, 'pcb.kicad_pcb')
@@ -421,8 +439,43 @@ def update_component_positions(args):
         if fp:
             fp.SetPosition(pcbnew.VECTOR2I(pcbnew.FromMM(pos['x']), pcbnew.FromMM(pos['y'])))
     
+    # --- NEW LOGIC: Recalculate board outline based on new positions ---
+    # 1. Remove old outline
+    for drawing in list(board.GetDrawings()): # Use list() to create a copy for safe removal
+        if drawing.GetLayerName() == 'Edge.Cuts':
+            board.Remove(drawing)
+    
+    # 2. Calculate new bounding box of all footprints
+    footprints_bbox = pcbnew.BOX2I()
+    all_footprints = list(board.Footprints())
+    if not all_footprints:
+        log_error_and_exit("No footprints found on board to calculate new outline.")
+
+    for fp in all_footprints:
+        footprints_bbox.Merge(fp.GetBoundingBox(True, False))
+
+    # 3. Add a margin
+    margin_nm = pcbnew.FromMM(5)
+    footprints_bbox.Inflate(margin_nm, margin_nm)
+
+    x_offset, y_offset = footprints_bbox.GetX(), footprints_bbox.GetY()
+    w_nm, h_nm = footprints_bbox.GetWidth(), footprints_bbox.GetHeight()
+    width_mm, height_mm = pcbnew.ToMM(w_nm), pcbnew.ToMM(h_nm)
+    
+    # 4. Draw the new outline
+    points = [
+        pcbnew.VECTOR2I(x_offset, y_offset), pcbnew.VECTOR2I(x_offset + w_nm, y_offset),
+        pcbnew.VECTOR2I(x_offset + w_nm, y_offset + h_nm), pcbnew.VECTOR2I(x_offset, y_offset + h_nm),
+        pcbnew.VECTOR2I(x_offset, y_offset)
+    ]
+    
+    for i in range(len(points) - 1):
+        seg = pcbnew.PCB_SHAPE(board, pcbnew.S_SEGMENT)
+        seg.SetStart(points[i]); seg.SetEnd(points[i+1]); seg.SetLayer(pcbnew.Edge_Cuts); seg.SetWidth(pcbnew.FromMM(0.1))
+        board.Add(seg)
+
     pcbnew.SaveBoard(pcb_path, board)
-    log_and_return("Component positions updated successfully.")
+    log_and_return(f"Component positions updated and board outline resized to {width_mm:.2f}mm x {height_mm:.2f}mm.")
 
 
 def autoroute_pcb(args):

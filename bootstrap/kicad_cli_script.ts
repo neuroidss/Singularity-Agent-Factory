@@ -4,6 +4,7 @@ export const KICAD_CLI_MAIN_SCRIPT = `
 import sys
 import argparse
 import os
+import ast
 
 # This script is the main entry point. The actual command implementations are in kicad_cli_commands.
 # The complex DSN generation logic is in kicad_dsn_utils.
@@ -30,6 +31,16 @@ except ImportError:
     # This will be handled in main()
     pass
 
+def str_to_bool(value):
+    """A custom type for argparse that handles string-to-boolean conversion."""
+    if isinstance(value, bool):
+        return value
+    if value.lower() in ('yes', 'true', 't', 'y', '1'):
+        return True
+    elif value.lower() in ('no', 'false', 'f', 'n', '0'):
+        return False
+    else:
+        raise argparse.ArgumentTypeError('Boolean value expected.')
 
 def main():
     if 'pcbnew' not in sys.modules:
@@ -69,7 +80,8 @@ def main():
 
     p_arrange = subparsers.add_parser('arrange_components')
     p_arrange.add_argument('--projectName', required=True)
-    p_arrange.add_argument('--arrangementStrategy', default='grid')
+    # Use the custom str_to_bool type to handle 'true'/'false' from shell
+    p_arrange.add_argument('--waitForUserInput', type=str_to_bool, default=True)
     p_arrange.set_defaults(func=arrange_components)
     
     p_update_pos = subparsers.add_parser('update_component_positions')

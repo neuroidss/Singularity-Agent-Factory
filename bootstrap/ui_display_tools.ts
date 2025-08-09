@@ -23,9 +23,9 @@ export const UI_DISPLAY_TOOLS: ToolCreatorPayload[] = [
           );
           
           const isDisabled = isSwarmRunning;
-          const buttonText = isSwarmRunning ? 'Swarm is Active...' : 'Start Swarm Task';
-          let placeholderText = "Describe a high-level goal for the agent swarm...";
-          if(isSwarmRunning) placeholderText = "Swarm task is running...";
+          const buttonText = isSwarmRunning ? 'Agent is Active...' : 'Start Task';
+          let placeholderText = "Describe a high-level goal for the agent...";
+          if(isSwarmRunning) placeholderText = "Agent task is running...";
     
           return (
             <div className="w-full bg-gray-800/60 border border-gray-700 rounded-xl p-4">

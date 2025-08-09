@@ -1,3 +1,4 @@
+
 import React, { useMemo } from 'react';
 import type { LLMTool, UIToolRunnerProps } from '../types';
 import DebugLogView from './ui_tools/DebugLogView';
@@ -10,7 +11,8 @@ interface UIToolRunnerComponentProps {
   props: UIToolRunnerProps;
 }
 
-// A wrapper to catch runtime errors in the compiled component
+// A wrapper to catch runtime errors in the compiled component.
+// It now resets its error state if the tool being rendered changes.
 class ErrorBoundary extends React.Component<{ fallback: React.ReactNode, children: React.ReactNode, toolName: string }, { hasError: boolean }> {
   constructor(props: any) {
     super(props);
@@ -19,6 +21,13 @@ class ErrorBoundary extends React.Component<{ fallback: React.ReactNode, childre
 
   static getDerivedStateFromError(error: any) {
     return { hasError: true };
+  }
+
+  componentDidUpdate(prevProps: { toolName: string }) {
+    if (this.props.toolName !== prevProps.toolName) {
+      // eslint-disable-next-line react/no-did-update-set-state
+      this.setState({ hasError: false });
+    }
   }
 
   componentDidCatch(error: any, errorInfo: any) {
@@ -34,12 +43,14 @@ class ErrorBoundary extends React.Component<{ fallback: React.ReactNode, childre
 }
 
 export const UIToolRunner: React.FC<UIToolRunnerComponentProps> = ({ tool, props }) => {
+  // Memoize the compiled component to prevent re-compiling and re-mounting on every render,
+  // which was causing the flickering and state loss in complex components like the interactive graph.
   const CompiledComponent = useMemo(() => {
     if (tool.category !== 'UI Component') {
       return () => <div>Error: Tool "{tool.name}" is not a UI Component.</div>;
     }
 
-    // Special case for complex, directly imported components
+    // Special case for complex, directly imported components that don't need compilation.
     if (tool.name === 'Debug Log View') {
         return DebugLogView;
     }
@@ -47,8 +58,13 @@ export const UIToolRunner: React.FC<UIToolRunnerComponentProps> = ({ tool, props
     const code = tool.implementationCode || '';
     const sanitizedCode = code.replace(/export default .*;?/g, '');
 
+    // Decouple component compilation from the live props object.
+    // The list of props to destructure is derived from the tool's static definition.
+    // This makes the compiled function stable across renders.
+    const propKeys = tool.parameters?.map(p => p.name) || [];
+
     const componentSource = `(props) => {
-      const { ${Object.keys(props).join(', ')} } = props;
+      const { ${propKeys.join(', ')} } = props;
       ${sanitizedCode}
     }`;
 
@@ -70,7 +86,10 @@ export const UIToolRunner: React.FC<UIToolRunnerComponentProps> = ({ tool, props
         </div>
       );
     }
-  }, [tool.id, tool.version, tool.implementationCode, Object.keys(props).join(',')]);
+  // The dependencies ensure re-compilation only happens if the tool's definition changes.
+  // Using tool.id and tool.version is sufficient to detect tool updates.
+  }, [tool.id, tool.version]);
+
 
   const fallback = (
     <div className="p-4 bg-yellow-900/50 border-2 border-dashed border-yellow-500 rounded-lg text-yellow-300">

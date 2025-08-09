@@ -1,4 +1,5 @@
-import React, { useCallback, useRef } from 'react';
+
+import React, { useCallback, useRef, useEffect } from 'react';
 import { SERVER_URL } from '../App';
 import * as aiService from '../services/aiService';
 import type {
@@ -27,6 +28,8 @@ type UseAppRuntimeProps = {
     getRobotStateForRuntime: (agentId: string) => { robot: RobotState; environment: EnvironmentObject[] };
     setTools: React.Dispatch<React.SetStateAction<LLMTool[]>>;
     setPcbArtifacts: (artifacts: any) => void;
+    kicadLogEvent: (message: string) => void;
+    setCurrentKicadArtifact: (artifact: any) => void;
 };
 
 export const useAppRuntime = (props: UseAppRuntimeProps) => {
@@ -35,9 +38,18 @@ export const useAppRuntime = (props: UseAppRuntimeProps) => {
         apiConfig, selectedModel,
         robotState, robotSetters, getRobotStateForRuntime,
         setTools, setPcbArtifacts,
+        kicadLogEvent, setCurrentKicadArtifact
     } = props;
 
     const executeActionRef = useRef<any>(null);
+    
+    // Add refs for changing dependencies of processRequest
+    const selectedModelRef = useRef(selectedModel);
+    useEffect(() => { selectedModelRef.current = selectedModel; }, [selectedModel]);
+
+    const apiConfigRef = useRef(apiConfig);
+    useEffect(() => { apiConfigRef.current = apiConfig; }, [apiConfig]);
+
 
     const runToolImplementation = useCallback(async (code: string, params: any, runtime: any): Promise<any> => {
         const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
@@ -154,7 +166,7 @@ export const useAppRuntime = (props: UseAppRuntimeProps) => {
         getObservationHistory: () => robotState.observationHistory,
         clearObservationHistory: () => robotSetters.setObservationHistory([]),
         updatePcbArtifacts: setPcbArtifacts,
-    }), [runToolImplementation, robotState, robotSetters, logEvent, isServerConnected, fetchServerTools, getRobotStateForRuntime, setTools, setPcbArtifacts]);
+    }), [runToolImplementation, robotState, robotSetters, logEvent, isServerConnected, fetchServerTools, getRobotStateForRuntime, setTools, setPcbArtifacts, generateMachineReadableId]);
 
     const executeAction = useCallback(async (toolCall: AIToolCall, agentId: string): Promise<EnrichedAIResponse> => {
         if (!toolCall) return { toolCall: null };
@@ -171,17 +183,17 @@ export const useAppRuntime = (props: UseAppRuntimeProps) => {
             if (!isServerConnected) {
                 enrichedResult.executionError = `Cannot execute server tool '${toolToExecute.name}': Backend server is not connected.`;
                 logEvent(`[ERROR] ❌ ${enrichedResult.executionError}`);
-                return enrichedResult;
-            }
-            try {
-                const response = await fetch(`${SERVER_URL}/api/execute`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(toolCall) });
-                const result = await response.json();
-                if (!response.ok) throw new Error(result.error || 'Server execution failed with unknown error');
-                enrichedResult.executionResult = result;
-                logEvent(`[INFO] ✅ [SERVER] ${result?.stdout || result?.message || `Tool "${toolToExecute.name}" executed by server.`}`);
-            } catch (execError) {
-                 enrichedResult.executionError = execError instanceof Error ? execError.message : String(execError);
-                 logEvent(`[ERROR] ❌ [SERVER] ${enrichedResult.executionError}`);
+            } else {
+                try {
+                    const response = await fetch(`${SERVER_URL}/api/execute`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(toolCall) });
+                    const result = await response.json();
+                    if (!response.ok) throw new Error(result.error || 'Server execution failed with unknown error');
+                    enrichedResult.executionResult = result;
+                    logEvent(`[INFO] ✅ [SERVER] ${result?.stdout || result?.message || `Tool "${toolToExecute.name}" executed by server.`}`);
+                } catch (execError) {
+                     enrichedResult.executionError = execError instanceof Error ? execError.message : String(execError);
+                     logEvent(`[ERROR] ❌ [SERVER] ${enrichedResult.executionError}`);
+                }
             }
         } else if (toolToExecute.category === 'UI Component') {
              enrichedResult.executionResult = { success: true, summary: `Displayed UI tool '${toolToExecute.name}'.` };
@@ -195,8 +207,52 @@ export const useAppRuntime = (props: UseAppRuntimeProps) => {
                 logEvent(`[ERROR] ❌ ${enrichedResult.executionError}`);
             }
         }
+
+        // Post-processing logic for KiCad tools
+        if (enrichedResult.toolCall?.name?.toLowerCase().includes('kicad')) {
+            if (enrichedResult.executionResult?.stdout) {
+                try {
+                    const parsed = JSON.parse(enrichedResult.executionResult.stdout);
+                    if(parsed.message) kicadLogEvent(`✔️ ${parsed.message}`);
+
+                     if (parsed.artifacts) {
+                        let title = 'Processing...';
+                        if (toolCall.name.includes('Arrange')) title = 'Placed Components';
+                        if (toolCall.name.includes('Route')) title = 'Routed Board';
+                        if (toolCall.name.includes('Create Initial')) title = 'Unplaced Board';
+                        if (toolCall.name.includes('Export')) title = 'Final Fabrication Output';
+                        
+                        const newArtifact = { 
+                            title, 
+                            path: parsed.artifacts.placed_png || parsed.artifacts.topImage || null,
+                            svgPath: parsed.artifacts.routed_svg || null 
+                        };
+                        
+                        if (newArtifact.path || newArtifact.svgPath) setCurrentKicadArtifact(newArtifact);
+
+                        if (parsed.artifacts.fabZipPath) {
+                            kicadLogEvent("🎉 Fabrication successful! Displaying final 3D results.");
+                             setPcbArtifacts({ 
+                                boardName: String(parsed.artifacts.boardName), 
+                                topImage: String(parsed.artifacts.topImage), 
+                                bottomImage: String(parsed.artifacts.bottomImage), 
+                                fabZipPath: String(parsed.artifacts.fabZipPath) 
+                            });
+                            setCurrentKicadArtifact(null);
+                        }
+                    }
+                } catch(e) { /* Not JSON, ignore */ }
+            }
+             if(enrichedResult.toolCall?.name) {
+                 kicadLogEvent(`⚙️ Agent ${agentId} called: ${enrichedResult.toolCall.name}`);
+             }
+             if(enrichedResult.executionError) {
+                kicadLogEvent(`❌ ERROR: ${enrichedResult.executionError}`);
+             }
+        }
+
         return enrichedResult;
-    }, [getRuntimeApi, runToolImplementation, logEvent, isServerConnected]);
+    }, [getRuntimeApi, runToolImplementation, logEvent, isServerConnected, kicadLogEvent, setPcbArtifacts, setCurrentKicadArtifact]);
     
     executeActionRef.current = executeAction;
     
@@ -210,8 +266,8 @@ export const useAppRuntime = (props: UseAppRuntimeProps) => {
             const aiResponse = await aiService.generateResponse(
                 prompt,
                 systemInstruction,
-                selectedModel,
-                apiConfig,
+                selectedModelRef.current, // Use ref
+                apiConfigRef.current,     // Use ref
                 (progress) => logEvent(`[AI-PROGRESS] ${progress}`),
                 allToolsRef.current
             );
@@ -230,7 +286,7 @@ export const useAppRuntime = (props: UseAppRuntimeProps) => {
             logEvent(`[ERROR] Agent ${agentId} failed during AI generation: ${errorMessage}`);
             throw error;
         }
-    }, [logEvent, selectedModel, apiConfig, allToolsRef, executeActionRef]);
+    }, [logEvent, allToolsRef, executeActionRef]);
 
     const runServerTool = useCallback(async (toolName: string, args: Record<string, any> = {}) => {
         try {

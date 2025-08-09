@@ -134,9 +134,10 @@ def merge_all_drawings(parent, layer, use_local=False):
     """Gets all drawings on a specific layer and merges them into continuous paths."""
     items = []
     if hasattr(parent, 'Drawings'): # For BOARD objects
-        items = parent.Drawings()
+        # Explicitly convert to list to avoid issues with generator-like objects
+        items = list(parent.Drawings())
     elif hasattr(parent, 'GraphicalItems'): # For FOOTPRINT objects
-        items = parent.GraphicalItems()
+        items = list(parent.GraphicalItems())
 
     # Filter for PCB_SHAPE objects only, to avoid trying to get start/end from text, etc.
     drawings = [d for d in items if d.GetLayerName() == layer and isinstance(d, pcbnew.PCB_SHAPE)]

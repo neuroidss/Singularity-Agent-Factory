@@ -1,7 +1,6 @@
-
 export type ToolCategory = 'UI Component' | 'Functional' | 'Automation' | 'Server';
 
-export type AgentStatus = 'idle' | 'working' | 'succeeded' | 'failed' | 'terminated';
+export type AgentStatus = 'idle' | 'working' | 'succeeded' | 'failed' | 'terminated' | 'paused';
 
 export interface AgentWorker {
   id: string;
@@ -120,6 +119,12 @@ export interface KnowledgeGraphEdge {
 export interface KnowledgeGraph {
   nodes: KnowledgeGraphNode[];
   edges: KnowledgeGraphEdge[];
+  board_outline?: {
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+  };
 }
 
 export type KicadSchematic = [string, string[], string][];
