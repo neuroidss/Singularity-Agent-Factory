@@ -11,6 +11,7 @@ export const UI_KNOWLEDGE_TOOLS: ToolCreatorPayload[] = [
             { name: 'graph', type: 'object', description: 'The graph data, containing nodes, edges, and optionally a board_outline.', required: true },
             { name: 'title', type: 'string', description: 'The title to display above the graph.', required: false },
             { name: 'onCommit', type: 'object', description: 'Callback function to submit the final layout and continue the workflow.', required: false },
+            { name: 'serverUrl', type: 'string', description: 'Base URL of the server for loading assets.', required: true },
         ],
         implementationCode: `
             if (!graph || !graph.nodes || graph.nodes.length === 0) {
@@ -28,13 +29,13 @@ export const UI_KNOWLEDGE_TOOLS: ToolCreatorPayload[] = [
             const animationFrameRef = React.useRef(null);
             const simulationActive = React.useRef(true);
             
+            const isLayoutMode = React.useMemo(() => !!board_outline, [board_outline]);
+            const scale = isLayoutMode ? 1.0 : (1 / (Math.max(...simNodes.map(n => Math.hypot(n.x, n.y))) || 500)) * 500;
             const viewBox = React.useMemo(() => {
                 if (!board_outline) return '-500 -500 1000 1000';
-                const margin = board_outline.width * 0.1; 
+                const margin = Math.max(board_outline.width, board_outline.height) * 0.1;
                 return \`\${board_outline.x - margin} \${board_outline.y - margin} \${board_outline.width + margin*2} \${board_outline.height + margin*2}\`;
             }, [board_outline]);
-
-            const isLayoutMode = React.useMemo(() => !!board_outline, [board_outline]);
 
             React.useEffect(() => {
                 const svgElement = containerRef.current;
@@ -58,23 +59,19 @@ export const UI_KNOWLEDGE_TOOLS: ToolCreatorPayload[] = [
                         }
                         
                         let totalMovement = 0;
-                        const REPULSION = isLayoutMode ? 1e7 : 15000;
-                        const ATTRACTION = isLayoutMode ? 0.02 : 0.01;
+                        const REPULSION = isLayoutMode ? 1e7 : 50000;
+                        const ATTRACTION = isLayoutMode ? 0.02 : 0.05;
                         const CENTER_GRAVITY = isLayoutMode ? 0.005 : 0.02;
 
-                        // Apply forces and update positions
                         const nextNodes = currentNodes.map(nodeA => {
                             if (isDraggingRef.current === nodeA.id) return { ...nodeA, vx: 0, vy: 0 };
 
                             let fx = 0, fy = 0;
-                            
-                            // Center gravity
                             const centerX = isLayoutMode ? board_outline.x + board_outline.width / 2 : svgElement.clientWidth / 2;
                             const centerY = isLayoutMode ? board_outline.y + board_outline.height / 2 : svgElement.clientHeight / 2;
                             fx -= (nodeA.x - centerX) * CENTER_GRAVITY;
                             fy -= (nodeA.y - centerY) * CENTER_GRAVITY;
 
-                            // Repulsion
                             for (const nodeB of currentNodes) {
                                 if (nodeA.id === nodeB.id) continue;
                                 const dx = nodeA.x - nodeB.x;
@@ -94,7 +91,12 @@ export const UI_KNOWLEDGE_TOOLS: ToolCreatorPayload[] = [
                             return nodeA;
                         });
 
-                        // Attraction
+                        const getDiagonal = (node) => {
+                            if (node.dimensions) return Math.hypot(node.dimensions.width, node.dimensions.height);
+                            if (isLayoutMode && node.width) return Math.hypot(node.width, node.height);
+                            return (10 + (node.pin_count || 0) * 0.5) * 2;
+                        };
+
                         for (const edge of edges) {
                             const source = nextNodes.find(n => n.id === edge.source);
                             const target = nextNodes.find(n => n.id === edge.target);
@@ -102,9 +104,7 @@ export const UI_KNOWLEDGE_TOOLS: ToolCreatorPayload[] = [
                             const dx = target.x - source.x;
                             const dy = target.y - source.y;
                             const distance = Math.sqrt(dx * dx + dy * dy) || 1;
-                            const idealLength = isLayoutMode ? 
-                                ((source.width || 20) + (target.width || 20))/2 * 1.5
-                                : (10 + (source.pin_count || 0) * 0.5) + (10 + (target.pin_count || 0) * 0.5) + 60; // Sum of radii + gap
+                            const idealLength = (getDiagonal(source)/2 + getDiagonal(target)/2) + (isLayoutMode ? 5 : 60);
                             const displacement = distance - idealLength;
                             const force = ATTRACTION * displacement;
                             const fx = (dx / distance) * force;
@@ -130,7 +130,7 @@ export const UI_KNOWLEDGE_TOOLS: ToolCreatorPayload[] = [
                     if (animationFrameRef.current) cancelAnimationFrame(animationFrameRef.current);
                     simulationActive.current = false;
                 };
-            }, [graph, isLayoutMode]);
+            }, [graph, isLayoutMode, board_outline, serverUrl]);
 
             const handleMouseDown = (e, nodeId) => { isDraggingRef.current = nodeId; simulationActive.current = true; if (!animationFrameRef.current) requestAnimationFrame(() => {}); };
             const handleMouseMove = (e) => {
@@ -160,17 +160,34 @@ export const UI_KNOWLEDGE_TOOLS: ToolCreatorPayload[] = [
                             {edges.map((edge, i) => {
                                 const sourcePos = nodePositions.get(edge.source); const targetPos = nodePositions.get(edge.target);
                                 if (!sourcePos || !targetPos) return null;
-                                return <line key={\`\${edge.source}-\${edge.target}-\${i}\`} x1={sourcePos.x} y1={sourcePos.y} x2={targetPos.x} y2={targetPos.y} className="stroke-slate-600" strokeWidth={isLayoutMode ? board_outline.width/200 : 1} />;
+                                return <line key={\`\${edge.source}-\${edge.target}-\${i}\`} x1={sourcePos.x} y1={sourcePos.y} x2={targetPos.x} y2={targetPos.y} className="stroke-slate-600" strokeWidth={isLayoutMode ? 0.2 : 1} />;
                             })}
-                            {simNodes.map(node => (
-                                <g key={node.id} transform={\`translate(\${node.x}, \${node.y})\`} onMouseDown={(e) => handleMouseDown(e, node.id)} className="cursor-move group">
-                                    {isLayoutMode ?
-                                       <rect x={-node.width/2} y={-node.height/2} width={node.width} height={node.height} className="fill-purple-900/80 stroke-purple-400 group-hover:stroke-yellow-400 transition-colors" strokeWidth={node.width/20} rx={node.width/10} />
-                                     : <circle r={10 + (node.pin_count || 0) * 0.5} className="fill-purple-900/80 stroke-purple-400 group-hover:stroke-yellow-400 transition-colors" strokeWidth="2" />
-                                    }
-                                    <text textAnchor="middle" y={isLayoutMode ? 0 : 28} className="fill-gray-300 font-semibold select-none" style={{ fontSize: isLayoutMode ? Math.min(node.width, node.height)/2 : '12px' }}>{node.label}</text>
-                                </g>
-                            ))}
+                            {simNodes.map(node => {
+                                const hasFootprint = node.svgPath && node.dimensions;
+                                const fullSvgUrl = hasFootprint ? \`\${serverUrl}/\${node.svgPath}\` : '';
+                                const effectiveWidth = node.dimensions?.width || node.width || 20;
+                                const effectiveHeight = node.dimensions?.height || node.height || 20;
+
+                                return (
+                                    <g key={node.id} transform={\`translate(\${node.x}, \${node.y})\`} onMouseDown={(e) => handleMouseDown(e, node.id)} className="cursor-move group">
+                                        {hasFootprint ? (
+                                            <image 
+                                                href={fullSvgUrl} 
+                                                x={-effectiveWidth / 2} 
+                                                y={-effectiveHeight / 2} 
+                                                width={effectiveWidth} 
+                                                height={effectiveHeight}
+                                                className="group-hover:opacity-80 transition-opacity"
+                                            />
+                                        ) : (
+                                            <circle r={10 + (node.pin_count || 0) * 0.5} className="fill-purple-900/80 stroke-purple-400 group-hover:stroke-yellow-400 transition-colors" strokeWidth="2" />
+                                        )}
+                                        <text textAnchor="middle" y={effectiveHeight / 2 + (isLayoutMode ? 4 : 15)} className="fill-white font-semibold select-none stroke-black stroke-1" style={{ fontSize: isLayoutMode ? Math.min(effectiveWidth, effectiveHeight) / 4 : '12px', paintOrder: 'stroke' }}>
+                                            {node.label}
+                                        </text>
+                                    </g>
+                                )
+                            })}
                         </svg>
                     </div>
                     {isLayoutMode && onCommit && (

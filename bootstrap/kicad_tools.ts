@@ -4,6 +4,7 @@ import React from 'react';
 import { KICAD_CLI_MAIN_SCRIPT } from './kicad_cli_script';
 import { KICAD_CLI_COMMANDS_SCRIPT } from './kicad_cli_commands';
 import { KICAD_DSN_UTILS_SCRIPT } from './kicad_dsn_utils';
+import { KICAD_SES_UTILS_SCRIPT } from './kicad_ses_utils';
 
 const KICAD_SERVER_TOOL_DEFINITIONS: ToolCreatorPayload[] = [
     {
@@ -125,9 +126,11 @@ const KICAD_INSTALLER_TOOL: ToolCreatorPayload = {
         const cliMainContent = ${JSON.stringify(KICAD_CLI_MAIN_SCRIPT)};
         const cliCommandsContent = ${JSON.stringify(KICAD_CLI_COMMANDS_SCRIPT)};
         const dsnUtilsContent = ${JSON.stringify(KICAD_DSN_UTILS_SCRIPT)};
+        const sesUtilsContent = ${JSON.stringify(KICAD_SES_UTILS_SCRIPT)};
 
         // Step 1: Write all Python scripts to the server
         await runtime.tools.run('Server File Writer', { filePath: 'kicad_dsn_utils.py', content: dsnUtilsContent });
+        await runtime.tools.run('Server File Writer', { filePath: 'kicad_ses_utils.py', content: sesUtilsContent });
         await runtime.tools.run('Server File Writer', { filePath: 'kicad_cli_commands.py', content: cliCommandsContent });
         await runtime.tools.run('Server File Writer', { filePath: 'kicad_cli.py', content: cliMainContent });
         console.log('[INFO] KiCad Python scripts written to server.');
@@ -172,7 +175,6 @@ Here is the plan:
 1.  Define the components:
     *   An ADC component with reference 'U1'. Its description is '8-Channel, 24-Bit, 32-kSPS, Delta-Sigma ADC'. Its value is 'ADS131M08' and its footprint identifier is 'Package_QFP:LQFP-32_5x5mm_P0.5mm'. It has 32 pins.
     *   Two header components with references 'J1' and 'J2'. Their description is 'XIAO Header', value is 'XIAO Header', footprint is 'Connector_PinHeader_2.54mm:PinHeader_1x07_P2.54mm_Vertical', and they have 7 pins each.
-
 2.  Define all the electrical nets by calling the 'Define KiCad Net' tool for each one. The nets are:
     *   A net named 'GND' connecting pins: ["U1-13", "U1-25", "U1-27", "U1-28", "J2-1"]
     *   A net named 'AVDD' connecting pins: ["U1-15", "J1-1"]

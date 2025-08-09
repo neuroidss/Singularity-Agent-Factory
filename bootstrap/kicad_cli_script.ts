@@ -7,7 +7,8 @@ import os
 
 # This script is the main entry point. The actual command implementations are in kicad_cli_commands.
 # The complex DSN generation logic is in kicad_dsn_utils.
-# We are assuming all three .py files are in the same directory.
+# The SES parsing logic is in kicad_ses_utils.
+# We are assuming all four .py files (kicad_cli.py, kicad_cli_commands.py, kicad_dsn_utils.py, kicad_ses_utils.py) are in the same directory.
 from kicad_cli_commands import (
     define_components,
     define_net,

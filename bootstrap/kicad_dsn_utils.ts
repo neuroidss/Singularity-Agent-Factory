@@ -77,7 +77,7 @@ def get_board_layers(board):
     return [(i, board.GetLayerName(i), pcbnew.LAYER.ShowType(board.GetLayerType(i))) for i in all_layers if board.IsLayerEnabled(i)]
 
 TU = lambda vals: Tuple(vals)
-NL = lambda sp=0: Whitespace("\\\\n"+(" "*sp))
+NL = lambda sp=0: Whitespace("\\n"+(" "*sp))
 SP = lambda: Whitespace(" ")
 LA = lambda la: Label(str(la))
 QS = lambda la: QuotedString(str(la))
@@ -138,7 +138,8 @@ def merge_all_drawings(parent, layer, use_local=False):
     elif hasattr(parent, 'GraphicalItems'): # For FOOTPRINT objects
         items = parent.GraphicalItems()
 
-    drawings = [d for d in items if d.GetLayerName() == layer]
+    # Filter for PCB_SHAPE objects only, to avoid trying to get start/end from text, etc.
+    drawings = [d for d in items if d.GetLayerName() == layer and isinstance(d, pcbnew.PCB_SHAPE)]
     if not drawings:
         return []
     
@@ -456,7 +457,36 @@ def make_library(footprints, pads):
     return TU(library)
 
 def make_network(board, vias, nets):
-    net_classes=dict((str(a),[b.GetTrackWidth(),b.GetClearance(),[],b.GetViaDiameter(),b.GetViaDrill()]) for a,b in board.GetAllNetClasses().items())
+    """Rewritten to be more robust about netclass names."""
+    
+    # 1. Sanitize all netclass names and prepare data structures
+    sanitized_class_map = {}
+    netclass_data = {}
+    all_board_netclasses = board.GetAllNetClasses()
+    
+    for original_name, netclass_obj in all_board_netclasses.items():
+        name_str = str(original_name)
+        if not name_str:
+            sanitized_name = 'unnamed_class'
+        elif name_str == 'Default':
+            sanitized_name = 'kicad_default'
+        else:
+            sanitized_name = name_str
+        
+        sanitized_class_map[name_str] = sanitized_name
+        
+        if sanitized_name not in netclass_data:
+            via_dia, via_drl = netclass_obj.GetViaDiameter(), netclass_obj.GetViaDrill()
+            netclass_data[sanitized_name] = {
+                "track_width": netclass_obj.GetTrackWidth(),
+                "clearance": netclass_obj.GetClearance(),
+                "via_dia": via_dia,
+                "via_drl": via_drl,
+                "via_name": vias.get((via_dia, via_drl), [None])[0],
+                "nets": []
+            }
+            
+    # 2. Process nets and assign them to sanitized netclasses
     network = [LA('network')]
     for net_name, pins in nets.items():
         network.append(NL(4))
@@ -467,23 +497,35 @@ def make_network(board, vias, nets):
                 final_pin_elements.append(SP())
             final_pin_elements.append(pin_el)
         net_item_pins_tuple = TU([LA('pins'), SP()] + final_pin_elements)
-        net_item = [LA('net'),SP(),LQ(net_name),NL(6), net_item_pins_tuple]
+
+        safe_net_name = net_name if net_name else "unnamed_net"
+        net_item = [LA('net'), SP(), LQ(safe_net_name), NL(6), net_item_pins_tuple]
         network.append(TU(net_item))
-        nc = board.FindNet(net_name).GetNetClassName()
-        nc_str = str(nc)
-        if nc_str in net_classes:
-            net_classes[nc_str][2].append(net_name)
-    for name, (track_width, clearance,net_names, via_dia, via_drl) in net_classes.items():
-        use_name = 'kicad_default' if name=='Default' else name
-        via_name_key = (via_dia, via_drl)
-        via_name = vias.get(via_name_key, [None])[0]
-        if not via_name: continue
-        class_item = [LA('class'),SP(),LQ(use_name)]
-        for n in net_names:
+
+        # Assign net to its class
+        net_info = board.FindNet(net_name)
+        if net_info:
+            original_class_name = str(net_info.GetNetClassName())
+            if not original_class_name:
+                original_class_name = 'Default'
+
+            sanitized_class_name = sanitized_class_map.get(original_class_name)
+            if sanitized_class_name and sanitized_class_name in netclass_data:
+                netclass_data[sanitized_class_name]["nets"].append(safe_net_name)
+
+    # 3. Generate class definitions, skipping any that are empty
+    for class_name, data in netclass_data.items():
+        if not data["nets"] or not data["via_name"]:
+            continue
+            
+        class_item = [LA('class'), SP(), LQ(class_name)]
+        for n in data["nets"]:
             class_item.extend([SP(), LQ(n)])
-        class_item.extend([NL(6),TU([LA('circuit'),NL(8),TU([LA('use_via'),SP(), LQ(via_name)]),NL(6)])])
-        class_item.extend([NL(6),TU([LA('rule'),NL(8),TU([LA('width'),SP(),LV(track_width)]),NL(8),TU([LA('clearance'),SP(),LV(clearance)]),NL(6)])])
-        network.extend([NL(4),TU(class_item)])
+        
+        class_item.extend([NL(6), TU([LA('circuit'), NL(8), TU([LA('use_via'), SP(), LQ(data["via_name"])]), NL(6)])])
+        class_item.extend([NL(6), TU([LA('rule'), NL(8), TU([LA('width'), SP(), LV(data["track_width"])]), NL(8), TU([LA('clearance'), SP(), LV(data["clearance"])]), NL(6)])])
+        network.extend([NL(4), TU(class_item)])
+        
     network.append(NL(2))
     return TU(network)
 
@@ -523,7 +565,8 @@ def board_to_dsn(filename, board, include_zones=False, selected_pads=None, selec
     result.extend([NL(2), make_placement(footprints)])
     result.extend([NL(2), make_library(footprints, pads)])
     result.extend((NL(2), make_network(board, vias, nets)))
-    result.extend((NL(2), make_wiring(board, vias, selected_tracks, fixed_wiring)))
+    # The autorouter needs an UNROUTED board. Exporting existing wiring confuses it.
+    # result.extend((NL(2), make_wiring(board, vias, selected_tracks, fixed_wiring)))
     result.append(NL())
     return TU(result)
 
@@ -587,7 +630,7 @@ def read_exact(sock, ln):
 
 class MessageReceiver:
     def __init__(self, board_handler, message_handler, responses, get_process, raw_message_logger=None):
-        self.board_handler, self.message_handler, self.responses, self.get_process, self.raw_message_logger = board_handler, message_handler, responses, get_process, raw_message_logger
+        self.board_handler, self.message_handler, self.responses, self.get_process, self.raw_message_logger = board_handler, message_handler, self.responses, get_process, raw_message_logger
     def read_all(self):
         while self.read_next(): pass
     def handle_wait_reply(self, proc, msg):

@@ -1,4 +1,3 @@
-
 //server/kicad_cli_commands.ts is typescript file with text variable with python code of server/kicad_cli_commands.py
 export const KICAD_CLI_COMMANDS_SCRIPT = `
 import os
@@ -12,6 +11,7 @@ import glob
 import traceback
 import ast
 import fcntl
+import shutil
 from math import sin, cos, acos, pi, sqrt, ceil, hypot
 
 # --- SKiDL is only needed for netlist generation ---
@@ -30,6 +30,7 @@ except ImportError:
     pass
 
 from kicad_dsn_utils import *
+from kicad_ses_utils import parse_and_apply_ses # Import the new parser
 
 # --- State File Configuration ---
 STATE_DIR = os.path.join(os.path.dirname(__file__), '..', 'assets')
@@ -51,7 +52,7 @@ class AutoStopper:
             message_text = msg.get('msg', '')
             
             # This regex captures the number of changes from both relevant message formats
-            match = re.search(r"(?:making|There were only) (\\\\d+\\\\.?\\\\d*) changes", message_text)
+            match = re.search(r"(?:making|There were only) (\\d+\\.?\\d*) changes", message_text)
 
             if match:
                 changes = float(match.group(1))
@@ -372,18 +373,19 @@ def arrange_components(args):
         x = min_x + (col + 0.5) * cell_w; y = min_y + (row + 0.5) * cell_h
         fp.SetPosition(pcbnew.VECTOR2I(int(x), int(y)))
         
-        bbox = fp.GetBoundingBox(False, False)
+        bbox = fp.GetBoundingBox(True, False) # include pads, no text
         layout_data["components"].append({
             "ref": fp.GetReference(), "x": pcbnew.ToMM(x), "y": pcbnew.ToMM(y),
             "width": pcbnew.ToMM(bbox.GetWidth()), "height": pcbnew.ToMM(bbox.GetHeight()),
         })
 
     pad_type_vec = [pcbnew.PCB_PAD_T]
-    
+
     for net_info in board.GetNetsByNetcode().values():
         net_name = net_info.GetNetname()
         if net_name:
-             pads_on_net = board.GetConnectivity().GetNetItems(net_info.GetNetCode(), pad_type_vec)
+             pads_on_net_items = board.GetConnectivity().GetNetItems(net_info.GetNetCode(), pad_type_vec)
+             pads_on_net = [pcbnew.Cast_to_PAD(item) for item in pads_on_net_items if pcbnew.PAD.ClassOf(item)]
              pins = [f"{pad.GetParent().GetReference()}-{pad.GetPadName()}" for pad in pads_on_net]
              if pins: layout_data["nets"].append({"name": net_name, "pins": pins})
 
@@ -391,7 +393,7 @@ def arrange_components(args):
     plot_controller = pcbnew.PLOT_CONTROLLER(board)
     plot_options = plot_controller.GetPlotOptions()
     plot_options.SetOutputDirectory(STATE_DIR); plot_options.SetFormat(pcbnew.PLOT_FORMAT_PNG)
-    plot_options.SetColorMode(True); plot_options.SetScale(2)
+    plot_options.SetBlackAndWhite(False); plot_options.SetScale(2)
     plot_controller.SetLayer(pcbnew.F_Cu)
     plot_controller.OpenPlotfile("placed", pcbnew.PLOT_FORMAT_PNG, "Placed Components")
     plot_controller.PlotLayer()
@@ -463,79 +465,143 @@ def autoroute_pcb(args):
     if not os.path.exists(ses_path):
         log_error_and_exit("Routed session file (.ses) not created by FreeRouting.")
         
+    # --- Clear existing tracks and vias before importing ---
     for track in list(board.GetTracks()):
          board.Remove(track)
-
-    pcbnew.ImportSES(board, ses_path, True)
+    print(f"INFO: Cleared all existing tracks and vias from the board before import.", file=sys.stderr)
+    
+    parse_and_apply_ses(board, ses_path)
+    
     pcbnew.SaveBoard(pcb_path, board)
 
     routed_svg_path = get_state_path(args.projectName, 'routed.svg')
     plot_controller = pcbnew.PLOT_CONTROLLER(board)
     plot_options = plot_controller.GetPlotOptions()
     plot_options.SetOutputDirectory(STATE_DIR); plot_options.SetPlotFrameRef(False)
-    plot_options.SetScale(2); plot_options.SetColorMode(True)
+    plot_options.SetScale(2); plot_options.SetBlackAndWhite(False)
     
-    plot_options.SetFormat(pcbnew.PLOT_FORMAT_SVG)
-    layers_to_plot = [
-        (pcbnew.F_Cu, pcbnew.PLT_COLOR_GREEN), (pcbnew.B_Cu, pcbnew.PLT_COLOR_RED),
-        (pcbnew.Edge_Cuts, pcbnew.PLT_COLOR_YELLOW)
+    pctl = pcbnew.PLOT_CONTROLLER(board)
+    popts = pctl.GetPlotOptions()
+    popts.SetOutputDirectory(STATE_DIR)
+    popts.SetPlotFrameRef(False)
+    popts.SetAutoScale(False)
+    popts.SetScale(4)
+    popts.SetMirror(False)
+    popts.SetUseAuxOrigin(True)
+
+    layers = [
+        ("F.Cu", pcbnew.F_Cu, None),
+        ("B.Cu", pcbnew.B_Cu, None),
+        ("Edge.Cuts", pcbnew.Edge_Cuts, None),
+        ("F.SilkS", pcbnew.F_SilkS, None),
+        ("B.SilkS", pcbnew.B_SilkS, None),
+        ("F.Mask", pcbnew.F_Mask, None),
+        ("B.Mask", pcbnew.B_Mask, None),
     ]
-    for layer_id, color in layers_to_plot:
-        plot_controller.SetLayer(layer_id)
-        plot_controller.SetLayerColor(layer_id, color)
-    plot_controller.OpenPlotfile("routed", pcbnew.PLOT_FORMAT_SVG, "Routed Board")
-    plot_controller.PlotLayers(pcbnew.LSET.AllCuMask())
+
+    # Plot to SVG
+    pctl.SetLayer(pcbnew.F_Cu) # Just need to set one layer to open the file
+    pctl.OpenPlotfile("routed", pcbnew.PLOT_FORMAT_SVG, "Routed board")
+    for _, layer_id, _ in layers:
+        pctl.SetLayer(layer_id)
+        pctl.PlotLayer()
+    pctl.ClosePlot()
+
 
     log_and_return("Autorouting complete.", {"artifacts": {"routed_svg": os.path.relpath(routed_svg_path, STATE_DIR)}})
 
 
 def export_fabrication_files(args):
     pcb_path = get_state_path(args.projectName, 'pcb.kicad_pcb')
+    if not os.path.exists(pcb_path):
+        log_error_and_exit(f"PCB file '{os.path.basename(pcb_path)}' not found for project '{args.projectName}'. Cannot export fabrication files.")
+
     fab_dir = os.path.join(STATE_DIR, f"{args.projectName}_fab")
     os.makedirs(fab_dir, exist_ok=True)
 
-    board = pcbnew.LoadBoard(pcb_path)
-    pctl = pcbnew.PLOT_CONTROLLER(board)
-    popt = pctl.GetPlotOptions()
+    try:
+        # --- Generate Gerbers using kicad-cli ---
+        print("INFO: Generating Gerber files...", file=sys.stderr)
+        layers_to_plot = "F.Cu,B.Cu,F.Paste,B.Paste,F.SilkS,B.SilkS,F.Mask,B.Mask,Edge.Cuts"
+        gerber_cmd = [
+            'kicad-cli', 'pcb', 'export', 'gerbers',
+            '--output', fab_dir,
+            '--layers', layers_to_plot,
+            '--subtract-soldermask',
+            '--no-x2',
+            '--use-drill-file-origin',
+            pcb_path
+        ]
+        subprocess.run(gerber_cmd, check=True, capture_output=True, text=True)
 
-    popt.SetOutputDirectory(fab_dir); popt.SetPlotFrameRef(False)
-    popt.SetGerberOptions(pcbnew.GERBER_OPTIONS.KL_SUBTRACT_SOLDER_MASK_FROM_SILK)
-    popt.SetUseGerberProtelExtensions(True)
-    
-    gerber_layers = [
-        ("F.Cu", pcbnew.F_Cu), ("B.Cu", pcbnew.B_Cu), ("F.Paste", pcbnew.F_Paste), ("B.Paste", pcbnew.B_Paste),
-        ("F.SilkS", pcbnew.F_SilkS), ("B.SilkS", pcbnew.B_SilkS), ("F.Mask", pcbnew.F_Mask), ("B.Mask", pcbnew.B_Mask),
-        ("Edge.Cuts", pcbnew.Edge_Cuts)
-    ]
-    for name, layer_id in gerber_layers:
-        pctl.SetLayer(layer_id)
-        pctl.OpenPlotfile(name, pcbnew.PLOT_FORMAT_GERBER, f"Gerber {name}")
-        pctl.PlotLayer()
-    pctl.ClosePlot()
-    
-    drlwriter = pcbnew.EXCELLON_WRITER(board)
-    drlwriter.SetMapFileFormat(pcbnew.PLOT_FORMAT_GERBER)
-    drlwriter.SetOptions(False, True, pcbnew.VECTOR2I(0,0), False)
-    drlwriter.CreateDrillandMapFiles(fab_dir, True, False)
-    
-    temp_vrml_path = os.path.join(fab_dir, 'temp.vrml')
-    board.ExportVRML(temp_vrml_path, 0, True, False, None, 2.0)
-    top_png_path = get_state_path(args.projectName, 'render_top.png')
-    bottom_png_path = get_state_path(args.projectName, 'render_bottom.png')
-    
-    subprocess.run(['kicad-cli', 'pcb', 'render', '--output', top_png_path, '--camera-top', pcb_path], check=True, capture_output=True)
-    subprocess.run(['kicad-cli', 'pcb', 'render', '--output', bottom_png_path, '--camera-bottom', pcb_path], check=True, capture_output=True)
+        # --- Generate Drill files using kicad-cli ---
+        print("INFO: Generating drill files...", file=sys.stderr)
+        drill_cmd = [
+            'kicad-cli', 'pcb', 'export', 'drill',
+            '--output', fab_dir,
+            '--format', 'excellon',
+            '--excellon-units', 'mm',
+            '--excellon-separate-th',
+            pcb_path
+        ]
+        subprocess.run(drill_cmd, check=True, capture_output=True, text=True)
+        
+        # --- Generate Position files using kicad-cli ---
+        print("INFO: Generating position files (for assembly)...", file=sys.stderr)
+        pos_top_cmd = [
+            'kicad-cli', 'pcb', 'export', 'pos',
+            '--output', os.path.join(fab_dir, f'{args.projectName}-pos-top.csv'),
+            '--format', 'csv',
+            '--units', 'mm',
+            '--side', 'front',
+            pcb_path
+        ]
+        subprocess.run(pos_top_cmd, check=True, capture_output=True, text=True)
+        
+        pos_bottom_cmd = [
+            'kicad-cli', 'pcb', 'export', 'pos',
+            '--output', os.path.join(fab_dir, f'{args.projectName}-pos-bottom.csv'),
+            '--format', 'csv',
+            '--units', 'mm',
+            '--side', 'back',
+            pcb_path
+        ]
+        subprocess.run(pos_bottom_cmd, check=True, capture_output=True, text=True)
 
-    zip_path = os.path.join(STATE_DIR, f"{args.projectName}_fab.zip")
-    with zipfile.ZipFile(zip_path, 'w') as zf:
-        for file in glob.glob(os.path.join(fab_dir, '*')):
-            zf.write(file, os.path.basename(file))
-    
+        # --- Generate 3D Renders ---
+        print("INFO: Generating 3D renders...", file=sys.stderr)
+        top_png_path_rel = os.path.join('assets', f'{args.projectName}_render_top.png')
+        bottom_png_path_rel = os.path.join('assets', f'{args.projectName}_render_bottom.png')
+        top_png_path_abs = os.path.join(os.path.dirname(__file__), '..', top_png_path_rel)
+        bottom_png_path_abs = os.path.join(os.path.dirname(__file__), '..', bottom_png_path_rel)
+        
+        subprocess.run(['kicad-cli', 'pcb', 'render', '--output', top_png_path_abs, '--side', 'top', pcb_path], check=True, capture_output=True)
+        subprocess.run(['kicad-cli', 'pcb', 'render', '--output', bottom_png_path_abs, '--side', 'bottom', pcb_path], check=True, capture_output=True)
+
+        # --- Zip all fabrication files ---
+        print("INFO: Zipping all fabrication files...", file=sys.stderr)
+        zip_path_rel = os.path.join('assets', f"{args.projectName}_fab.zip")
+        zip_path_abs = os.path.join(os.path.dirname(__file__), '..', zip_path_rel)
+        with zipfile.ZipFile(zip_path_abs, 'w') as zf:
+            for file in glob.glob(os.path.join(fab_dir, '*')):
+                zf.write(file, os.path.basename(file))
+        
+        # Clean up the fab directory after zipping
+        shutil.rmtree(fab_dir)
+
+    except subprocess.CalledProcessError as e:
+        error_message = f"kicad-cli failed during fabrication export. Command: '{' '.join(e.cmd)}'. Stderr: {e.stderr}"
+        print(error_message, file=sys.stderr)
+        log_error_and_exit(error_message)
+    except Exception as e:
+        log_error_and_exit(f"An unexpected error occurred during fabrication export: {e}")
+
     log_and_return("Fabrication files exported and zipped.", {
         "artifacts": {
             "boardName": args.projectName,
-            "image_top_3d": os.path.relpath(top_png_path, STATE_DIR),
-            "image_bottom_3d": os.path.relpath(bottom_png_path, STATE_DIR),
-            "fab_zip": os.path.relpath(zip_path, STATE_DIR)
+            "topImage": top_png_path_rel,
+            "bottomImage": bottom_png_path_rel,
+            "fabZipPath": zip_path_rel
         }
     })
+`

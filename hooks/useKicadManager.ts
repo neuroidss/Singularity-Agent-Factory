@@ -1,5 +1,6 @@
+
 import React, { useState, useCallback, useRef, useEffect } from 'react';
-import type { WorkflowStep, AIToolCall, EnrichedAIResponse, LLMTool, KnowledgeGraphNode, KnowledgeGraphEdge, MainView } from '../types';
+import type { WorkflowStep, AIToolCall, EnrichedAIResponse, LLMTool, KnowledgeGraphNode, KnowledgeGraphEdge, MainView, KnowledgeGraph } from '../types';
 
 type UseKicadManagerProps = {
     logEvent: (message: string) => void;
@@ -9,7 +10,7 @@ type UseKicadManagerProps = {
     fetchServerTools: () => Promise<any>;
     allToolsRef: React.MutableRefObject<LLMTool[]>;
     startSwarmTask: (params: { task: string, systemPrompt: string | null }) => Promise<void>;
-    setKnowledgeGraph: React.Dispatch<React.SetStateAction<{ nodes: KnowledgeGraphNode[], edges: KnowledgeGraphEdge[] }>>;
+    setKnowledgeGraph: React.Dispatch<React.SetStateAction<KnowledgeGraph>>;
     setMainView: React.Dispatch<React.SetStateAction<MainView>>;
 };
 
@@ -71,19 +72,23 @@ export const useKicadManager = (props: UseKicadManagerProps) => {
                         if (toolCall.name.includes('Arrange')) title = 'Placed Components';
                         if (toolCall.name.includes('Route')) title = 'Routed Board';
                         if (toolCall.name.includes('Create Initial')) title = 'Unplaced Board';
+                        if (toolCall.name.includes('Export')) title = 'Final Fabrication Output';
+                        
                         const newArtifact = { 
                             title, 
-                            path: parsed.artifacts.placed_png ? String(parsed.artifacts.placed_png) : (parsed.artifacts.image_top ? String(parsed.artifacts.image_top) : null), 
-                            svgPath: parsed.artifacts.routed_svg ? String(parsed.artifacts.routed_svg) : null 
+                            path: parsed.artifacts.placed_png || parsed.artifacts.topImage || null,
+                            svgPath: parsed.artifacts.routed_svg || null 
                         };
+                        
                         if (newArtifact.path || newArtifact.svgPath) setCurrentKicadArtifact(newArtifact);
-                        if (parsed.artifacts.fab_zip) {
+
+                        if (parsed.artifacts.fabZipPath) {
                             logKicadEvent("🎉 Fabrication successful! Displaying final 3D results.");
-                            setPcbArtifacts({ 
+                             setPcbArtifacts({ 
                                 boardName: String(parsed.artifacts.boardName), 
-                                topImage: String(parsed.artifacts.image_top_3d), 
-                                bottomImage: String(parsed.artifacts.image_bottom_3d), 
-                                fabZipPath: String(parsed.artifacts.fab_zip) 
+                                topImage: String(parsed.artifacts.topImage), 
+                                bottomImage: String(parsed.artifacts.bottomImage), 
+                                fabZipPath: String(parsed.artifacts.fabZipPath) 
                             });
                             setCurrentKicadArtifact(null);
                         }
@@ -117,10 +122,10 @@ export const useKicadManager = (props: UseKicadManagerProps) => {
                         value: args.componentValue,
                         footprint: args.footprintIdentifier,
                         pin_count: args.numberOfPins,
-                        svgPath, // Add from result
-                        dimensions, // Add from result
+                        svgPath,
+                        dimensions,
                     };
-                    setKnowledgeGraph(prev => ({ ...prev, nodes: [...prev.nodes.filter(n => n.id !== newNode.id), newNode]}));
+                    setKnowledgeGraph(prev => ({ ...prev, edges: prev.edges, nodes: [...prev.nodes.filter(n => n.id !== newNode.id), newNode]}));
                 }
                 
                 if (result.toolCall.name === 'Define KiCad Net') {
@@ -142,7 +147,24 @@ export const useKicadManager = (props: UseKicadManagerProps) => {
                                     });
                                 }
                             }
-                            setKnowledgeGraph(prev => ({ ...prev, edges: [...prev.edges, ...newEdges]}));
+                            setKnowledgeGraph(prev => {
+                                const existingEdgeKeys = new Set(prev.edges.map(e => {
+                                    const nodes = [e.source, e.target].sort();
+                                    return `${nodes[0]}|${nodes[1]}|${e.label}`;
+                                }));
+
+                                const uniqueNewEdges = newEdges.filter(e => {
+                                    const nodes = [e.source, e.target].sort();
+                                    const key = `${nodes[0]}|${nodes[1]}|${e.label}`;
+                                    if (existingEdgeKeys.has(key)) {
+                                        return false;
+                                    }
+                                    existingEdgeKeys.add(key); // prevent duplicates within the same batch
+                                    return true;
+                                });
+
+                                return { ...prev, nodes: prev.nodes, edges: [...prev.edges, ...uniqueNewEdges]};
+                            });
                         }
                     } catch (e) {
                          logKicadEvent(`❌ ERROR: Could not process connections to build graph edges. ${e instanceof Error ? e.message : String(e)}`);
