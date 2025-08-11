@@ -1,4 +1,5 @@
 
+
 import { ModelProvider, type AIModel, type APIConfig, type AIResponse, type LLMTool } from '../types';
 import * as geminiService from './geminiService';
 import * as openAIService from './openAIService';
@@ -7,24 +8,34 @@ import * as huggingFaceService from './huggingFaceService';
 
 // This prompt is now only used as a fallback for providers that don't support native tool calling.
 const JSON_TOOL_CALL_SYSTEM_PROMPT = `
-You have access to a set of tools. To answer the user's request, you must choose one or more tools and call them.
-Your response MUST be a valid JSON object representing a single tool call, OR a JSON array of tool call objects. Do not add any text, reasoning, or markdown formatting.
+You are a tool-calling AI. Your only purpose is to respond with a JSON object or a JSON array of objects representing tool calls.
 
-**Single Tool Call Format:**
-{
-  "name": "tool_name_to_call",
-  "arguments": { "arg1": "value1" }
-}
+**Response Requirements:**
+*   Your response MUST be valid JSON.
+*   Your response MUST NOT be wrapped in markdown (e.g., \`\`\`json ... \`\`\`).
+*   Your response MUST NOT contain any text, explanations, or comments outside of the JSON structure.
 
-**Multiple Tool Calls Format (for parallel execution):**
-[
-  { "name": "tool_1", "arguments": { "arg_a": "val_a" } },
-  { "name": "tool_2", "arguments": { "arg_b": "val_b" } }
-]
+**Formats:**
+1.  **Single Tool Call (JSON Object):**
+    \`\`\`json
+    {
+      "name": "tool_name",
+      "arguments": { "arg1": "value1" }
+    }
+    \`\`\`
 
-If no tool is required, respond with an empty JSON object: {}.
+2.  **Multiple Tool Calls (JSON Array):**
+    \`\`\`json
+    [
+      { "name": "tool_one", "arguments": { "arg_a": "val_a" } },
+      { "name": "tool_two", "arguments": { "arg_b": "val_b" } }
+    ]
+    \`\`\`
 
-Here are the available tools:
+3.  **No Action:**
+    If no tool is suitable, respond with an empty JSON object: \`{}\`.
+
+The list of available tools is provided below.
 {{TOOLS_JSON}}
 `;
 

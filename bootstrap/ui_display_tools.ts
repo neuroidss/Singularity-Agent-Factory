@@ -1,4 +1,5 @@
 
+
 import type { ToolCreatorPayload } from '../types';
 
 export const UI_DISPLAY_TOOLS: ToolCreatorPayload[] = [
@@ -73,7 +74,7 @@ export const UI_DISPLAY_TOOLS: ToolCreatorPayload[] = [
     },
     {
         name: 'Tool List Display',
-        description: 'Renders the grid of all available tools and shows server connection status.',
+        description: 'Renders the grid of all available tools, highlighting those selected for the current task.',
         category: 'UI Component',
         executionEnvironment: 'Client',
         purpose: 'To give the user a complete and real-time overview of all capabilities available to the agent swarm, on both client and server.',
@@ -119,8 +120,8 @@ export const UI_DISPLAY_TOOLS: ToolCreatorPayload[] = [
                         const isServerTool = tool.category === 'Server';
                         return (
                           <div key={tool.id + '-' + tool.version} className="bg-gray-900/70 border border-gray-700 rounded-lg p-3 flex flex-col text-sm h-full">
-                              <div className="flex justify-between items-start">
-                                  <h4 className="font-bold text-white truncate pr-2">{tool.name}</h4>
+                              <div className="flex justify-between items-start gap-2">
+                                  <h4 className="font-bold text-white truncate pr-2 flex-grow">{tool.name}</h4>
                                   <span className={\`flex-shrink-0 text-xs font-semibold px-2 py-0.5 rounded-full \${isServerTool ? 'bg-sky-800 text-sky-300' : 'bg-gray-700 text-gray-300'}\`}>
                                       {isServerTool ? 'Server' : 'Client'}
                                   </span>
@@ -152,51 +153,200 @@ export const UI_DISPLAY_TOOLS: ToolCreatorPayload[] = [
     },
     {
         name: 'KiCad PCB Viewer',
-        description: 'Displays the 3D renders of a newly generated PCB and provides a download link for the fabrication files.',
+        description: 'Displays an interactive 3D model of the generated PCB and provides a download link for the fabrication files.',
         category: 'UI Component',
         executionEnvironment: 'Client',
-        purpose: 'To provide immediate visual feedback and access to the final product of the hardware engineering workflow.',
+        purpose: 'To provide immediate, interactive visual feedback and access to the final product of the hardware engineering workflow.',
         parameters: [
             { name: 'boardName', type: 'string', description: 'The name of the generated board.', required: true },
-            { name: 'topImage', type: 'string', description: 'Server-relative path to the top view 3D render PNG.', required: true },
-            { name: 'bottomImage', type: 'string', description: 'Server-relative path to the bottom view 3D render PNG.', required: true },
+            { name: 'glbPath', type: 'string', description: 'Server-relative path to the final board GLB model.', required: true },
             { name: 'fabZipPath', type: 'string', description: 'Server-relative path to the fabrication ZIP file.', required: true },
             { name: 'serverUrl', type: 'string', description: 'The base URL of the backend server.', required: true },
             { name: 'onClose', type: 'object', description: 'Function to call to close the viewer.', required: true },
         ],
         implementationCode: `
-            const fullTopUrl = serverUrl + '/' + topImage;
-            const fullBottomUrl = serverUrl + '/' + bottomImage;
+            const mountRef = React.useRef(null);
+
+            React.useEffect(() => {
+                if (!mountRef.current || !glbPath) return;
+
+                let isMounted = true;
+                let THREE, OrbitControls, GLTFLoader;
+
+                const init = async () => {
+                    try {
+                        THREE = await import('three');
+                        const { OrbitControls: OC } = await import('three/addons/controls/OrbitControls.js');
+                        OrbitControls = OC;
+                        const { GLTFLoader: GLTF } = await import('three/addons/loaders/GLTFLoader.js');
+                        GLTFLoader = GLTF;
+                    } catch (e) {
+                         console.error("Failed to load Three.js libraries:", e);
+                         if(mountRef.current) mountRef.current.innerHTML = '<p class="text-red-400">Error loading 3D libraries. Check console.</p>';
+                         return;
+                    }
+                    
+                    if (!isMounted || !mountRef.current) return;
+
+                    const scene = new THREE.Scene();
+                    scene.background = new THREE.Color(0x111827); // bg-gray-900
+
+                    const mount = mountRef.current;
+                    const camera = new THREE.PerspectiveCamera(75, mount.clientWidth / mount.clientHeight, 0.1, 1000);
+                    camera.position.z = 50;
+
+                    const renderer = new THREE.WebGLRenderer({ antialias: true });
+                    renderer.setSize(mount.clientWidth, mount.clientHeight);
+                    renderer.setPixelRatio(window.devicePixelRatio);
+                    mount.innerHTML = '';
+                    mount.appendChild(renderer.domElement);
+
+                    const controls = new OrbitControls(camera, renderer.domElement);
+                    controls.enableDamping = true;
+
+                    const ambientLight = new THREE.AmbientLight(0xffffff, 2.0);
+                    scene.add(ambientLight);
+                    const directionalLight = new THREE.DirectionalLight(0xffffff, 3.5);
+                    directionalLight.position.set(50, 100, 75);
+                    scene.add(directionalLight);
+
+                    const loader = new GLTFLoader();
+                    const fullGlbUrl = serverUrl + '/' + glbPath.replace(/\\\\/g, '/');
+                    
+                    loader.load(fullGlbUrl, (gltf) => {
+                        if (!isMounted) return;
+                        const model = gltf.scene;
+                        
+                        const box = new THREE.Box3().setFromObject(model);
+                        const center = box.getCenter(new THREE.Vector3());
+                        model.position.sub(center);
+                        
+                        const size = box.getSize(new THREE.Vector3());
+                        const maxDim = Math.max(size.x, size.y, size.z);
+                        const fov = camera.fov * (Math.PI / 180);
+                        let cameraZ = Math.abs(maxDim / 2 / Math.tan(fov / 2));
+                        cameraZ *= 1.5;
+                        camera.position.z = cameraZ;
+                        
+                        const minZ = box.min.z;
+                        const cameraToFarEdge = (minZ < 0) ? -minZ + cameraZ : cameraZ - minZ;
+                        camera.far = cameraToFarEdge * 3;
+                        camera.updateProjectionMatrix();
+
+                        controls.target.copy(model.position);
+                        controls.update();
+                        scene.add(model);
+                    }, undefined, (error) => {
+                        console.error('Error loading GLB model:', error);
+                    });
+                    
+                    let animationFrameId;
+                    const animate = () => {
+                        if (!isMounted) return;
+                        animationFrameId = requestAnimationFrame(animate);
+                        controls.update();
+                        renderer.render(scene, camera);
+                    };
+                    animate();
+                    
+                    const handleResize = () => {
+                        if (!isMounted || !mount) return;
+                        camera.aspect = mount.clientWidth / mount.clientHeight;
+                        camera.updateProjectionMatrix();
+                        renderer.setSize(mount.clientWidth, mount.clientHeight);
+                    }
+                    
+                    window.addEventListener('resize', handleResize);
+
+                    return () => {
+                        isMounted = false;
+                        cancelAnimationFrame(animationFrameId);
+                        window.removeEventListener('resize', handleResize);
+                        if (mount && mount.contains(renderer.domElement)) {
+                            mount.removeChild(renderer.domElement);
+                        }
+                        renderer.dispose();
+                    };
+                };
+
+                const cleanup = init();
+
+                return () => {
+                    cleanup.then(cleanupFn => cleanupFn && cleanupFn());
+                };
+            }, [glbPath, serverUrl]);
+
             const fullZipUrl = serverUrl + '/' + fabZipPath;
 
             return (
-                <div className="bg-gray-800/80 border-2 border-green-500/60 rounded-xl p-4 shadow-lg flex flex-col">
+                <div className="bg-gray-800/90 border-2 border-green-500/60 rounded-xl p-4 shadow-lg flex flex-col h-full">
                     <div className="flex justify-between items-center mb-3">
-                        <h3 className="text-lg font-bold text-green-300">PCB Engineering Complete</h3>
-                        <button onClick={onClose} className="text-gray-400 hover:text-white">&times;</button>
+                        <h3 className="text-lg font-bold text-green-300">PCB Fabrication Output</h3>
+                        <button onClick={onClose} className="text-gray-400 hover:text-white text-2xl font-bold">&times;</button>
                     </div>
-                    <p className="text-sm text-gray-300 mb-4">Generated board: <span className="font-mono text-green-400">{boardName}</span></p>
+                    <p className="text-sm text-gray-300 mb-2">Generated board: <span className="font-mono text-green-400">{boardName}</span></p>
 
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-4">
-                        <div>
-                            <p className="text-center font-semibold text-sm mb-2">Top View</p>
-                            <img src={fullTopUrl} alt="Top view of PCB" className="rounded-lg border-2 border-gray-600 w-full" />
-                        </div>
-                        <div>
-                            <p className="text-center font-semibold text-sm mb-2">Bottom View</p>
-                            <img src={fullBottomUrl} alt="Bottom view of PCB" className="rounded-lg border-2 border-gray-600 w-full" />
-                        </div>
+                    <div ref={mountRef} className="flex-grow bg-black/30 rounded-lg overflow-hidden relative cursor-grab" style={{minHeight: '300px'}}>
+                       <div className="w-full h-full flex items-center justify-center">
+                            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-green-300"></div>
+                            <p className="text-green-300 ml-3">Loading 3D Model...</p>
+                       </div>
                     </div>
 
                     <a
                         href={fullZipUrl}
                         download
-                        className="w-full text-center bg-green-600 text-white font-semibold py-2.5 px-4 rounded-lg hover:bg-green-700 transition-colors duration-200"
+                        className="mt-4 w-full text-center bg-green-600 text-white font-semibold py-2.5 px-4 rounded-lg hover:bg-green-700 transition-colors duration-200"
                     >
                         Download Fabrication Files (.zip)
                     </a>
                 </div>
             );
+        `
+    },
+    {
+        name: 'Active Tool Context',
+        description: 'Displays the list of tools that have been selected and provided to the agent for the current task, along with their relevance scores.',
+        category: 'UI Component',
+        executionEnvironment: 'Client',
+        purpose: 'To provide clear, real-time feedback on exactly which tools the agent is considering for its current task.',
+        parameters: [
+          { name: 'activeTools', type: 'array', description: 'The array of scored tools currently in the context.', required: true },
+        ],
+        implementationCode: `
+          if (!activeTools || activeTools.length === 0) {
+            return null; // Don't render if there are no active tools (i.e., task is not running)
+          }
+    
+          const ScoreBar = ({ score }) => {
+            const percentage = Math.max(0, Math.min(100, score * 100));
+            let colorClass = 'bg-green-500';
+            if (percentage < 70) colorClass = 'bg-yellow-500';
+            if (percentage < 55) colorClass = 'bg-orange-500';
+    
+            return (
+              <div className="w-full bg-gray-600 rounded-full h-1.5 mt-1">
+                <div className={colorClass + " h-1.5 rounded-full"} style={{ width: percentage + '%' }}></div>
+              </div>
+            );
+          };
+    
+          return (
+            <div className="bg-gray-800/60 border border-purple-500/60 rounded-xl p-4 h-full flex flex-col">
+              <h3 className="text-lg font-bold text-purple-300 mb-3">Active Tool Context ({activeTools.length})</h3>
+              <div className="flex-grow overflow-y-auto pr-2 space-y-2">
+                {activeTools.map(({ tool, score }) => (
+                  <div key={tool.id} className="bg-gray-900/50 p-2 rounded-lg">
+                    <div className="flex justify-between items-center">
+                      <p className="font-semibold text-white text-sm truncate pr-2">{tool.name}</p>
+                      <p className="text-purple-300 font-mono text-sm">{score.toFixed(3)}</p>
+                    </div>
+                    <ScoreBar score={score} />
+                  </div>
+                ))}
+              </div>
+            </div>
+          );
         `
     }
 ];

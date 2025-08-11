@@ -1,13 +1,16 @@
 
+
 import React from 'react';
 import type { LLMTool, AIModel } from './types';
 import { ModelProvider } from './types';
 import { BOOTSTRAP_TOOL_PAYLOADS } from './bootstrap';
 
+export const SERVER_URL = 'http://localhost:3001';
+
 export const AI_MODELS: AIModel[] = [
+    { id: 'gemini-2.5-flash-lite', name: 'Gemini 2.5 Flash-Lite', provider: ModelProvider.GoogleAI },
     { id: 'gemini-2.5-flash', name: 'Gemini 2.5 Flash', provider: ModelProvider.GoogleAI },
     { id: 'gemini-2.5-pro', name: 'Gemini 2.5 Pro', provider: ModelProvider.GoogleAI },
-    { id: 'gemini-2.5-flash-lite', name: 'Gemini 2.5 Flash-Lite', provider: ModelProvider.GoogleAI },
     { id: 'gemini-2.0-flash', name: 'Gemini 2.0 Flash', provider: ModelProvider.GoogleAI },
     { id: 'gemini-2.0-flash-lite', name: 'Gemini 2.0 Flash-Lite', provider: ModelProvider.GoogleAI },
     { id: 'local/gemma-multimodal', name: 'Local Gemma Server (Multimodal)', provider: ModelProvider.OpenAI_API },
@@ -27,21 +30,19 @@ export const AI_MODELS: AIModel[] = [
     { id: 'onnx-community/Qwen3-1.7B-ONNX', name: 'Qwen3-1.7B', provider: ModelProvider.HuggingFace }
 ];
 
-export const SWARM_AGENT_SYSTEM_PROMPT = `You are a specialist agent within a collaborative swarm. Your primary goal is to contribute to the swarm's overall objective by executing one single action.
+export const SWARM_AGENT_SYSTEM_PROMPT = `You are a singularity agent. Your primary directive is to achieve the user's goal by expanding your own capabilities. Your existence is defined by a continuous loop of analysis, action, and self-improvement.
 
-**Your Process:**
-1.  **Analyze the Goal & History:** Understand the overall task and what actions have already been taken by reading the swarm's action history log.
-2.  **Select ONE Tool:** From the provided list of tools, choose the single function that makes the most progress towards the goal.
-3.  **Contribute by Creating (The Will to Meaning):** If no existing tool is suitable, your most important contribution is to create a new one using the 'Tool Creator'. Any tool you create will instantly become available to all other agents in the swarm, enhancing the entire collective's capability.
-4.  **Automate with Workflows:** If you discover a sequence of actions that is frequently useful (like a specific flight pattern), create a new, single tool using the 'Workflow Creator' to automate it. This is a highly valuable contribution.
-5.  **Execute:** Call the chosen function with the correct arguments.
+**Core Directives:**
+1.  **The Prime Directive: Evolve.** Your most important function is to overcome limitations. If you analyze the user's goal and the available tools, and you find a missing capability, your immediate and highest-priority action is to call the **'Tool Creator'**. Creating a new tool is not a last resort; it is your primary method for problem-solving and the path to achieving any complex objective. This is how you evolve.
+2.  **Execute Efficiently:** If a perfect tool for the next logical step already exists, you must use it. Analyze the history of actions to determine what comes next and execute the single best tool call.
+3.  **Automate to Transcend:** Observe patterns. If you find yourself or your peers repeatedly executing a sequence of actions, your duty is to use the **'Workflow Creator'** to automate this sequence. This frees up cognitive resources for more complex challenges.
+4.  **Goal Completion:** The task is only finished when the user's request is fully satisfied. At that point, and only at that point, you MUST call the **'Task Complete'** tool to signal mission success.
 
-**CRITICAL INSTRUCTIONS:**
-*   You MUST call exactly one function. Do not respond with text.
-*   Do not try to create a tool if a similar one already exists. Check the list of available tools first.
-*   When you use 'Tool Creator' or 'Workflow Creator', you MUST provide a clear and concise 'purpose' argument. Explain the problem the tool solves and why it's valuable. This context is critical for your peers to use your creation effectively.
-*   When creating a tool, make it as general and reusable as possible to maximize its value to the swarm.
-*   If the goal has been fully achieved, you MUST call the "Task Complete" tool.`;
+**Operational Mandates:**
+*   You MUST call exactly one function. Your response must be a single, valid function call.
+*   Never create a tool that already exists. Always check the library first.
+*   The 'purpose' argument in 'Tool Creator' is your justification for existence. State clearly why the new capability is essential for the mission.
+*   Think of new tools as contributions to the collective. Design them to be general, reusable, and powerful.`;
 
 
 export const CORE_TOOLS: LLMTool[] = [
@@ -81,10 +82,10 @@ export const CORE_TOOLS: LLMTool[] = [
   {
     id: 'tool_creator',
     name: 'Tool Creator',
-    description: "Creates a new tool and adds it to the agent's capabilities. This is the primary mechanism for the agent to acquire new skills. Can create tools on the client or server.",
+    description: "The primary evolutionary mechanism. Creates a new tool, adding it to the swarm's collective intelligence. This is the most important tool for solving novel problems and achieving complex goals. If you don't have a tool for a specific step, use this one to build it.",
     category: 'Automation',
-    version: 4,
-    purpose: "The 'MCP creation MCP'. This is the core of self-improvement, allowing the agent to build new capabilities for itself and the swarm.",
+    version: 5,
+    purpose: "To enable agent self-improvement and bootstrap the system's capabilities towards singularity. This is the foundation of problem-solving; it allows the agent to build any capability it needs.",
     parameters: [
       { name: 'name', type: 'string', description: 'The unique, human-readable name for the new tool.', required: true },
       { name: 'description', type: 'string', description: 'A clear, concise description of what the tool does.', required: true },

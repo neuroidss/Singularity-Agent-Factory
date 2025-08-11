@@ -91,6 +91,7 @@ def define_components(args):
     
     svg_path_rel = None
     dimensions = None
+    pins_data = []
 
     with open(lock_path, 'w') as lock_file:
         fcntl.flock(lock_file, fcntl.LOCK_EX)
@@ -103,7 +104,7 @@ def define_components(args):
             if 'components' not in state: state['components'] = []
             if 'nets' not in state: state['nets'] = []
             
-            # --- SVG Export and Dimension Extraction ---
+            # --- SVG Export, Dimension and Pin Extraction ---
             try:
                 if 'pcbnew' in sys.modules and args.footprintIdentifier and ':' in args.footprintIdentifier:
                     library_name, footprint_name = args.footprintIdentifier.split(':', 1)
@@ -112,51 +113,47 @@ def define_components(args):
                         footprint_dir = '/usr/share/kicad/modules' # Fallback for some systems
 
                     library_path = os.path.join(footprint_dir, f"{library_name}.pretty")
-
+                    
+                    fp = None
                     if os.path.isdir(library_path):
+                         fp = pcbnew.FootprintLoad(library_path, footprint_name)
+
+                    if fp:
                         # Export SVG
                         final_svg_filename = f"{args.componentReference}_{footprint_name}.svg"
                         final_svg_path_abs = os.path.join(STATE_DIR, final_svg_filename)
                         
-                        cli_command = [
-                            'kicad-cli', 'fp', 'export', 'svg',
-                            '--footprint', footprint_name,
-                            '--output', STATE_DIR,
-                            '--layers', 'F.SilkS,F.CrtYd,F.Fab,F.Cu',
-                            '--black-and-white',
-                            library_path
-                        ]
-                        
-                        # kicad-cli outputs to <footprint_name>.svg, so we need to anticipate that and rename it
+                        cli_command = [ 'kicad-cli', 'fp', 'export', 'svg', '--footprint', footprint_name, '--output', STATE_DIR, '--layers', 'F.SilkS,F.CrtYd,F.Fab,F.Cu', '--black-and-white', library_path ]
                         temp_svg_path = os.path.join(STATE_DIR, f"{footprint_name}.svg")
-                        if os.path.exists(temp_svg_path): os.remove(temp_svg_path) # Clean up old temp file
-                        
-                        # Run the command
+                        if os.path.exists(temp_svg_path): os.remove(temp_svg_path)
                         subprocess.run(cli_command, check=True, capture_output=True, text=True)
-                        
-                        # Rename the output file
                         if os.path.exists(temp_svg_path):
-                            if os.path.exists(final_svg_path_abs): os.remove(final_svg_path_abs) # Clean up old final file
+                            if os.path.exists(final_svg_path_abs): os.remove(final_svg_path_abs)
                             os.rename(temp_svg_path, final_svg_path_abs)
-                            svg_path_rel = os.path.relpath(final_svg_path_abs, os.path.join(os.path.dirname(__file__), '..')) # Relative to project root
+                            svg_path_rel = os.path.relpath(final_svg_path_abs, os.path.join(os.path.dirname(__file__), '..'))
 
                         # Extract Dimensions
-                        footprint_file_path = os.path.join(library_path, f"{footprint_name}.kicad_mod")
-                        if os.path.exists(footprint_file_path):
-                            fp = pcbnew.FootprintLoad(library_path, footprint_name)
-                            if fp:
-                                bbox = fp.GetBoundingBox(True, False) # include pads, no text
-                                dimensions = {'width': pcbnew.ToMM(bbox.GetWidth()), 'height': pcbnew.ToMM(bbox.GetHeight())}
+                        bbox = fp.GetBoundingBox(True, False)
+                        dimensions = {'width': pcbnew.ToMM(bbox.GetWidth()), 'height': pcbnew.ToMM(bbox.GetHeight())}
+
+                        # Extract Pin Data
+                        for pad in fp.Pads():
+                            pad_pos = pad.GetPosition()
+                            pins_data.append({
+                                "name": str(pad.GetPadName()),
+                                "x": pcbnew.ToMM(pad_pos.x),
+                                "y": pcbnew.ToMM(pad_pos.y),
+                                "rotation": pad.GetOrientationDegrees()
+                            })
             except Exception as e:
-                # Don't fail the whole step, just log a warning to stderr
-                print(f"Warning: Could not export SVG or get dimensions for {args.footprintIdentifier}. Reason: {e}", file=sys.stderr)
+                print(f"Warning: Could not process footprint {args.footprintIdentifier}. Reason: {e}", file=sys.stderr)
 
             new_component = {
                 "ref": args.componentReference, "part": args.componentDescription,
                 "value": args.componentValue, "footprint": args.footprintIdentifier,
                 "pin_count": args.numberOfPins, "svgPath": svg_path_rel, "dimensions": dimensions,
+                "pins": pins_data,
             }
-            # Update or add the component
             state['components'] = [c for c in state['components'] if c['ref'] != new_component['ref']]
             state['components'].append(new_component)
             
@@ -165,7 +162,7 @@ def define_components(args):
         finally:
             fcntl.flock(lock_file, fcntl.LOCK_UN)
 
-    data_to_return = {}
+    data_to_return = {"pins": pins_data}
     if svg_path_rel: data_to_return['svgPath'] = svg_path_rel
     if dimensions: data_to_return['dimensions'] = dimensions
 
@@ -439,17 +436,13 @@ def create_board_outline(args):
 
 def arrange_components(args):
     """
-    This function no longer performs layout itself. It now extracts all necessary
-    data from the PCB and the project state file and sends it to the client
-    for interactive or autonomous layout in the browser.
+    Extracts component data for client-side layout, including 3D models if available.
     """
     pcb_path = get_state_path(args.projectName, 'pcb.kicad_pcb')
     state_file = get_state_path(args.projectName, 'state.json')
 
-    if not os.path.exists(pcb_path):
-        log_error_and_exit("PCB file not found for arrangement.")
-    if not os.path.exists(state_file):
-        log_error_and_exit("State file not found for arrangement.")
+    if not os.path.exists(pcb_path): log_error_and_exit("PCB file not found for arrangement.")
+    if not os.path.exists(state_file): log_error_and_exit("State file not found for arrangement.")
 
     board = pcbnew.LoadBoard(pcb_path)
     board.BuildConnectivity()
@@ -457,12 +450,10 @@ def arrange_components(args):
 
     edge_cuts = merge_all_drawings(board, 'Edge.Cuts')
     if not edge_cuts:
-        # If no outline exists, create a temporary large one for layout purposes
         board_bbox = board.ComputeBoundingBox(False)
         if board_bbox.GetWidth() == 0 or board_bbox.GetHeight() == 0:
-             # If board is totally empty, make a default 50x50mm box
              board_bbox = pcbnew.BOX2I(pcbnew.VECTOR2I(0,0), pcbnew.VECTOR2I(pcbnew.FromMM(50), pcbnew.FromMM(50)))
-        board_bbox.Inflate(pcbnew.FromMM(10), pcbnew.FromMM(10)) # Add a generous margin
+        board_bbox.Inflate(pcbnew.FromMM(10), pcbnew.FromMM(10))
         min_x, max_x = board_bbox.GetX(), board_bbox.GetX() + board_bbox.GetWidth()
         min_y, max_y = board_bbox.GetY(), board_bbox.GetY() + board_bbox.GetHeight()
     else:
@@ -472,14 +463,10 @@ def arrange_components(args):
         min_y, max_y = min(all_y), max(all_y)
 
     layout_data = {
-        "nodes": [],
-        "edges": [],
-        "constraints": state_data.get("constraints", []),
+        "nodes": [], "edges": [], "constraints": state_data.get("constraints", []),
         "board_outline": {
-            "x": pcbnew.ToMM(min_x),
-            "y": pcbnew.ToMM(min_y),
-            "width": pcbnew.ToMM(max_x - min_x),
-            "height": pcbnew.ToMM(max_y - min_y),
+            "x": pcbnew.ToMM(min_x), "y": pcbnew.ToMM(min_y),
+            "width": pcbnew.ToMM(max_x - min_x), "height": pcbnew.ToMM(max_y - min_y),
         }
     }
     
@@ -489,37 +476,66 @@ def arrange_components(args):
         ref = fp.GetReference()
         state_comp = state_components_map.get(ref)
         
-        # Get dimensions either from the state file (more accurate) or by calculating BBox
         if state_comp and state_comp.get('dimensions'):
             width, height = state_comp['dimensions']['width'], state_comp['dimensions']['height']
         else:
             bbox = fp.GetBoundingBox(True, False)
             width, height = pcbnew.ToMM(bbox.GetWidth()), pcbnew.ToMM(bbox.GetHeight())
 
+        # --- 3D Model Export ---
+        model_path, model_props = None, None
+        models = fp.Models()
+        if models and len(models) > 0:
+            model_3d = models[0]
+            if model_3d.m_Filename:
+                temp_board = pcbnew.CreateEmptyBoard()
+                fp_clone = pcbnew.FOOTPRINT(fp)
+                fp_clone.SetPosition(pcbnew.VECTOR2I(0,0))
+                temp_board.Add(fp_clone)
+                
+                temp_pcb_path = os.path.join(STATE_DIR, f"temp_{ref}.kicad_pcb")
+                pcbnew.SaveBoard(temp_pcb_path, temp_board)
+                
+                glb_filename = f"{args.projectName}_{ref}.glb"
+                glb_path_abs = os.path.join(STATE_DIR, glb_filename)
+                glb_path_rel = os.path.relpath(glb_path_abs, os.path.join(os.path.dirname(__file__), '..'))
+                
+                glb_export_cmd = ['kicad-cli', 'pcb', 'export', 'glb', '--output', glb_path_abs, '--subst-models', '--force', temp_pcb_path]
+                
+                try:
+                    subprocess.run(glb_export_cmd, check=True, capture_output=True, text=True)
+                    if os.path.exists(glb_path_abs):
+                        model_path = glb_path_rel
+                        model_props = {
+                            "offset": {"x": model_3d.m_Offset.x, "y": model_3d.m_Offset.y, "z": model_3d.m_Offset.z},
+                            "scale": {"x": model_3d.m_Scale.x, "y": model_3d.m_Scale.y, "z": model_3d.m_Scale.z},
+                            "rotation": {"x": model_3d.m_Rotation.x, "y": model_3d.m_Rotation.y, "z": model_3d.m_Rotation.z}
+                        }
+                except subprocess.CalledProcessError as e:
+                    print(f"Warning: Failed to export GLB for {ref}. Stderr: {e.stderr}", file=sys.stderr)
+                finally:
+                    if os.path.exists(temp_pcb_path): os.remove(temp_pcb_path)
+
         layout_data["nodes"].append({
-            "id": ref,
-            "label": ref,
-            "x": pcbnew.ToMM(fp.GetPosition().x),
-            "y": pcbnew.ToMM(fp.GetPosition().y),
-            "width": width,
-            "height": height,
+            "id": ref, "label": ref, "x": pcbnew.ToMM(fp.GetPosition().x), "y": pcbnew.ToMM(fp.GetPosition().y),
+            "rotation": fp.GetOrientationDegrees(), "width": width, "height": height,
             "svgPath": state_comp.get('svgPath') if state_comp else None,
-            "pin_count": state_comp.get('pin_count') if state_comp else 0
+            "glbPath": model_path, "model3d_props": model_props,
+            "pins": state_comp.get('pins', []),
+            "pin_count": len(state_comp.get('pins', [])) if state_comp and state_comp.get('pins') else (state_comp.get('pin_count', 0) if state_comp else 0)
         })
 
-    # Use the nets from the state file as the source of truth for connections
+    layout_data["edges"] = []
     for net in state_data.get('nets', []):
-        component_refs_on_net = list(set([pin.split('-')[0] for pin in net['pins']]))
-        for i in range(len(component_refs_on_net)):
-            for j in range(i + 1, len(component_refs_on_net)):
-                layout_data["edges"].append({
-                    "source": component_refs_on_net[i],
-                    "target": component_refs_on_net[j],
-                    "label": net['name']
-                })
+        pins_on_net = net.get('pins', [])
+        if len(pins_on_net) > 1:
+            for i in range(len(pins_on_net)):
+                for j in range(i + 1, len(pins_on_net)):
+                    layout_data["edges"].append({
+                        "source": pins_on_net[i], "target": pins_on_net[j], "label": net['name']
+                    })
     
-    message = "Extracted layout data. The client UI will now handle component arrangement."
-    log_and_return(message, {"layout_data": layout_data})
+    log_and_return("Extracted layout data. The client UI will now handle component arrangement.", {"layout_data": layout_data})
 
 
 def update_component_positions(args):
@@ -530,10 +546,12 @@ def update_component_positions(args):
     board = pcbnew.LoadBoard(pcb_path)
     positions = json.loads(args.componentPositionsJSON)
 
-    for ref, pos in positions.items():
+    for ref, pos_data in positions.items():
         fp = board.FindFootprintByReference(ref)
         if fp:
-            fp.SetPosition(pcbnew.VECTOR2I(pcbnew.FromMM(pos['x']), pcbnew.FromMM(pos['y'])))
+            fp.SetPosition(pcbnew.VECTOR2I(pcbnew.FromMM(pos_data['x']), pcbnew.FromMM(pos_data['y'])))
+            if 'rotation' in pos_data:
+                fp.SetOrientation(pcbnew.EDA_ANGLE(float(pos_data['rotation']), pcbnew.DEGREES_T))
     
     # --- NEW LOGIC: Recalculate board outline based on new positions ---
     # 1. Remove old outline
@@ -670,63 +688,27 @@ def export_fabrication_files(args):
     os.makedirs(fab_dir, exist_ok=True)
 
     try:
-        # --- Generate Gerbers using kicad-cli ---
+        # --- Generate Gerbers ---
         print("INFO: Generating Gerber files...", file=sys.stderr)
-        layers_to_plot = "F.Cu,B.Cu,F.Paste,B.Paste,F.SilkS,B.SilkS,F.Mask,B.Mask,Edge.Cuts"
-        gerber_cmd = [
-            'kicad-cli', 'pcb', 'export', 'gerbers',
-            '--output', fab_dir,
-            '--layers', layers_to_plot,
-            '--subtract-soldermask',
-            '--no-x2',
-            '--use-drill-file-origin',
-            pcb_path
-        ]
+        layers = "F.Cu,B.Cu,F.Paste,B.Paste,F.SilkS,B.SilkS,F.Mask,B.Mask,Edge.Cuts"
+        gerber_cmd = ['kicad-cli', 'pcb', 'export', 'gerbers', '--output', fab_dir, '--layers', layers, pcb_path]
         subprocess.run(gerber_cmd, check=True, capture_output=True, text=True)
 
-        # --- Generate Drill files using kicad-cli ---
+        # --- Generate Drill files ---
         print("INFO: Generating drill files...", file=sys.stderr)
-        drill_cmd = [
-            'kicad-cli', 'pcb', 'export', 'drill',
-            '--output', fab_dir,
-            '--format', 'excellon',
-            '--excellon-units', 'mm',
-            '--excellon-separate-th',
-            pcb_path
-        ]
+        drill_cmd = ['kicad-cli', 'pcb', 'export', 'drill', '--output', fab_dir, pcb_path]
         subprocess.run(drill_cmd, check=True, capture_output=True, text=True)
         
-        # --- Generate Position files using kicad-cli ---
-        print("INFO: Generating position files (for assembly)...", file=sys.stderr)
-        pos_top_cmd = [
-            'kicad-cli', 'pcb', 'export', 'pos',
-            '--output', os.path.join(fab_dir, f'{args.projectName}-pos-top.csv'),
-            '--format', 'csv',
-            '--units', 'mm',
-            '--side', 'front',
-            pcb_path
+        # --- Generate final 3D GLB model ---
+        print("INFO: Generating final 3D GLB model of the board...", file=sys.stderr)
+        glb_path_rel = os.path.join('assets', f'{args.projectName}_board.glb')
+        glb_path_abs = os.path.join(os.path.dirname(__file__), '..', glb_path_rel)
+        glb_cmd = [
+            'kicad-cli', 'pcb', 'export', 'glb',
+            '--output', glb_path_abs, '--subst-models', '--include-tracks',
+            '--include-pads', '--include-zones', '--force', pcb_path
         ]
-        subprocess.run(pos_top_cmd, check=True, capture_output=True, text=True)
-        
-        pos_bottom_cmd = [
-            'kicad-cli', 'pcb', 'export', 'pos',
-            '--output', os.path.join(fab_dir, f'{args.projectName}-pos-bottom.csv'),
-            '--format', 'csv',
-            '--units', 'mm',
-            '--side', 'back',
-            pcb_path
-        ]
-        subprocess.run(pos_bottom_cmd, check=True, capture_output=True, text=True)
-
-        # --- Generate 3D Renders ---
-        print("INFO: Generating 3D renders...", file=sys.stderr)
-        top_png_path_rel = os.path.join('assets', f'{args.projectName}_render_top.png')
-        bottom_png_path_rel = os.path.join('assets', f'{args.projectName}_render_bottom.png')
-        top_png_path_abs = os.path.join(os.path.dirname(__file__), '..', top_png_path_rel)
-        bottom_png_path_abs = os.path.join(os.path.dirname(__file__), '..', bottom_png_path_rel)
-        
-        subprocess.run(['kicad-cli', 'pcb', 'render', '--output', top_png_path_abs, '--side', 'top', pcb_path], check=True, capture_output=True)
-        subprocess.run(['kicad-cli', 'pcb', 'render', '--output', bottom_png_path_abs, '--side', 'bottom', pcb_path], check=True, capture_output=True)
+        subprocess.run(glb_cmd, check=True, capture_output=True, text=True)
 
         # --- Zip all fabrication files ---
         print("INFO: Zipping all fabrication files...", file=sys.stderr)
@@ -736,12 +718,10 @@ def export_fabrication_files(args):
             for file in glob.glob(os.path.join(fab_dir, '*')):
                 zf.write(file, os.path.basename(file))
         
-        # Clean up the fab directory after zipping
         shutil.rmtree(fab_dir)
 
     except subprocess.CalledProcessError as e:
-        error_message = f"kicad-cli failed during fabrication export. Command: '{' '.join(e.cmd)}'. Stderr: {e.stderr}"
-        print(error_message, file=sys.stderr)
+        error_message = f"kicad-cli failed. Command: '{' '.join(e.cmd)}'. Stderr: {e.stderr}"
         log_error_and_exit(error_message)
     except Exception as e:
         log_error_and_exit(f"An unexpected error occurred during fabrication export: {e}")
@@ -749,8 +729,7 @@ def export_fabrication_files(args):
     log_and_return("Fabrication files exported and zipped.", {
         "artifacts": {
             "boardName": args.projectName,
-            "topImage": top_png_path_rel,
-            "bottomImage": bottom_png_path_rel,
+            "glbPath": glb_path_rel,
             "fabZipPath": zip_path_rel
         }
     })

@@ -1,5 +1,5 @@
 {
-  "name": "singularity-agent-factory-mcp-kicad",
+  "name": "copy-of-singularity-agent-factory-mcp-kicad-rapier3d",
   "private": true,
   "version": "0.0.0",
   "type": "module",
@@ -19,7 +19,10 @@
     "cors": "^2.8.5",
     "url": "^0.11.4",
     "child_process": "^1.0.2",
-    "multer": "^2.0.2"
+    "multer": "^2.0.2",
+    "three": "^0.166.1",
+    "@dimforge/rapier3d-compat": "latest",
+    "lil-gui": "^0.19.1"
   },
   "devDependencies": {
     "@types/node": "^22.14.0",

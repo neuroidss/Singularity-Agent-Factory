@@ -1,4 +1,3 @@
-
 import { pipeline, type TextGenerationPipeline } from '@huggingface/transformers';
 import type { APIConfig } from '../types';
 
@@ -6,15 +5,15 @@ let generator: TextGenerationPipeline | null = null;
 let currentModelId: string | null = null;
 let currentDevice: string | null = null;
 
-const handleProgress = (onProgress: (message: string) => void) => (progress: any) => {
-     const { status, file, progress: p, loaded, total } = progress;
-     if (status === 'progress' && p > 0) {
-         const friendlyLoaded = (loaded / 1024 / 1024).toFixed(1);
-         const friendlyTotal = (total / 1024 / 1024).toFixed(1);
-         onProgress(`Загрузка ${file}: ${Math.round(p)}% (${friendlyLoaded}MB / ${friendlyTotal}MB)`);
-     } else if (status !== 'progress') {
-         onProgress(`Статус: ${status}...`);
-     }
+const handleProgress = (onProgress: (message: string) => void) => {
+    const reportedDownloads = new Set();
+    return (progress: any) => {
+        const { status, file } = progress;
+        if (status === 'download' && !reportedDownloads.has(file)) {
+            onProgress(`Downloading model file: ${file}...`);
+            reportedDownloads.add(file);
+        }
+    };
 };
 
 const getPipeline = async (modelId: string, onProgress: (message: string) => void): Promise<TextGenerationPipeline> => {
@@ -25,7 +24,7 @@ const getPipeline = async (modelId: string, onProgress: (message: string) => voi
         return generator;
     }
 
-    onProgress(`🚀 Инициализация модели: ${modelId}. Это может занять несколько минут...`);
+    onProgress(`🚀 Initializing model: ${modelId}. This may take a few minutes...`);
     
     if (generator) {
         await generator.dispose();
@@ -36,20 +35,25 @@ const getPipeline = async (modelId: string, onProgress: (message: string) => voi
     (window as any).env.allowLocalModels = false;
     (window as any).env.useFbgemm = false;
     
-    // By typing options as 'any', we prevent TypeScript from creating a massive union type
-    // from all the pipeline() overloads, which was causing a "type is too complex" error.
+    // The options for the pipeline.
     const pipelineOptions = {
         device: huggingFaceDevice,
         progress_callback: handleProgress(onProgress),
-        quantization: 'fp16'
+        quantization: 'auto'
+//        quantization: 'int8'
+//        quantization: 'fp16'
     };
     
-    generator = await pipeline('text-generation', modelId, pipelineOptions as any) as TextGenerationPipeline;
+    // By casting the options argument to 'any' at the call site, we prevent TypeScript from creating
+    // a massive union type from all the pipeline() overloads, which was causing a "type is too complex" error.
+    // This is a necessary workaround for a known issue with the transformers.js library's complex types.
+    // @ts-ignore 
+    generator = await pipeline('text-generation', modelId, pipelineOptions) as TextGenerationPipeline;
 
     currentModelId = modelId;
     currentDevice = huggingFaceDevice;
     
-    onProgress(`✅ Модель ${modelId} успешно загружена.`);
+    onProgress(`✅ Model ${modelId} loaded successfully.`);
     return generator;
 };
 
@@ -67,7 +71,7 @@ const executePipe = async (pipe: TextGenerationPipeline, system: string, user:st
     const assistantResponse = rawText.split('<|assistant|>').pop()?.trim();
 
     if (!assistantResponse) {
-        throw new Error("Не удалось извлечь ответ ассистента из вывода модели.");
+        throw new Error("Could not extract assistant's response from model output.");
     }
     
     return assistantResponse;
@@ -76,12 +80,12 @@ const executePipe = async (pipe: TextGenerationPipeline, system: string, user:st
 const generateDetailedError = (error: unknown, modelId: string, rawResponse?: string): Error => {
     let finalMessage;
     if (error instanceof TypeError && error.message.includes('Failed to fetch')) {
-        finalMessage = `Сетевая ошибка: не удалось загрузить файлы модели для ${modelId}. Проверьте ваше интернет-соединение и блокировщики рекламы.`;
+        finalMessage = `Network error: failed to download model files for ${modelId}. Check your internet connection and ad blockers.`;
     } else {
-        finalMessage = `Ошибка модели HuggingFace (${modelId}): ${error instanceof Error ? error.message : "Произошла неизвестная ошибка"}`;
+        finalMessage = `HuggingFace model error (${modelId}): ${error instanceof Error ? error.message : "An unknown error occurred"}`;
     }
     const processingError = new Error(finalMessage) as any;
-    processingError.rawAIResponse = rawResponse || "Не удалось получить сырой ответ.";
+    processingError.rawAIResponse = rawResponse || "Could not get raw response.";
     return processingError;
 };
 
@@ -103,7 +107,7 @@ export const generateJsonOutput = async (
     apiConfig: APIConfig,
     onProgress: (message: string) => void,
 ): Promise<string> => {
-    const fullSystemInstruction = `${systemInstruction}\n\nВы ДОЛЖНЫ ответить одним, валидным JSON-объектом и ничем больше. Не оборачивайте JSON в тройные кавычки.`;
+    const fullSystemInstruction = `${systemInstruction}\n\nYou MUST respond with a single, valid JSON object and nothing else. Do not wrap the JSON in triple backticks.`;
     const responseText = await generate(fullSystemInstruction, userInput, modelId, temperature, onProgress);
     return responseText || "{}";
 };

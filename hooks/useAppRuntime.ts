@@ -1,10 +1,10 @@
 
-import React, { useCallback, useRef, useEffect } from 'react';
-import { SERVER_URL } from '../App';
+import React, { useCallback, useRef, useEffect, useMemo } from 'react';
+import { SERVER_URL } from '../constants';
 import * as aiService from '../services/aiService';
 import type {
     LLMTool, EnrichedAIResponse, NewToolPayload, AIToolCall,
-    RobotState, EnvironmentObject, AIModel, APIConfig
+    RobotState, EnvironmentObject, AIModel, APIConfig, ExecuteActionFunction
 } from '../types';
 
 type UseAppRuntimeProps = {
@@ -30,6 +30,7 @@ type UseAppRuntimeProps = {
     setPcbArtifacts: (artifacts: any) => void;
     kicadLogEvent: (message: string) => void;
     setCurrentKicadArtifact: (artifact: any) => void;
+    updateWorkflowChecklist: (stepName: string, items: string[]) => void;
 };
 
 export const useAppRuntime = (props: UseAppRuntimeProps) => {
@@ -38,10 +39,9 @@ export const useAppRuntime = (props: UseAppRuntimeProps) => {
         apiConfig, selectedModel,
         robotState, robotSetters, getRobotStateForRuntime,
         setTools, setPcbArtifacts,
-        kicadLogEvent, setCurrentKicadArtifact
+        kicadLogEvent, setCurrentKicadArtifact,
+        updateWorkflowChecklist,
     } = props;
-
-    const executeActionRef = useRef<any>(null);
     
     // Add refs for changing dependencies of processRequest
     const selectedModelRef = useRef(selectedModel);
@@ -50,6 +50,7 @@ export const useAppRuntime = (props: UseAppRuntimeProps) => {
     const apiConfigRef = useRef(apiConfig);
     useEffect(() => { apiConfigRef.current = apiConfig; }, [apiConfig]);
 
+    const executeActionRef = useRef<ExecuteActionFunction | null>(null);
 
     const runToolImplementation = useCallback(async (code: string, params: any, runtime: any): Promise<any> => {
         const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
@@ -57,9 +58,10 @@ export const useAppRuntime = (props: UseAppRuntimeProps) => {
         return await executor(params, runtime);
     }, []);
 
-    const getRuntimeApi = useCallback((agentId: string) => ({
+    const getRuntimeApiForAgent = useCallback((agentId: string) => ({
         tools: {
             run: async (toolName: string, args: Record<string, any>): Promise<any> => {
+                if (!executeActionRef.current) throw new Error("Runtime not initialized.");
                 const toolToRun = allToolsRef.current.find(t => t.name === toolName);
                 if (!toolToRun) throw new Error(`Workflow failed: Tool '${toolName}' not found.`);
                 const result = await executeActionRef.current({ name: toolName, arguments: args }, agentId);
@@ -177,7 +179,22 @@ export const useAppRuntime = (props: UseAppRuntimeProps) => {
         if (!toolToExecute) throw new Error(`AI returned unknown tool name for agent ${agentId}: ${toolCall.name}`);
         
         enrichedResult.tool = toolToExecute;
-        const runtime = getRuntimeApi(agentId);
+        const runtime = getRuntimeApiForAgent(agentId);
+        
+        // Special case for the checklist tool to update UI state directly
+        if (toolToExecute.name === 'Update Workflow Checklist') {
+             try {
+                const { workflowStepName, checklistItems } = toolCall.arguments;
+                updateWorkflowChecklist(workflowStepName, checklistItems);
+                enrichedResult.executionResult = { success: true, message: `Checklist updated for '${workflowStepName}'.`};
+                logEvent(`[INFO] ✅ Agent provided a plan for '${workflowStepName}' with ${checklistItems.length} items.`);
+                return enrichedResult;
+             } catch (e) {
+                enrichedResult.executionError = e instanceof Error ? e.message : String(e);
+                logEvent(`[ERROR] ❌ Failed to update workflow checklist: ${enrichedResult.executionError}`);
+                return enrichedResult;
+             }
+        }
 
         if (toolToExecute.category === 'Server') {
             if (!isServerConnected) {
@@ -199,7 +216,21 @@ export const useAppRuntime = (props: UseAppRuntimeProps) => {
              enrichedResult.executionResult = { success: true, summary: `Displayed UI tool '${toolToExecute.name}'.` };
         } else { // Client-side Functional or Automation
             try {
-                const result = await runToolImplementation(toolToExecute.implementationCode, toolCall.arguments, runtime);
+                // Pre-process arguments: if a parameter is defined as complex (array/object)
+                // and the argument is a string, try to parse it as JSON.
+                const finalArgs = { ...toolCall.arguments };
+                for (const param of toolToExecute.parameters) {
+                    if ((param.type === 'array' || param.type === 'object') && typeof finalArgs[param.name] === 'string') {
+                        try {
+                            const parsedArg = JSON.parse(finalArgs[param.name]);
+                            finalArgs[param.name] = parsedArg;
+                        } catch (e) {
+                            console.warn(`Could not auto-parse argument '${param.name}' for tool '${toolToExecute.name}' as JSON. Passing it as a string. Error: ${e instanceof Error ? e.message : String(e)}`);
+                        }
+                    }
+                }
+                
+                const result = await runToolImplementation(toolToExecute.implementationCode, finalArgs, runtime);
                 enrichedResult.executionResult = result;
                 logEvent(`[INFO] ✅ ${result?.message || `Tool "${toolToExecute.name}" executed by ${agentId}.`}`);
             } catch (execError) {
@@ -224,18 +255,17 @@ export const useAppRuntime = (props: UseAppRuntimeProps) => {
                         
                         const newArtifact = { 
                             title, 
-                            path: parsed.artifacts.placed_png || parsed.artifacts.topImage || null,
+                            path: parsed.artifacts.placed_png || null,
                             svgPath: parsed.artifacts.routed_svg || null 
                         };
                         
                         if (newArtifact.path || newArtifact.svgPath) setCurrentKicadArtifact(newArtifact);
 
-                        if (parsed.artifacts.fabZipPath) {
-                            kicadLogEvent("🎉 Fabrication successful! Displaying final 3D results.");
+                        if (parsed.artifacts.fabZipPath && parsed.artifacts.glbPath) {
+                            kicadLogEvent("🎉 Fabrication successful! Displaying final 3D model.");
                              setPcbArtifacts({ 
                                 boardName: String(parsed.artifacts.boardName), 
-                                topImage: String(parsed.artifacts.topImage), 
-                                bottomImage: String(parsed.artifacts.bottomImage), 
+                                glbPath: String(parsed.artifacts.glbPath), 
                                 fabZipPath: String(parsed.artifacts.fabZipPath) 
                             });
                             setCurrentKicadArtifact(null);
@@ -252,15 +282,27 @@ export const useAppRuntime = (props: UseAppRuntimeProps) => {
         }
 
         return enrichedResult;
-    }, [getRuntimeApi, runToolImplementation, logEvent, isServerConnected, kicadLogEvent, setPcbArtifacts, setCurrentKicadArtifact]);
+    }, [getRuntimeApiForAgent, runToolImplementation, logEvent, isServerConnected, kicadLogEvent, setPcbArtifacts, setCurrentKicadArtifact, updateWorkflowChecklist]);
     
-    executeActionRef.current = executeAction;
+    const runtimeApi = useMemo(() => {
+        // Create a function that matches the ExecuteActionFunction signature
+        const api: ExecuteActionFunction = async (...args) => executeAction(...args);
+        // Attach the getRuntimeApiForAgent method to the function object
+        api.getRuntimeApiForAgent = getRuntimeApiForAgent;
+        return api;
+    }, [executeAction, getRuntimeApiForAgent]);
+
+    // Keep the ref updated with the latest stable version of the runtime API
+    useEffect(() => {
+        executeActionRef.current = runtimeApi;
+    }, [runtimeApi]);
     
     const processRequest = useCallback(async (
         prompt: { text: string; files: any[] },
         systemInstruction: string,
-        agentId: string
-    ): Promise<EnrichedAIResponse[] | null> => {
+        agentId: string,
+        relevantTools: LLMTool[],
+    ): Promise<AIToolCall[] | null> => {
         logEvent(`[API CALL] Agent ${agentId} is thinking...`);
         try {
             const aiResponse = await aiService.generateResponse(
@@ -269,14 +311,11 @@ export const useAppRuntime = (props: UseAppRuntimeProps) => {
                 selectedModelRef.current, // Use ref
                 apiConfigRef.current,     // Use ref
                 (progress) => logEvent(`[AI-PROGRESS] ${progress}`),
-                allToolsRef.current
+                relevantTools // Use the pre-filtered list of relevant tools
             );
     
             if (aiResponse.toolCalls && aiResponse.toolCalls.length > 0) {
-                const executionPromises = aiResponse.toolCalls.map(toolCall => 
-                    executeActionRef.current(toolCall, agentId)
-                );
-                return await Promise.all(executionPromises);
+                return aiResponse.toolCalls;
             } else {
                 logEvent(`[WARN] Agent ${agentId} did not return any tool calls.`);
                 return null;
@@ -286,10 +325,11 @@ export const useAppRuntime = (props: UseAppRuntimeProps) => {
             logEvent(`[ERROR] Agent ${agentId} failed during AI generation: ${errorMessage}`);
             throw error;
         }
-    }, [logEvent, allToolsRef, executeActionRef]);
+    }, [logEvent]);
 
     const runServerTool = useCallback(async (toolName: string, args: Record<string, any> = {}) => {
         try {
+            if (!executeActionRef.current) throw new Error("Runtime not ready.");
             const result = await executeActionRef.current({ name: toolName, arguments: args }, 'system-task');
             if (result.executionError) throw new Error(result.executionError);
             return result.executionResult;
@@ -298,7 +338,7 @@ export const useAppRuntime = (props: UseAppRuntimeProps) => {
             logEvent(`[ERROR] Tool '${toolName}' failed: ${errorMessage}`);
             throw e;
         }
-    }, [logEvent, executeActionRef]);
+    }, [logEvent]);
 
     return {
         executeAction,

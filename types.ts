@@ -125,8 +125,19 @@ export interface KnowledgeGraph {
     width: number;
     height: number;
   };
+  constraints?: any[];
 }
 
 export type KicadSchematic = [string, string[], string][];
 
 export type KicadPlacement = [string, number, number, number, string, string, string][];
+
+export interface ExecuteActionFunction {
+    (toolCall: AIToolCall, agentId: string): Promise<EnrichedAIResponse>;
+    getRuntimeApiForAgent: (agentId: string) => { tools: { list: () => LLMTool[] } };
+}
+
+export interface ScoredTool {
+  tool: LLMTool;
+  score: number;
+}

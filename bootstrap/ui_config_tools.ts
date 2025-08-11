@@ -130,5 +130,56 @@ export const UI_CONFIG_TOOLS: ToolCreatorPayload[] = [
             </div>
           );
         `
+    },
+    {
+        name: 'Tool Relevance Configuration',
+        description: 'A panel for configuring the tool relevance filter used by the agent swarm. Adjust how many tools are selected for a task.',
+        category: 'UI Component',
+        executionEnvironment: 'Client',
+        purpose: 'To give the user fine-grained control over the tool context provided to the agent, allowing for tuning between performance and capability.',
+        parameters: [
+          { name: 'topK', type: 'number', description: 'The maximum number of tools to select.', required: true },
+          { name: 'setTopK', type: 'object', description: 'Function to update the top K value.', required: true },
+          { name: 'threshold', type: 'number', description: 'The minimum similarity score for a tool to be considered.', required: true },
+          { name: 'setThreshold', type: 'object', description: 'Function to update the threshold value.', required: true },
+          { name: 'isSwarmRunning', type: 'boolean', description: 'Whether the swarm is currently active, to disable controls.', required: true },
+        ],
+        implementationCode: `
+          return (
+            <div className="bg-gray-800/60 border border-gray-700 rounded-xl p-4 space-y-4">
+              <h3 className="text-lg font-bold text-indigo-300">Tool Context Filter</h3>
+              <div className="space-y-3">
+                <div>
+                  <label htmlFor="topK-slider" className="block text-sm font-medium text-gray-300 mb-1">Max Tools (Top K): <span className="font-bold text-white">{topK}</span></label>
+                  <input
+                    id="topK-slider"
+                    type="range"
+                    min="1"
+                    max="100"
+                    value={topK}
+                    onChange={(e) => setTopK(Number(e.target.value))}
+                    disabled={isSwarmRunning}
+                    className="w-full h-2 bg-gray-700 rounded-lg appearance-none cursor-pointer disabled:opacity-50"
+                  />
+                </div>
+                <div>
+                  <label htmlFor="threshold-slider" className="block text-sm font-medium text-gray-300 mb-1">Similarity Threshold: <span className="font-bold text-white">{threshold.toFixed(2)}</span></label>
+                  <input
+                    id="threshold-slider"
+                    type="range"
+                    min="0.0"
+                    max="1.0"
+                    step="0.01"
+                    value={threshold}
+                    onChange={(e) => setThreshold(Number(e.target.value))}
+                    disabled={isSwarmRunning}
+                    className="w-full h-2 bg-gray-700 rounded-lg appearance-none cursor-pointer disabled:opacity-50"
+                  />
+                  <p className="text-xs text-gray-400 mt-1">Filters tools by relevance score before picking the Top K.</p>
+                </div>
+              </div>
+            </div>
+          );
+        `
     }
 ];

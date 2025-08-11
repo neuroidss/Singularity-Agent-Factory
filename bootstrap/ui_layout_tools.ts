@@ -1,3 +1,4 @@
+
 import type { ToolCreatorPayload } from '../types';
 
 export const UI_LAYOUT_TOOLS: ToolCreatorPayload[] = [
@@ -34,7 +35,7 @@ export const UI_LAYOUT_TOOLS: ToolCreatorPayload[] = [
         ],
         implementationCode: `
             if (isPcbResultVisible) {
-                return null; // Don't show tabs when a specific result like the PCB viewer is active
+                return null; // Don't show tabs when a specific result like the PCB viewer or layout tool is active
             }
 
             const tabs = [

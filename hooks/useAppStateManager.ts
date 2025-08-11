@@ -1,14 +1,13 @@
 
 import { useState, useCallback } from 'react';
 import { AI_MODELS } from '../constants';
-import type { AIModel, APIConfig, KnowledgeGraph, MainView } from '../types';
+import type { AIModel, APIConfig, MainView } from '../types';
 
 export const useAppStateManager = () => {
     const [userInput, setUserInput] = useState<string>('');
     const [eventLog, setEventLog] = useState<string[]>(['[INFO] System Initialized. Target: Achieve Singularity.']);
     const [mainView, setMainView] = useState<MainView>('KICAD');
     const [apiCallCount, setApiCallCount] = useState<number>(0);
-    const [knowledgeGraph, setKnowledgeGraph] = useState<KnowledgeGraph>({ nodes: [], edges: [] });
 
     const [selectedModel, setSelectedModel] = useState<AIModel>(AI_MODELS[0]);
     const [apiConfig, setApiConfig] = useState<APIConfig>(() => {
@@ -35,7 +34,6 @@ export const useAppStateManager = () => {
             eventLog,
             mainView,
             apiCallCount,
-            knowledgeGraph,
             selectedModel,
             apiConfig,
         },
@@ -44,7 +42,6 @@ export const useAppStateManager = () => {
             setEventLog,
             setMainView,
             setApiCallCount,
-            setKnowledgeGraph,
             setSelectedModel,
             setApiConfig,
         },

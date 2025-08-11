@@ -1,4 +1,5 @@
 
+
 import type { APIConfig, LLMTool, AIResponse, AIToolCall } from "../types";
 
 const OPENAI_TIMEOUT = 600000; // 10 минут
@@ -53,10 +54,12 @@ const buildOpenAITools = (tools: LLMTool[]) => {
             parameters: {
                 type: 'object',
                 properties: tool.parameters.reduce((obj, param) => {
-                    const typeMapping = { 'string': 'string', 'number': 'number', 'boolean': 'boolean', 'object': 'object', 'array': 'array' };
-                    obj[param.name] = { type: typeMapping[param.type] || 'string', description: param.description };
-                     if (param.type === 'array') {
-                       obj[param.name].items = { type: 'string' }; // OpenAI schema requires item type
+                     if (param.type === 'array' || param.type === 'object') {
+                        // For complex types, tell the model to expect a string, which we will treat as JSON.
+                        obj[param.name] = { type: 'string', description: `${param.description} (This argument must be a valid, JSON-formatted string.)` };
+                    } else {
+                        const typeMapping = { 'string': 'string', 'number': 'number', 'boolean': 'boolean' };
+                        obj[param.name] = { type: typeMapping[param.type] || 'string', description: param.description };
                     }
                     return obj;
                 }, {} as Record<string, any>),
@@ -116,14 +119,29 @@ export const generateWithTools = async (
                 const toolCalls: AIToolCall[] = toolCallsData.map(tc => {
                     const toolCall = tc.function;
                     const originalName = toolNameMap.get(toolCall.name) || toolCall.name;
+                    
+                    // Robust argument parsing: handles both stringified JSON and objects.
+                    const args = toolCall.arguments;
+                    let parsedArgs = {};
+                    if (typeof args === 'string') {
+                        try {
+                            parsedArgs = JSON.parse(args || '{}');
+                        } catch (e) {
+                             console.error(`[OpenAI Service] Failed to parse arguments string for tool ${originalName}:`, e);
+                             // Return empty args if parsing fails
+                        }
+                    } else if (typeof args === 'object' && args !== null) {
+                        parsedArgs = args;
+                    }
+
                     return {
                         name: originalName,
-                        arguments: JSON.parse(toolCall.arguments || '{}')
+                        arguments: parsedArgs
                     };
                 });
                 return { toolCalls };
             } catch (e) {
-                throw new Error(`Failed to parse arguments from AI tool call: ${e.message}`);
+                throw new Error(`Failed to process arguments from AI tool call: ${e instanceof Error ? e.message : String(e)}`);
             }
         }
         

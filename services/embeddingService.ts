@@ -1,138 +1,86 @@
-import { pipeline, type FeatureExtractionPipeline, dot } from '@huggingface/transformers';
-import type { LLMTool } from '../types';
 
-const MODEL_NAME = 'Xenova/all-MiniLM-L6-v2';
-const EMBEDDING_CACHE_VERSION = 'v2_desc_only';
+
+
+import { pipeline, type FeatureExtractionPipeline } from '@huggingface/transformers';
+
+// List of models to try, from smallest to largest quantized version.
+// This allows for a graceful fallback if a smaller model fails to load on the user's device.
+const EMBEDDING_MODELS = [
+//    { name: 'Xenova/paraphrase-MiniLM-L3-v2', size: '17.5MB' }, // Smallest, fastest option
+//    { name: 'Xenova/all-MiniLM-L6-v2', size: '23MB' },       // The original model, a reliable fallback
+];
 
 class EmbeddingSingleton {
-    static task: 'feature-extraction' = 'feature-extraction';
-    static model = MODEL_NAME;
     static instance: FeatureExtractionPipeline | null = null;
-
-    static async getInstance(onProgress: (message: string) => void): Promise<FeatureExtractionPipeline> {
-        if (this.instance === null) {
-            onProgress(`🚀 Initializing embedding model: ${this.model}. This may take a few minutes...`);
-            
-            // Set environment variables for transformers.js
-            (window as any).env = (window as any).env || {};
-            (window as any).env.allowLocalModels = false;
-            (window as any).env.useFbgemm = false;
-
-            const pipelineOptions = {
-                 progress_callback: (progress: any) => {
-                     const { status, file, progress: p, loaded, total } = progress;
-                     if (status === 'progress' && p > 0) {
-                         const friendlyLoaded = (loaded / 1024 / 1024).toFixed(1);
-                         const friendlyTotal = (total / 1024 / 1024).toFixed(1);
-                         onProgress(`Downloading embedding model ${file}: ${Math.round(p)}% (${friendlyLoaded}MB / ${friendlyTotal}MB)`);
-                     } else if (status !== 'progress') {
-                         onProgress(`Embedding model status: ${status}...`);
-                     }
-                },
-            };
-
-            this.instance = await pipeline<'feature-extraction'>(this.task, this.model, pipelineOptions);
-             onProgress('✅ Embedding model ready.');
+    static async getInstance(onProgress: (msg: string) => void): Promise<FeatureExtractionPipeline> {
+        if (this.instance !== null) {
+            return this.instance;
         }
-        return this.instance;
+
+        (window as any).env = { ...(window as any).env, allowLocalModels: false, useFbgemm: false };
+
+        const reportedDownloads = new Set();
+        const progressCallback = (progress: any) => {
+            const { status, file } = progress;
+            if (status === 'download' && !reportedDownloads.has(file)) {
+                onProgress(`Downloading model file: ${file}...`);
+                reportedDownloads.add(file);
+            }
+        };
+        
+        for (const modelInfo of EMBEDDING_MODELS) {
+            try {
+                onProgress(`🚀 Attempting to load embedding model: ${modelInfo.name} (${modelInfo.size})...`);
+                reportedDownloads.clear(); // Reset reported files for each new attempt
+                
+                const extractor = await pipeline('feature-extraction', modelInfo.name, {
+                    device: 'webgpu',
+                    progress_callback: progressCallback,
+                    dtype: 'auto' // Use automatic quantization for better compatibility
+                });
+
+                onProgress(`✅ Successfully loaded embedding model: ${modelInfo.name}`);
+                this.instance = extractor;
+                return this.instance;
+
+            } catch (e) {
+                const errorMessage = e instanceof Error ? e.message : String(e);
+                onProgress(`[WARN] ⚠️ Failed to load ${modelInfo.name}. Reason: ${errorMessage}. Trying next model...`);
+                console.warn(`Failed to load embedding model ${modelInfo.name}`, e);
+            }
+        }
+
+        // This part is reached only if all models in the list fail to load.
+        onProgress(`[ERROR] ❌ Could not load any embedding models. Tool relevance filtering will be disabled.`);
+        throw new Error("All embedding models failed to load. Please check your network connection and browser compatibility (e.g., Chrome/Edge).");
     }
 }
 
-export const generateEmbeddings = async (
-    texts: string[],
-    onProgress: (message: string) => void
-): Promise<number[][]> => {
-    const extractor = await EmbeddingSingleton.getInstance(onProgress);
-    // Generate embeddings with pooling and normalization
-    const output = await extractor(texts, { pooling: 'mean', normalize: true });
-    // Convert to a standard JavaScript array
-    return output.tolist();
+export const generateEmbeddings = async (texts: string[], onProgress: (msg: string) => void): Promise<number[][]> => {
+    try {
+        const extractor = await EmbeddingSingleton.getInstance(onProgress);
+        // The library expects a single string or an array of strings.
+        const output = await extractor(texts.length === 1 ? texts[0] : texts, { pooling: 'mean', normalize: true });
+        // The output format differs for single vs. multiple inputs. Standardize it.
+        if (texts.length === 1) {
+            return [output.tolist()[0]]; // It returns a 2D array for a single item, we need the inner array
+        }
+        return output.tolist();
+
+    } catch(e) {
+        console.error("Embedding generation failed:", e);
+        throw e;
+    }
 };
 
-export const retrieveToolsByEmbeddings = async (
-    prompt: string,
-    allTools: LLMTool[],
-    toolEmbeddingsCache: Map<string, number[]>,
-    setToolEmbeddingsCache: (cache: Map<string, number[]>) => void,
-    onProgress: (message: string) => void,
-    similarityThreshold: number,
-    topK: number,
-): Promise<LLMTool[]> => {
-    const foundTools = new Set<LLMTool>();
-
-    // --- Step 1: Direct Name Matching ---
-    allTools.forEach(tool => {
-        const toolNameRegex = new RegExp(`\\b${tool.name.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&')}\\b`, 'i');
-        if (toolNameRegex.test(prompt)) {
-            foundTools.add(tool);
-        }
-    });
-
-    if (foundTools.size > 0) {
-        const names = Array.from(foundTools).map(t => t.name).join(', ');
-        onProgress(`🎯 Found direct name match for: ${names}`);
+export const cosineSimilarity = (vecA: number[], vecB: number[]): number => {
+    if (!vecA || !vecB || vecA.length !== vecB.length) {
+        return 0;
     }
-
-    // --- Step 2. Generate Prompt & Tool Embeddings ---
-    onProgress('🧠 Analyzing request with semantic embeddings...');
-    const [promptEmbedding] = await generateEmbeddings([`query: ${prompt}`], onProgress);
-    if (!promptEmbedding) {
-        throw new Error("Failed to generate embedding for the prompt.");
+    // Since vectors are normalized, dot product is equivalent to cosine similarity
+    let dotProduct = 0;
+    for (let i = 0; i < vecA.length; i++) {
+        dotProduct += vecA[i] * vecB[i];
     }
-
-    const toolsToEmbed: LLMTool[] = [];
-    allTools.forEach(tool => {
-        const cacheKey = `embedding-${EMBEDDING_CACHE_VERSION}-${tool.id}-${tool.version}`;
-        if (!toolEmbeddingsCache.has(cacheKey)) {
-            toolsToEmbed.push(tool);
-        }
-    });
-
-    if (toolsToEmbed.length > 0) {
-        onProgress(`✨ Generating embeddings for ${toolsToEmbed.length} new/updated tools...`);
-        const toolTexts = toolsToEmbed.map(tool => `passage: Tool: ${tool.name}. Description: ${tool.description}`);
-        const newEmbeddings = await generateEmbeddings(toolTexts, onProgress);
-
-        const newCache = new Map(toolEmbeddingsCache);
-        toolsToEmbed.forEach((tool, index) => {
-            const cacheKey = `embedding-${EMBEDDING_CACHE_VERSION}-${tool.id}-${tool.version}`;
-            newCache.set(cacheKey, newEmbeddings[index]);
-        });
-        setToolEmbeddingsCache(newCache);
-    }
-     onProgress('🔍 Searching for semantically related tools...');
-
-    // --- Step 3. Calculate Similarities, Filter, and Rank ---
-    const scoredTools: { tool: LLMTool; score: number }[] = [];
-    const currentCache = toolEmbeddingsCache; // Use the latest cache
-
-    allTools.forEach(tool => {
-        if (foundTools.has(tool)) {
-            return;
-        }
-
-        const cacheKey = `embedding-${EMBEDDING_CACHE_VERSION}-${tool.id}-${tool.version}`;
-        const toolEmbedding = currentCache.get(cacheKey);
-
-        if (toolEmbedding) {
-            const similarity = dot(promptEmbedding, toolEmbedding);
-            if (similarity >= similarityThreshold) {
-                scoredTools.push({ tool, score: similarity });
-            }
-        }
-    });
-
-    scoredTools.sort((a, b) => b.score - a.score);
-    const topKTools = scoredTools.slice(0, topK).map(item => item.tool);
-    topKTools.forEach(tool => foundTools.add(tool));
-
-    // --- Step 4. Always include mandatory tools ---
-    const mandatoryToolNames = ['Tool Creator', 'Tool Improver'];
-    mandatoryToolNames.forEach(name => {
-        const tool = allTools.find(t => t.name === name);
-        if (tool) foundTools.add(tool);
-    });
-    
-    onProgress(`✅ Found ${foundTools.size} relevant tools in total.`);
-    return Array.from(foundTools);
+    return dotProduct;
 };

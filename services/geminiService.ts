@@ -19,6 +19,7 @@ const mapTypeToGemini = (type: ToolParameter['type']): Type => {
         case 'string': return Type.STRING;
         case 'number': return Type.NUMBER;
         case 'boolean': return Type.BOOLEAN;
+        // Array and Object are handled separately now.
         case 'array': return Type.ARRAY;
         case 'object': return Type.OBJECT;
         default: return Type.STRING;
@@ -32,13 +33,18 @@ const buildGeminiTools = (tools: LLMTool[]): { functionDeclarations: FunctionDec
         const required: string[] = [];
 
         tool.parameters.forEach(param => {
-            if (param.type === 'array') {
-                properties[param.name] = { type: Type.ARRAY, description: param.description, items: { type: Type.STRING } };
-            } else if (param.type === 'object') {
-                 properties[param.name] = { type: Type.OBJECT, description: param.description, properties: {} }; // Note: Cannot be an empty object, but we'll allow it for now.
+            if (param.type === 'array' || param.type === 'object') {
+                // For complex types, instruct the model to provide a JSON string.
+                // This avoids schema validation issues with nested, undefined structures
+                // that Gemini's strict schema enforcement would reject.
+                properties[param.name] = {
+                    type: Type.STRING,
+                    description: `${param.description} (Note: This argument must be a valid, JSON-formatted string.)`
+                };
             } else {
                 properties[param.name] = { type: mapTypeToGemini(param.type), description: param.description };
             }
+
             if (param.required) {
                 required.push(param.name);
             }

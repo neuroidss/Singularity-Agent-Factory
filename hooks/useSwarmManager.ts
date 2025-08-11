@@ -1,12 +1,16 @@
+
+
+
 import React, { useState, useCallback, useRef, useEffect } from 'react';
 import { SWARM_AGENT_SYSTEM_PROMPT } from '../constants';
 import { contextualizeWithSearch } from '../services/aiService';
-import type { AgentWorker, EnrichedAIResponse, AgentStatus, RobotState, LLMTool, AIModel, APIConfig, AIResponse, KnowledgeGraph } from '../types';
+import type { AgentWorker, EnrichedAIResponse, AgentStatus, AIToolCall, KnowledgeGraph, LLMTool, ExecuteActionFunction, ScoredTool } from '../types';
 
 type UseSwarmManagerProps = {
     logEvent: (message: string) => void;
     setUserInput: (input: string) => void;
     setEventLog: (callback: (prev: string[]) => string[]) => void;
+    findRelevantTools: (userRequestText: string, allTools: LLMTool[], topK: number, threshold: number, systemPromptForContext: string | null) => Promise<ScoredTool[]>;
 };
 
 type PauseState = {
@@ -16,14 +20,27 @@ type PauseState = {
     projectName: string;
 } | null;
 
+export type StartSwarmTaskOptions = {
+    task: any;
+    systemPrompt: string | null;
+    sequential?: boolean;
+    resume?: boolean;
+    historyEventToInject?: EnrichedAIResponse | null;
+    allTools: LLMTool[];
+};
+
 export const useSwarmManager = (props: UseSwarmManagerProps) => {
-    const { logEvent, setUserInput, setEventLog } = props;
+    const { logEvent, setUserInput, setEventLog, findRelevantTools } = props;
 
     const [agentSwarm, setAgentSwarm] = useState<AgentWorker[]>([]);
     const [isSwarmRunning, setIsSwarmRunning] = useState(false);
     const [currentUserTask, setCurrentUserTask] = useState<any>(null);
     const [currentSystemPrompt, setCurrentSystemPrompt] = useState<string>(SWARM_AGENT_SYSTEM_PROMPT);
     const [pauseState, setPauseState] = useState<PauseState>(null);
+    const [isSequential, setIsSequential] = useState(false);
+    const [activeToolsForTask, setActiveToolsForTask] = useState<ScoredTool[]>([]);
+    const [relevanceTopK, setRelevanceTopK] = useState<number>(25);
+    const [relevanceThreshold, setRelevanceThreshold] = useState<number>(0.1);
     
     const swarmIterationCounter = useRef(0);
     const swarmHistoryRef = useRef<EnrichedAIResponse[]>([]);
@@ -43,6 +60,7 @@ export const useSwarmManager = (props: UseSwarmManagerProps) => {
         if (isRunningRef.current) {
             isRunningRef.current = false; // Update ref immediately to stop loops
             setIsSwarmRunning(false); // Schedule state update for UI
+            setActiveToolsForTask([]); // Clear the active tools on stop
             const reasonText = reason ? `: ${reason}` : ' by user.';
             logEvent(`[INFO] 🛑 Task stopped${reasonText}`);
         }
@@ -53,7 +71,9 @@ export const useSwarmManager = (props: UseSwarmManagerProps) => {
     }, []);
     
     const runSwarmCycle = useCallback(async (
-        processRequest: (prompt: any, systemInstruction: string, agentId: string) => Promise<EnrichedAIResponse[] | null>
+        processRequest: (prompt: any, systemInstruction: string, agentId: string, relevantTools: LLMTool[]) => Promise<AIToolCall[] | null>,
+        executeActionRef: React.MutableRefObject<ExecuteActionFunction | null>,
+        allTools: LLMTool[]
     ) => {
         if (!isRunningRef.current) {
             return;
@@ -67,7 +87,7 @@ export const useSwarmManager = (props: UseSwarmManagerProps) => {
         // Use the ref here to avoid dependency on state
         const agent = agentSwarmRef.current[0];
         if (!agent || agent.status === 'working') {
-            setTimeout(() => { if(isRunningRef.current) runSwarmCycle(processRequest) }, 1000);
+            setTimeout(() => { if(isRunningRef.current) runSwarmCycle(processRequest, executeActionRef, allTools) }, 1000);
             return;
         }
 
@@ -78,8 +98,8 @@ export const useSwarmManager = (props: UseSwarmManagerProps) => {
             
             let finalUserRequestText = currentUserTask.userRequest.text;
 
-            // NEW: CONTEXTUALIZATION STEP
-            if (currentUserTask.useSearch) {
+            // NEW: CONTEXTUALIZATION STEP (only runs on first iteration)
+            if (currentUserTask.useSearch && swarmHistoryRef.current.length === 0) {
                 logEvent('🔎 Performing web search for additional context...');
                 try {
                     const searchPrompt = `Based on the following user request and any provided files, find and summarize the key technical requirements, component datasheets, pinouts, and specifications needed to design a PCB. \n\nUser Request: "${currentUserTask.userRequest.text}"`;
@@ -112,70 +132,106 @@ export const useSwarmManager = (props: UseSwarmManagerProps) => {
             
             const promptForAgent = `The overall goal is: "${finalUserRequestText}".\n\n${historyString}\n\nBased on this, what is the single next logical action or set of actions to perform? If the goal is complete, you MUST call the "Task Complete" tool.`;
             
+            // DYNAMIC TOOL RELEVANCE: Find relevant tools for this specific step.
+            logEvent(`[Relevance] Finding relevant tools for current step...`);
+            const relevantScoredTools = await findRelevantTools(
+                finalUserRequestText, // The user's goal (potentially augmented by search)
+                allTools,
+                relevanceTopK,
+                relevanceThreshold,
+                currentSystemPrompt // The system prompt with workflow instructions
+            );
+            setActiveToolsForTask(relevantScoredTools); // Update UI state
+            const toolsForAgent = relevantScoredTools.map(st => st.tool);
+
             const promptPayload = {
                 text: promptForAgent,
                 files: currentUserTask.userRequest.files,
             };
 
-            const results = await processRequest(promptPayload, currentSystemPrompt, agent.id);
-
-            console.log('[DEBUG_GRAPH] Swarm cycle received results:', JSON.stringify(results, null, 2));
+            if (!executeActionRef.current) {
+                throw new Error("Execution context is not available.");
+            }
+            
+            const toolCalls = await processRequest(promptPayload, currentSystemPrompt, agent.id, toolsForAgent);
 
             if (!isRunningRef.current) return;
+            
+            if (toolCalls && toolCalls.length > 0) {
+                let executionResults: EnrichedAIResponse[] = [];
 
-            // Check for the special pause signal from the 'Arrange Components' tool
-            const arrangeResult = results?.find(r => r.toolCall?.name === 'Arrange Components' && r.executionResult?.stdout);
-            if (arrangeResult && arrangeResult.executionResult.stdout) {
-                try {
-                    const parsedStdout = JSON.parse(arrangeResult.executionResult.stdout);
-                    if (parsedStdout.layout_data) {
-                        console.log('[DEBUG_GRAPH] Found layout_data in swarm cycle. Pausing swarm with data:', JSON.stringify(parsedStdout.layout_data, null, 2));
-                        
-                        setPauseState({
-                            type: 'KICAD_LAYOUT',
-                            data: parsedStdout.layout_data,
-                            isInteractive: arrangeResult.toolCall.arguments.waitForUserInput,
-                            projectName: arrangeResult.toolCall.arguments.projectName,
-                        });
-                        
-                        handleStopSwarm('Pausing for layout.');
-                        
-                        // IMPORTANT: Exit the cycle immediately after pausing.
-                        return; 
+                if (isSequential) {
+                    logEvent(`[INFO] Executing ${toolCalls.length} tool calls sequentially...`);
+                    for (const toolCall of toolCalls) {
+                        if (!isRunningRef.current) break;
+                        const result = await executeActionRef.current(toolCall, agent.id);
+                        executionResults.push(result);
+                        swarmHistoryRef.current.push(result); // Push result to history immediately
+
+                        // Check for pause signal right after execution.
+                        if (result.toolCall?.name === 'Arrange Components' && result.executionResult?.stdout) {
+                            try {
+                                const parsedStdout = JSON.parse(result.executionResult.stdout);
+                                if (parsedStdout.layout_data) {
+                                    setPauseState({
+                                        type: 'KICAD_LAYOUT',
+                                        data: parsedStdout.layout_data,
+                                        isInteractive: result.toolCall.arguments.waitForUserInput,
+                                        projectName: result.toolCall.arguments.projectName,
+                                    });
+                                    handleStopSwarm('Pausing for layout.');
+                                    return; // IMPORTANT: Exit the cycle immediately.
+                                }
+                            } catch (e) { /* Not a pause signal, continue */ }
+                        }
+
+                        if (result.executionError) {
+                            logEvent(`[INFO] 🛑 Halting sequential execution due to error in '${toolCall.name}'.`);
+                            break; 
+                        }
                     }
-                } catch (e) { /* stdout was not JSON with layout_data, continue normally */ }
-            }
+                } else { // Parallel execution
+                    const executionPromises = toolCalls.map(toolCall => executeActionRef.current!(toolCall, agent.id));
+                    executionResults = await Promise.all(executionPromises);
+                    if (!isRunningRef.current) return;
+                    swarmHistoryRef.current.push(...executionResults);
+                    // No pause check needed for parallel as it wouldn't make sense.
+                }
 
+                if (!isRunningRef.current) return;
 
-            if (results && results.length > 0) {
-                swarmHistoryRef.current.push(...results);
-                
-                const actionSummary = results.length > 1
-                    ? `Called ${results.length} tools in parallel: ${results.map(r => `'${r.toolCall?.name}'`).join(', ')}`
-                    : `Called tool '${results[0].toolCall?.name}'`;
+                const actionSummary = executionResults.length > 1
+                    ? `Called ${executionResults.length} tools ${isSequential ? 'sequentially' : 'in parallel'}: ${executionResults.map(r => `'${r.toolCall?.name}'`).join(', ')}`
+                    : `Called tool '${executionResults[0].toolCall?.name}'`;
 
-                const hasError = results.some(r => r.executionError);
+                const hasError = executionResults.some(r => r.executionError);
 
                 setAgentSwarm(prev => prev.map(a => a.id === agent.id ? {
                      ...a, 
                      status: hasError ? 'failed' : 'succeeded',
                      lastAction: actionSummary, 
-                     result: results.map(r => r.executionResult),
-                     error: hasError ? results.find(r => r.executionError)?.executionError : null,
+                     result: executionResults.map(r => r.executionResult),
+                     error: hasError ? executionResults.find(r => r.executionError)?.executionError : null,
                 } : a));
                 
-                const taskCompleteResult = results.find(r => r.toolCall?.name === 'Task Complete');
+                const taskCompleteResult = executionResults.find(r => r.toolCall?.name === 'Task Complete' && !r.executionError);
                 if (taskCompleteResult) {
                     logEvent(`[SUCCESS] ✅ Task Completed by Agent ${agent.id}: ${taskCompleteResult.executionResult?.message || 'Finished!'}`);
                     handleStopSwarm("Task completed successfully");
                     return;
                 }
+
+                if (isSequential && hasError) {
+                    handleStopSwarm("Error during sequential task execution.");
+                    return;
+                }
+
             } else {
                  setAgentSwarm(prev => prev.map(a => a.id === agent.id ? { ...a, status: 'failed', error: 'Agent did not choose any action.' } : a));
             }
 
             // Schedule next cycle
-            setTimeout(() => { if(isRunningRef.current) runSwarmCycle(processRequest) }, 1000);
+            setTimeout(() => { if(isRunningRef.current) runSwarmCycle(processRequest, executeActionRef, allTools) }, 1000);
 
         } catch (err) {
             const errorMessage = err instanceof Error ? err.message : "Unknown error.";
@@ -184,14 +240,23 @@ export const useSwarmManager = (props: UseSwarmManagerProps) => {
             logEvent(`[ERROR] 🛑 Agent task failed critically: ${errorMessage}`);
             handleStopSwarm("Critical agent error");
         }
-    }, [currentUserTask, logEvent, currentSystemPrompt, handleStopSwarm]);
+    }, [currentUserTask, logEvent, currentSystemPrompt, handleStopSwarm, isSequential, findRelevantTools, relevanceTopK, relevanceThreshold]);
 
-    const startSwarmTask = useCallback(async ({ task, systemPrompt }: { task: any, systemPrompt: string | null }) => {
-        swarmHistoryRef.current = [];
-        swarmIterationCounter.current = 0;
-        
-        const timestamp = new Date().toLocaleTimeString();
-        setEventLog(() => [`[${timestamp}] [INFO] 🚀 Starting task...`]);
+    const startSwarmTask = useCallback(async (options: StartSwarmTaskOptions) => {
+        const { task, systemPrompt, sequential = false, resume = false, historyEventToInject = null } = options;
+        if (!resume) {
+            swarmHistoryRef.current = [];
+            swarmIterationCounter.current = 0;
+            const timestamp = new Date().toLocaleTimeString();
+            setEventLog(() => [`[${timestamp}] [INFO] 🚀 Starting task...`]);
+            setActiveToolsForTask([]); // Clear tools at the start
+        } else {
+            logEvent(`[INFO] ▶️ Resuming task from history...`);
+            if (historyEventToInject) {
+                swarmHistoryRef.current.push(historyEventToInject);
+                logEvent(`[INFO] Injected history event: Tool '${historyEventToInject.toolCall?.name}' completed.`);
+            }
+        }
 
         // Normalize the task payload to ensure a consistent structure
         let finalTask = task;
@@ -203,7 +268,9 @@ export const useSwarmManager = (props: UseSwarmManagerProps) => {
         }
         
         setCurrentUserTask(finalTask);
-        setCurrentSystemPrompt(systemPrompt || SWARM_AGENT_SYSTEM_PROMPT);
+        const finalSystemPrompt = systemPrompt || SWARM_AGENT_SYSTEM_PROMPT;
+        setCurrentSystemPrompt(finalSystemPrompt);
+        setIsSequential(sequential);
         
         const initialAgents: AgentWorker[] = [{
             id: 'agent-1',
@@ -214,9 +281,9 @@ export const useSwarmManager = (props: UseSwarmManagerProps) => {
         }];
         
         setAgentSwarm(initialAgents);
-        setUserInput('');
+        if(!resume) setUserInput('');
         setIsSwarmRunning(true); // This will trigger the useEffect in App.tsx to start the cycle
-    }, [setUserInput, setEventLog]);
+    }, [setUserInput, setEventLog, logEvent]);
 
     return {
         state: {
@@ -224,13 +291,17 @@ export const useSwarmManager = (props: UseSwarmManagerProps) => {
             isSwarmRunning,
             currentUserTask,
             pauseState,
+            activeToolsForTask,
+            relevanceTopK,
+            relevanceThreshold,
         },
         handlers: {
             startSwarmTask,
             handleStopSwarm,
             clearPauseState,
-            // Pass the cycle function up to be called with dependencies
             runSwarmCycle,
+            setRelevanceTopK,
+            setRelevanceThreshold,
         },
         getSwarmState: () => ({
             isRunning: isSwarmRunning,

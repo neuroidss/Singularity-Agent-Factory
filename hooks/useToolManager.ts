@@ -1,7 +1,7 @@
+
 import { useState, useMemo, useCallback, useEffect, useRef } from 'react';
-import { CORE_TOOLS, BOOTSTRAP_TOOL_PAYLOADS } from '../constants';
+import { CORE_TOOLS, BOOTSTRAP_TOOL_PAYLOADS, SERVER_URL } from '../constants';
 import { loadStateFromStorage } from '../versioning';
-import { SERVER_URL } from '../App';
 import type { LLMTool, ToolCreatorPayload } from '../types';
 
 export const generateMachineReadableId = (name: string, existingTools: LLMTool[]): string => {
