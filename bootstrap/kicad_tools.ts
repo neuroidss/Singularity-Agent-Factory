@@ -18,8 +18,9 @@ const KICAD_SERVER_TOOL_DEFINITIONS: ToolCreatorPayload[] = [
         purpose: "To enforce specific geometric relationships between components during layout, ensuring mechanical compatibility.",
         parameters: [
             { name: 'projectName', type: 'string', description: 'The unique name for this hardware project.', required: true },
-            { name: 'type', type: 'string', description: "The type of constraint. Supported types: 'relative_position', 'fixed_orientation'.", required: true },
-            { name: 'components', type: 'array', description: "An array of one or more component reference designators to which this constraint applies. For 'relative_position', the order is [anchor, child].", required: true },
+            { name: 'type', type: 'string', description: "The type of constraint. Supported types: 'relative_position', 'fixed_orientation', 'fixed_group'.", required: true },
+            { name: 'components', type: 'array', description: "An array of component definitions. For 'fixed_group', this is a list of objects with ref, offsets, and angle. For others, it's a list of ref strings.", required: true },
+            { name: 'anchor', type: 'string', description: "For 'fixed_group', the reference designator of the anchor component.", required: false },
             { name: 'offsetX_mm', type: 'number', description: "For 'relative_position', the X offset in millimeters of the second component relative to the first.", required: false },
             { name: 'offsetY_mm', type: 'number', description: "For 'relative_position', the Y offset in millimeters of the second component relative to the first.", required: false },
             { name: 'angle_deg', type: 'number', description: "For 'fixed_orientation', the absolute rotation angle in degrees. 0 is default, 90 is component rotated counter-clockwise.", required: false },

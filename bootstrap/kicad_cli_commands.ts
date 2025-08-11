@@ -179,23 +179,33 @@ def define_placement_constraint(args):
             if 'constraints' not in state: state['constraints'] = []
             
             try:
-                components = ast.literal_eval(args.components)
-                if not isinstance(components, list): raise ValueError()
+                components_arg = ast.literal_eval(args.components)
             except (ValueError, SyntaxError):
-                log_error_and_exit("Invalid --components format. Expected a Python-style list of strings, e.g., '[\\"J1\\", \\"J2\\"]'. Received: {}".format(args.components))
+                log_error_and_exit("Invalid --components format. Expected a Python-style list. Received: {}".format(args.components))
 
-            new_constraint = {
-                "type": args.type,
-                "components": components,
-            }
-            if args.type == 'relative_position':
+            new_constraint = { "type": args.type }
+            
+            if args.type == 'fixed_group':
+                if not isinstance(components_arg, list) or not all(isinstance(i, dict) for i in components_arg):
+                     log_error_and_exit("For 'fixed_group', --components must be a list of dictionaries.")
+                if not args.anchor:
+                     log_error_and_exit("--anchor is required for 'fixed_group' constraint.")
+                new_constraint['anchor'] = args.anchor
+                new_constraint['components'] = components_arg
+            elif args.type == 'relative_position':
+                if not isinstance(components_arg, list) or len(components_arg) != 2:
+                    log_error_and_exit("For 'relative_position', --components must be a list of two component refs.")
                 if args.offsetX_mm is None or args.offsetY_mm is None:
                     log_error_and_exit("offsetX_mm and offsetY_mm are required for 'relative_position' constraint.")
+                new_constraint['components'] = components_arg
                 new_constraint['offsetX_mm'] = float(args.offsetX_mm)
                 new_constraint['offsetY_mm'] = float(args.offsetY_mm)
             elif args.type == 'fixed_orientation':
+                if not isinstance(components_arg, list) or len(components_arg) == 0:
+                     log_error_and_exit("For 'fixed_orientation', --components must be a non-empty list of component refs.")
                 if args.angle_deg is None:
                     log_error_and_exit("angle_deg is required for 'fixed_orientation' constraint.")
+                new_constraint['components'] = components_arg
                 new_constraint['angle_deg'] = float(args.angle_deg)
             else:
                 log_error_and_exit(f"Unsupported constraint type: {args.type}")
@@ -207,7 +217,8 @@ def define_placement_constraint(args):
         finally:
              fcntl.flock(lock_file, fcntl.LOCK_UN)
     
-    log_and_return(f"Placement constraint of type '{args.type}' defined for components {args.components}.")
+    log_and_return(f"Placement constraint of type '{args.type}' defined.")
+
 
 def define_net(args):
     """Adds a single net definition to the board's state file, with file locking."""

@@ -287,8 +287,6 @@ const RAPIER_LAYOUT_TOOL: ToolCreatorPayload = {
                 };
 
                 nodes.forEach((node) => {
-                    const scaledWidth = node.width * SCALE;
-                    const scaledHeight = node.height * SCALE;
                     const bodyDesc = sim.RAPIER.RigidBodyDesc.dynamic()
                         .setLinearDamping(physicsParams.linearDamping)
                         .setAngularDamping(physicsParams.angularDamping)
@@ -296,32 +294,38 @@ const RAPIER_LAYOUT_TOOL: ToolCreatorPayload = {
     
                     const body = sim.world.createRigidBody(bodyDesc);
                     
-                    // --- Compound Collider Shape for Component + Keepout ---
-
-                    // 1. Main keep-out collider for the component body. This is larger than the visual model.
                     const keepoutMarginScaled = physicsParams.keepoutMargin * SCALE;
-                    const mainColliderDesc = sim.RAPIER.ColliderDesc.cuboid(
-                        (scaledWidth / 2) + keepoutMarginScaled,
-                        sim.componentHeight / 2,
-                        (scaledHeight / 2) + keepoutMarginScaled
-                    )
-                    .setCollisionGroups(GROUP_COMPONENT);
-                    sim.world.createCollider(mainColliderDesc, body);
-
-                    // 2. Individual colliders for each pin to create a keep-out area around them.
+                    
+                    // --- Collider Shape for Component + Keepout ---
+                    // Only create colliders for each pin. This allows other components
+                    // to move into the empty space of complex footprints (like between connector rows).
                     const pinBaseSize = 0.4 * SCALE; // Aprox physical pin size
                     const pinKeepoutColliderSize = pinBaseSize + (keepoutMarginScaled * 2); // Diameter of pin keepout
                     
-                    node.pins.forEach(pin => {
-                        const pinColliderDesc = sim.RAPIER.ColliderDesc.cuboid(
-                            pinKeepoutColliderSize / 2, 
-                            sim.componentHeight / 2, 
-                            pinKeepoutColliderSize / 2
+                    if (node.pins.length > 0) {
+                        node.pins.forEach(pin => {
+                            const pinColliderDesc = sim.RAPIER.ColliderDesc.cuboid(
+                                pinKeepoutColliderSize / 2, 
+                                sim.componentHeight / 2, 
+                                pinKeepoutColliderSize / 2
+                            )
+                            .setTranslation(pin.x * SCALE, 0, pin.y * SCALE) // Position relative to the body center
+                            .setCollisionGroups(GROUP_COMPONENT);
+                            sim.world.createCollider(pinColliderDesc, body);
+                        });
+                    } else {
+                        // Fallback for components without pin data: create a single body collider.
+                        const scaledWidth = node.width * SCALE;
+                        const scaledHeight = node.height * SCALE;
+                        const mainColliderDesc = sim.RAPIER.ColliderDesc.cuboid(
+                            (scaledWidth / 2) + keepoutMarginScaled,
+                            sim.componentHeight / 2,
+                            (scaledHeight / 2) + keepoutMarginScaled
                         )
-                        .setTranslation(pin.x * SCALE, 0, pin.y * SCALE) // Position relative to the body center
                         .setCollisionGroups(GROUP_COMPONENT);
-                        sim.world.createCollider(pinColliderDesc, body);
-                    });
+                        sim.world.createCollider(mainColliderDesc, body);
+                    }
+
 
                     sim.bodies.set(node.id, body);
     
@@ -372,6 +376,53 @@ const RAPIER_LAYOUT_TOOL: ToolCreatorPayload = {
                 
                 sim.initializePositions();
     
+                // --- Create Physics Joints for Constraints ---
+                if (graph.constraints) {
+                    graph.constraints.forEach(constraint => {
+                        if (constraint.type === 'fixed_group' && constraint.anchor && constraint.components) {
+                            const anchorBody = sim.bodies.get(constraint.anchor);
+                            if (!anchorBody) {
+                                console.warn(\`Anchor body '\${constraint.anchor}' for fixed_group constraint not found.\`);
+                                return;
+                            }
+
+                            const anchorCompDef = constraint.components.find(c => c.ref === constraint.anchor);
+                            if (!anchorCompDef) return;
+
+                            constraint.components.forEach(compDef => {
+                                if (compDef.ref === constraint.anchor) return;
+
+                                const childBody = sim.bodies.get(compDef.ref);
+                                if (!childBody) {
+                                    console.warn(\`Child body '\${compDef.ref}' for fixed_group constraint not found.\`);
+                                    return;
+                                }
+
+                                // Desired relative transform from anchor to child
+                                const relX = (compDef.offsetX_mm - anchorCompDef.offsetX_mm) * SCALE;
+                                const relZ = (compDef.offsetY_mm - anchorCompDef.offsetY_mm) * SCALE; // KiCad Y is Rapier Z
+                                const relY = 0;
+                                const relAngleRad = sim.THREE.MathUtils.degToRad(compDef.angle_deg - anchorCompDef.angle_deg);
+                                
+                                const qRel = new sim.THREE.Quaternion().setFromAxisAngle(new sim.THREE.Vector3(0, 1, 0), relAngleRad);
+
+                                const qRelInv = qRel.clone().invert();
+                                const translationOffset = new sim.THREE.Vector3(relX, relY, relZ);
+                                const finalTranslationOffset = translationOffset.clone().applyQuaternion(qRelInv).multiplyScalar(-1);
+
+                                const jointParams = sim.RAPIER.JointData.fixed(
+                                    { x: 0, y: 0, z: 0 }, { w: 1, x: 0, y: 0, z: 0 },
+                                    { x: finalTranslationOffset.x, y: finalTranslationOffset.y, z: finalTranslationOffset.z },
+                                    { w: qRelInv.w, x: qRelInv.x, y: qRelInv.y, z: qRelInv.z }
+                                );
+                                
+                                sim.world.createImpulseJoint(jointParams, anchorBody, childBody, true);
+                            });
+                        }
+                    });
+                }
+
+
                 sim.netLines = [];
                 edges.forEach(() => {
                     const material = new sim.THREE.LineBasicMaterial({

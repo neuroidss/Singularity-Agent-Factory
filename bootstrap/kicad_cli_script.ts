@@ -1,3 +1,4 @@
+
 //this is typescript file with text variable with python code
 export const KICAD_CLI_MAIN_SCRIPT = `
 import sys
@@ -60,8 +61,9 @@ def main():
 
     p_constraint = subparsers.add_parser('define_placement_constraint')
     p_constraint.add_argument('--projectName', required=True)
-    p_constraint.add_argument('--type', required=True, help="Constraint type: 'relative_position' or 'fixed_orientation'")
-    p_constraint.add_argument('--components', required=True, help="Python list of component refs, e.g., '[\\"J1\\", \\"J2\\"]'")
+    p_constraint.add_argument('--type', required=True, help="Constraint type: 'relative_position', 'fixed_orientation', or 'fixed_group'")
+    p_constraint.add_argument('--components', required=True, help="Python list of component definitions.")
+    p_constraint.add_argument('--anchor', help="Anchor component reference for 'fixed_group'.")
     p_constraint.add_argument('--offsetX_mm', type=float)
     p_constraint.add_argument('--offsetY_mm', type=float)
     p_constraint.add_argument('--angle_deg', type=float)
