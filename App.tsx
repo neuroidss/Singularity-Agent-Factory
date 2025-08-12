@@ -1,6 +1,7 @@
 
 
 
+
 import React, { useState, useCallback, useMemo, useEffect, useRef } from 'react';
 import { CORE_TOOLS, AI_MODELS, SERVER_URL } from './constants';
 import { UIToolRunner } from './components/UIToolRunner';
@@ -14,6 +15,7 @@ import { useKicadManager } from './hooks/useKicadManager';
 import { useSwarmManager } from './hooks/useSwarmManager';
 import { useAppRuntime } from './hooks/useAppRuntime';
 import { useToolRelevance } from './hooks/useToolRelevance';
+import { useKnowledgeGraphManager } from './hooks/useKnowledgeGraphManager';
 
 const App: React.FC = () => {
     // --- STATE MANAGEMENT VIA HOOKS ---
@@ -66,7 +68,7 @@ const App: React.FC = () => {
         startSwarmTask: swarmHandlers.startSwarmTask,
         allTools,
     });
-
+    
     // The core execution engine. It depends on state from other managers.
     const {
         executeAction,
@@ -85,6 +87,12 @@ const App: React.FC = () => {
         setCurrentKicadArtifact: kicadSetters.setCurrentKicadArtifact,
         updateWorkflowChecklist: kicadHandlers.updateWorkflowChecklist,
     });
+
+    // Manages the Strategic Memory Knowledge Graph view
+    const {
+        state: kgState,
+        handlers: kgHandlers,
+    } = useKnowledgeGraphManager({ executeActionRef, logEvent, isServerConnected });
     
     // --- Centralized Swarm Pause Handler ---
     useEffect(() => {
@@ -106,49 +114,67 @@ const App: React.FC = () => {
     }, [swarmState.pauseState, appSetters, kicadSetters, kicadHandlers, swarmHandlers]);
 
 
-    // --- Automatic KiCad Tool Installation ---
+    // --- Automatic Tool Suite Installation ---
     const kicadInstallerRun = useRef(false);
-    useEffect(() => {
-        const installKicadToolsIfNeeded = async () => {
-            // Only proceed if server is connected and we haven't successfully run the installer before.
-            if (isServerConnected && !kicadInstallerRun.current) {
-                // Give a moment for state updates from reset to propagate.
-                await new Promise(resolve => setTimeout(resolve, 500));
+    const strategyInstallerRun = useRef(false);
 
+    useEffect(() => {
+        const installSuitesIfNeeded = async () => {
+            if (!isServerConnected) {
+                kicadInstallerRun.current = false;
+                strategyInstallerRun.current = false;
+                return;
+            }
+
+            // Give a moment for state updates from reset to propagate.
+            await new Promise(resolve => setTimeout(resolve, 500));
+
+            // Install KiCad Suite
+            if (!kicadInstallerRun.current) {
                 const installerExists = allTools.some(t => t.name === 'Install KiCad Engineering Suite');
                 const coreKicadToolExists = allTools.some(t => t.name === 'Define KiCad Component');
-
                 if (installerExists && !coreKicadToolExists) {
                     logEvent('[SYSTEM] KiCad server tools not found. Attempting automatic installation...');
-                    
                     try {
-                        // Set flag BEFORE the async call to prevent race conditions.
                         kicadInstallerRun.current = true; 
                         const result = await executeActionRef.current({ name: 'Install KiCad Engineering Suite', arguments: {} }, 'system-installer');
-                        
-                        if (result.executionError) {
-                            throw new Error(result.executionError);
-                        }
-                        
+                        if (result.executionError) throw new Error(result.executionError);
                         logEvent('[SUCCESS] KiCad Engineering Suite auto-installed successfully.');
-                        // The tool itself calls fetchServerTools, so the UI should update.
                     } catch (e) {
                         const errorMessage = e instanceof Error ? e.message : String(e);
                         logEvent(`[ERROR] Automatic KiCad tool installation failed: ${errorMessage}`);
-                        kicadInstallerRun.current = false; // Reset on failure to allow retry.
+                        kicadInstallerRun.current = false;
                     }
                 } else if (coreKicadToolExists) {
-                    // If tools are already present, mark as "run" to prevent re-checks.
                     kicadInstallerRun.current = true;
                     logEvent('[SYSTEM] KiCad server tools found and ready.');
                 }
-            } else if (!isServerConnected) {
-                // If server disconnects, reset the flag to allow re-installation on the next connection.
-                kicadInstallerRun.current = false;
+            }
+            
+            // Install Strategic Cognition Suite
+            if (!strategyInstallerRun.current) {
+                const installerExists = allTools.some(t => t.name === 'Install Strategic Cognition Suite');
+                const coreStrategyToolExists = allTools.some(t => t.name === 'Read Strategic Memory');
+                if (installerExists && !coreStrategyToolExists) {
+                    logEvent('[SYSTEM] Strategic Cognition Suite not found. Attempting auto-installation...');
+                    try {
+                        strategyInstallerRun.current = true; 
+                        const result = await executeActionRef.current({ name: 'Install Strategic Cognition Suite', arguments: {} }, 'system-installer');
+                        if (result.executionError) throw new Error(result.executionError);
+                        logEvent('[SUCCESS] Strategic Cognition Suite auto-installed successfully.');
+                    } catch (e) {
+                        const errorMessage = e instanceof Error ? e.message : String(e);
+                        logEvent(`[ERROR] Automatic Strategic Cognition Suite installation failed: ${errorMessage}`);
+                        strategyInstallerRun.current = false;
+                    }
+                } else if (coreStrategyToolExists) {
+                    strategyInstallerRun.current = true;
+                    logEvent('[SYSTEM] Strategic Cognition Suite found and ready.');
+                }
             }
         };
 
-        installKicadToolsIfNeeded();
+        installSuitesIfNeeded();
     }, [isServerConnected, allTools, executeActionRef, logEvent]);
     
     // --- DERIVED STATE & PROPS ---
@@ -196,9 +222,9 @@ const App: React.FC = () => {
                     const resetResult = await executeActionRef.current({ name: 'System_Reset_Server_Tools', arguments: {} }, 'system-reset');
                     if (resetResult.executionError) throw new Error(resetResult.executionError);
                     
-                    // Reset the installer flag BEFORE fetching the now-empty tool list.
-                    // This allows the installation useEffect to trigger correctly.
+                    // Reset the installer flags BEFORE fetching the now-empty tool list.
                     kicadInstallerRun.current = false;
+                    strategyInstallerRun.current = false;
                     
                     await fetchServerTools();
                     logEvent(`[SUCCESS] Server-side tools cleared. Response: ${resetResult.executionResult.message}`);
@@ -327,12 +353,13 @@ const App: React.FC = () => {
         switch(appState.mainView) {
             case 'ROBOTICS': return <UIToolRunner tool={getTool('Robot Simulation Environment')} props={{ robotStates: robotState.robotStates, environmentState: robotState.environmentState }} />;
             case 'KNOWLEDGE_GRAPH':
-                 return (
-                    <div className="bg-gray-800/80 border-2 border-yellow-500/60 rounded-xl p-4 shadow-lg flex flex-col items-center justify-center h-full">
-                        <h3 className="text-lg font-bold text-yellow-300">Feature Deprecated</h3>
-                        <p className="text-gray-300 text-center mt-2">The Knowledge Graph view has been removed to focus on core agent functionality.</p>
-                    </div>
-                );
+                const kgViewerProps = {
+                    graph: kgState.graph,
+                    isLoading: kgState.isLoading,
+                    onRefresh: kgHandlers.fetchGraph,
+                    serverUrl: SERVER_URL,
+                };
+                return <UIToolRunner tool={getTool('Strategic Memory Graph Viewer')} props={kgViewerProps} />;
             case 'KICAD':
             default:
                 return <UIToolRunner tool={getTool('KiCad Design Automation Panel')} props={kicadPanelProps} />;

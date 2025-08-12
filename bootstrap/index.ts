@@ -1,6 +1,7 @@
 
 
 
+
 import type { ToolCreatorPayload } from '../types';
 
 import { AUTOMATION_TOOLS } from './automation_tools';
@@ -11,6 +12,7 @@ import { UI_DISPLAY_TOOLS } from './ui_display_tools';
 import { UI_LAYOUT_TOOLS } from './ui_layout_tools';
 import { KICAD_TOOLS } from './kicad_tools';
 import { PHYSICS_LAYOUT_TOOLS } from './rapier_layout_tool';
+import { STRATEGY_TOOLS } from './strategy_tools';
 import { TEST_LAYOUT_DATA } from './test_layout_data';
 
 
@@ -23,6 +25,7 @@ export const BOOTSTRAP_TOOL_PAYLOADS: ToolCreatorPayload[] = [
     ...UI_LAYOUT_TOOLS,
     ...KICAD_TOOLS,
     ...PHYSICS_LAYOUT_TOOLS,
+    ...STRATEGY_TOOLS,
 ];
 
 // Export the test data separately so it can be imported directly

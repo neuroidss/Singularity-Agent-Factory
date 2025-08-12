@@ -14,15 +14,21 @@ The system is composed of two main parts:
 
 The frontend will automatically detect if the backend server is running. If not, it will default to a safe, **client-only mode**.
 
-## Core Concept: The Genesis Loop
+## Core Concept: Purpose-Driven Swarm Architecture
 
-This project is founded on the idea that true autonomy arises not just from the ability to act, but from the ability to **create the means of action**. This is achieved through a "Genesis Loop" where the AI can create and then use its own dependencies.
+This project is founded on a set of principles for self-organization. This provides a robust framework for an AI that can manage its own evolution without direct human micromanagement.
 
-1.  **`Server File Writer` (Server Tool):** An agent's foundational ability to write files to the server's disk (into the `server/scripts` directory). This allows the agent to create its own Python scripts, configuration files, or any other necessary asset.
-2.  **`Tool Creator` (Server/Client Tool):** Once a script exists, the agent can use this tool to create a new capability that *executes* that script. For example, it can create a tool with the implementation `python server/scripts/my_new_script.py`. This two-step process allows for limitless expansion of server-side capabilities.
-3.  **`Workflow Creator` (Client Tool)**: An agent's ability to automate a sequence of actions into a new, single tool.
-4.  **`Create Skill From Observation` (Client Tool)**: The user can manually control the robot to perform a complex maneuver. The agent can then analyze the sequence of manual inputs and use the `Workflow Creator` to generate a new, reusable skill, effectively learning from the pilot.
-5.  **Swarm Intelligence**: When one agent creates a new tool (on either client or server), it instantly becomes available to all other agents in the swarm. This allows the collective to dynamically create and distribute contextual skills.
+1.  **Delta-Driven Execution**: The agent doesn't just execute a plan. It identifies and resolves "Deltas"—the gap between the current reality and a potential future. A user's request is the initial Delta. A missing tool is an "Evolutionary Delta." An inefficient process is an "Operational Delta."
+
+2.  **Mandates, not Agents**: An agent process is not a monolithic entity. It is a process executing a "Mandate." The Mandate is a definition of work with a clear **Purpose** and **Accountabilities**. This separation means if one agent process fails, the Mandate's definition persists, and another process could theoretically execute it.
+
+3.  **System Evolution is the Core Directive**: The agent's primary way to solve systemic problems (Evolutionary Deltas) is to evolve itself and the system.
+    *   **`Tool Creator`**: If the agent lacks a capability, its highest priority is to resolve this delta by creating a new tool. This is a formal act of system evolution that permanently enhances the entire system.
+    *   **`Workflow Creator`**: If the agent identifies a repetitive, inefficient process, it resolves this delta by creating a workflow, thus automating the pattern and freeing itself for more complex problems.
+
+4.  **Distributed Authority & Capability Sets**: Sets of tools are treated as "Capability Sets" (e.g., KiCad tools, Robotics tools). The agent is guided to respect these sets, preventing chaotic cross-interference and promoting modular, specialized capabilities.
+
+When one agent creates a new tool (on either client or server), it instantly becomes available to all other agents in the swarm. This allows the collective to dynamically create and distribute contextual skills, making the entire system more capable.
 
 ---
 

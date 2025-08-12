@@ -1,7 +1,9 @@
 
+
 import React, { useCallback, useRef, useEffect, useMemo } from 'react';
 import { SERVER_URL } from '../constants';
 import * as aiService from '../services/aiService';
+import { STRATEGIC_MEMORY_SCRIPT } from '../bootstrap/strategy_manager_script';
 import type {
     LLMTool, EnrichedAIResponse, NewToolPayload, AIToolCall,
     RobotState, EnvironmentObject, AIModel, APIConfig, ExecuteActionFunction
@@ -100,6 +102,7 @@ export const useAppRuntime = (props: UseAppRuntimeProps) => {
             },
         },
         fetchServerTools: fetchServerTools,
+        getStrategyManagerScript: () => STRATEGIC_MEMORY_SCRIPT,
         robot: {
             getState: () => getRobotStateForRuntime(agentId),
             moveForward: () => new Promise<any>((resolve, reject) => {

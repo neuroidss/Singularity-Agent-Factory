@@ -28,25 +28,26 @@ const RAPIER_LAYOUT_TOOL: ToolCreatorPayload = {
             let isMounted = true;
             const sim = simulationRef.current;
             const SCALE = 0.5; // Scale down components for better fit
+            const groundNetNames = new Set(['GND', 'AGND', 'DGND', 'GND_POGOPIN']);
             
             const pcbHeight = 1.6;
             sim.componentHeight = 1.0;
             const COMPONENT_Y_TOP = pcbHeight / 2 + sim.componentHeight / 2; // Place components right on top of the PCB surface
             const COMPONENT_Y_BOTTOM = -(pcbHeight / 2 + sim.componentHeight / 2); // Place components right on the bottom of the PCB surface
 
-            // Collision Groups to prevent components from sticking to the board
-            const GROUP_PCB = 0x00010000; // Member of 1, interacts with none
-            const GROUP_COMPONENT = 0x00020006; // Member of 2, interacts with 2 (self) and 4 (walls)
-            const GROUP_WALLS = 0x00040002; // Member of 4, interacts with 2 (components)
+            // --- NEW: Simplified Collision Groups for Top/Bottom interaction ---
+            const GROUP_WALLS = 0x00010002;      // Member 1, interacts with 2 (Components)
+            const GROUP_COMPONENTS = 0x00020003; // Member 2, interacts with 1 (Walls) and 2 (itself)
             
+            // --- NEW: Tuned Physics Parameters ---
             const physicsParams = {
-                pinAttraction: 100.0,
-                separationForce: 500.0,
+                pinAttraction: 0.0,
+                separationForce: 0.0,
                 separationFactor: 3,
-                centerAttraction: 100.0,
-                boardGravity: 50.0,
-                linearDamping: 500.0,
-                angularDamping: 500.0,
+                centerAttraction: 50.0,
+                boardGravity: 250.0, // Force pulling components onto their layer
+                linearDamping: 100.0,
+                angularDamping: 100.0,
                 gridAttraction: 2000.0,
                 angleAttraction: 2000.0,
                 keepoutMargin: 1.0, // Default 1mm keep-out margin
@@ -93,7 +94,7 @@ const RAPIER_LAYOUT_TOOL: ToolCreatorPayload = {
                 }
 
                 if (!isMounted || !mountRef.current) return;
-
+                
                 const { board_outline, nodes, edges } = graph;
                 
                 // Add radius to node objects
@@ -171,17 +172,18 @@ const RAPIER_LAYOUT_TOOL: ToolCreatorPayload = {
                 // Physics setup
                 sim.world = new sim.RAPIER.World({ x: 0.0, y: 0.0, z: 0.0 }); // Custom gravity
     
-                // PCB Body
-                let groundDesc = sim.RAPIER.RigidBodyDesc.fixed().setTranslation(sim.boardCenter.x, 0, sim.boardCenter.z);
-                let groundBody = sim.world.createRigidBody(groundDesc);
-                let groundColliderDesc = sim.RAPIER.ColliderDesc.cuboid(sim.scaledBoard.width / 2, pcbHeight / 2, sim.scaledBoard.height / 2)
-                    .setCollisionGroups(GROUP_PCB);
-                sim.world.createCollider(groundColliderDesc, groundBody);
-    
-                const pcbGeo = new sim.THREE.BoxGeometry(sim.scaledBoard.width, pcbHeight, sim.scaledBoard.height);
+                // PCB Body (Visual Only, NO PHYSICS COLLIDER)
+                let pcbGeo;
+                if (board_outline.shape === 'circle') {
+                    const radius = sim.scaledBoard.width / 2;
+                    pcbGeo = new sim.THREE.CylinderGeometry(radius, radius, pcbHeight, 64);
+                } else { // Default to rectangle
+                    pcbGeo = new sim.THREE.BoxGeometry(sim.scaledBoard.width, pcbHeight, sim.scaledBoard.height);
+                }
+            
                 const pcbMat = new sim.THREE.MeshStandardMaterial({ color: 0x004400, roughness: 0.5 });
                 const pcbMesh = new sim.THREE.Mesh(pcbGeo, pcbMat);
-                pcbMesh.position.copy(groundBody.translation());
+                pcbMesh.position.copy(sim.boardCenter);
                 sim.scene.add(pcbMesh);
 
                 // Invisible containment box
@@ -189,22 +191,55 @@ const RAPIER_LAYOUT_TOOL: ToolCreatorPayload = {
                 const boundsHeight = 50;
                 const boundsWidth = sim.scaledBoard.width + 2 * wallThickness;
                 const boundsDepth = sim.scaledBoard.height + 2 * wallThickness;
-                
-                // Side Walls
-                const wallPositions = [
-                    { x: sim.boardCenter.x, z: sim.boardCenter.z - boundsDepth / 2, hx: boundsWidth / 2, hz: wallThickness / 2 }, // Front
-                    { x: sim.boardCenter.x, z: sim.boardCenter.z + boundsDepth / 2, hx: boundsWidth / 2, hz: wallThickness / 2 }, // Back
-                    { x: sim.boardCenter.x - boundsWidth / 2, z: sim.boardCenter.z, hx: wallThickness / 2, hz: boundsDepth / 2 }, // Left
-                    { x: sim.boardCenter.x + boundsWidth / 2, z: sim.boardCenter.z, hx: wallThickness / 2, hz: boundsDepth / 2 }  // Right
-                ];
-                wallPositions.forEach(p => {
-                    let wallBody = sim.world.createRigidBody(sim.RAPIER.RigidBodyDesc.fixed().setTranslation(p.x, 0, p.z));
-                    sim.world.createCollider(sim.RAPIER.ColliderDesc.cuboid(p.hx, boundsHeight / 2, p.hz).setCollisionGroups(GROUP_WALLS), wallBody);
-                });
-                
+
+                if (board_outline.shape === 'circle') {
+                    const radius = sim.scaledBoard.width / 2;
+                    const numSegments = 64;
+                    const angleStep = (2 * Math.PI) / numSegments;
+                    
+                    const segmentLength = 2 * radius * Math.tan(angleStep / 2) * 1.1; // Chord length + overlap
+
+                    for (let i = 0; i < numSegments; i++) {
+                        const angle = i * angleStep;
+                        // Position the wall slightly outside the visual boundary
+                        const wallRadius = radius + wallThickness / 2;
+                        const x = sim.boardCenter.x + wallRadius * Math.cos(angle);
+                        const z = sim.boardCenter.z + wallRadius * Math.sin(angle);
+
+                        // Rotation to make the cuboid tangent to the circle
+                        const rotationAngle = -angle;
+                        const quat = new sim.THREE.Quaternion().setFromAxisAngle(new sim.THREE.Vector3(0, 1, 0), rotationAngle);
+
+                        const bodyDesc = sim.RAPIER.RigidBodyDesc.fixed()
+                            .setTranslation(x, 0, z)
+                            .setRotation({ w: quat.w, x: quat.x, y: quat.y, z: quat.z });
+                        
+                        const wallBody = sim.world.createRigidBody(bodyDesc);
+                        
+                        // half-extents are (thickness/2, height/2, length/2)
+                        const colliderDesc = sim.RAPIER.ColliderDesc.cuboid(wallThickness / 2, boundsHeight / 2, segmentLength / 2)
+                            .setCollisionGroups(GROUP_WALLS);
+                            
+                        sim.world.createCollider(colliderDesc, wallBody);
+                    }
+                } else { // Rectangular case (existing logic)
+                    // Side Walls
+                    const wallPositions = [
+                        { x: sim.boardCenter.x, z: sim.boardCenter.z - boundsDepth / 2, hx: boundsWidth / 2, hz: wallThickness / 2 }, // Front
+                        { x: sim.boardCenter.x, z: sim.boardCenter.z + boundsDepth / 2, hx: boundsWidth / 2, hz: wallThickness / 2 }, // Back
+                        { x: sim.boardCenter.x - boundsWidth / 2, z: sim.boardCenter.z, hx: wallThickness / 2, hz: boundsDepth / 2 }, // Left
+                        { x: sim.boardCenter.x + boundsWidth / 2, z: sim.boardCenter.z, hx: wallThickness / 2, hz: boundsDepth / 2 }  // Right
+                    ];
+                    wallPositions.forEach(p => {
+                        let wallBody = sim.world.createRigidBody(sim.RAPIER.RigidBodyDesc.fixed().setTranslation(p.x, 0, p.z));
+                        sim.world.createCollider(sim.RAPIER.ColliderDesc.cuboid(p.hx, boundsHeight / 2, p.hz).setCollisionGroups(GROUP_WALLS), wallBody);
+                    });
+                }
+
                 // Top and Bottom planes
                 const topPlaneY = COMPONENT_Y_TOP + 10;
                 const bottomPlaneY = COMPONENT_Y_BOTTOM - 10;
+                
                 let topPlaneBody = sim.world.createRigidBody(sim.RAPIER.RigidBodyDesc.fixed().setTranslation(sim.boardCenter.x, topPlaneY, sim.boardCenter.z));
                 sim.world.createCollider(sim.RAPIER.ColliderDesc.cuboid(boundsWidth / 2, wallThickness / 2, boundsDepth / 2).setCollisionGroups(GROUP_WALLS), topPlaneBody);
                 
@@ -242,7 +277,8 @@ const RAPIER_LAYOUT_TOOL: ToolCreatorPayload = {
 
                             const x = startX + col * cellWidth;
                             const z = startZ + row * cellHeight;
-                            const y = COMPONENT_Y_TOP;
+                            const side = node.side || 'top';
+                            const y = side === 'top' ? COMPONENT_Y_TOP : COMPONENT_Y_BOTTOM;
 
                             const positionVec = new sim.RAPIER.Vector3(x, y, z);
                             
@@ -257,12 +293,64 @@ const RAPIER_LAYOUT_TOOL: ToolCreatorPayload = {
                             body.resetForces(true);
                             body.resetTorques(true);
 
-                            mesh.userData.side = 'top';
+                            mesh.userData.side = side;
                         }
                     });
+
+                    // --- NEW: Immediately enforce constraints before simulation starts ---
+                    if (graph.constraints) {
+                        graph.constraints.forEach(constraint => {
+                            if (constraint.type === 'fixed_group' && constraint.anchor && constraint.components) {
+                                const anchorBody = sim.bodies.get(constraint.anchor);
+                                if (!anchorBody) return;
+                
+                                const anchorCompDef = constraint.components.find(c => c.ref === constraint.anchor);
+                                if (!anchorCompDef) return;
+                                
+                                const anchorPos = anchorBody.translation();
+                                const anchorRot = anchorBody.rotation();
+                                const anchorQuat = new sim.THREE.Quaternion(anchorRot.x, anchorRot.y, anchorRot.z, anchorRot.w);
+                
+                                constraint.components.forEach(compDef => {
+                                    if (compDef.ref === constraint.anchor) return;
+                
+                                    const childBody = sim.bodies.get(compDef.ref);
+                                    if (!childBody) return;
+                
+                                    const relX = (compDef.offsetX_mm - anchorCompDef.offsetX_mm) * SCALE;
+                                    const relZ = (compDef.offsetY_mm - anchorCompDef.offsetY_mm) * SCALE;
+                                    const relAngleRad = sim.THREE.MathUtils.degToRad(compDef.angle_deg - anchorCompDef.angle_deg);
+                                    
+                                    const offsetVec = new sim.THREE.Vector3(relX, 0, relZ);
+                                    offsetVec.applyQuaternion(anchorQuat);
+                
+                                    const finalPos = {
+                                        x: anchorPos.x + offsetVec.x,
+                                        y: anchorPos.y, // Assume same Y plane
+                                        z: anchorPos.z + offsetVec.z
+                                    };
+                
+                                    const finalRotQuat = new sim.THREE.Quaternion().setFromAxisAngle(new sim.THREE.Vector3(0, 1, 0), relAngleRad).multiply(anchorQuat);
+                                    
+                                    childBody.setTranslation(finalPos, true);
+                                    childBody.setRotation({w: finalRotQuat.w, x: finalRotQuat.x, y: finalRotQuat.y, z: finalRotQuat.z}, true);
+                                });
+                            }
+                        });
+                    }
                 };
                 
                 const createFallbackBox = (node) => {
+                    // Check if it's a pogo pin and render a cylinder
+                    if (node.footprint && node.footprint.includes('pogo_pin')) {
+                        const scaledRadius = (node.width * SCALE) / 2;
+                        // Use a cylinder for a more realistic circular shape
+                        const geo = new sim.THREE.CylinderGeometry(scaledRadius, scaledRadius, sim.componentHeight / 2, 24);
+                        const mat = new sim.THREE.MeshStandardMaterial({ color: 0xffd700, metalness: 0.8, roughness: 0.2 });
+                        return new sim.THREE.Mesh(geo, mat);
+                    }
+
+                    // Original logic for other components
                     const scaledWidth = node.width * SCALE;
                     const scaledHeight = node.height * SCALE;
                     const geo = new sim.THREE.BoxGeometry(scaledWidth, sim.componentHeight, scaledHeight);
@@ -293,49 +381,53 @@ const RAPIER_LAYOUT_TOOL: ToolCreatorPayload = {
                         .enabledRotations(false, true, false); // Lock X and Z rotation
     
                     const body = sim.world.createRigidBody(bodyDesc);
+                    sim.bodies.set(node.id, body);
                     
                     const keepoutMarginScaled = physicsParams.keepoutMargin * SCALE;
-                    
-                    // --- Collider Shape for Component + Keepout ---
-                    // Only create colliders for each pin. This allows other components
-                    // to move into the empty space of complex footprints (like between connector rows).
-                    const pinBaseSize = 0.4 * SCALE; // Aprox physical pin size
-                    const pinKeepoutColliderSize = pinBaseSize + (keepoutMarginScaled * 2); // Diameter of pin keepout
-                    
-                    if (node.pins.length > 0) {
-                        node.pins.forEach(pin => {
-                            const pinColliderDesc = sim.RAPIER.ColliderDesc.cuboid(
-                                pinKeepoutColliderSize / 2, 
-                                sim.componentHeight / 2, 
-                                pinKeepoutColliderSize / 2
-                            )
-                            .setTranslation(pin.x * SCALE, 0, pin.y * SCALE) // Position relative to the body center
-                            .setCollisionGroups(GROUP_COMPONENT);
-                            sim.world.createCollider(pinColliderDesc, body);
-                        });
-                    } else {
-                        // Fallback for components without pin data: create a single body collider.
-                        const scaledWidth = node.width * SCALE;
-                        const scaledHeight = node.height * SCALE;
-                        const mainColliderDesc = sim.RAPIER.ColliderDesc.cuboid(
-                            (scaledWidth / 2) + keepoutMarginScaled,
+
+                    if (node.footprint && node.footprint.includes('pogo_pin')) {
+                        const radius = (node.width * SCALE / 2) + keepoutMarginScaled;
+                        const cylinderColliderDesc = sim.RAPIER.ColliderDesc.cylinder(
                             sim.componentHeight / 2,
-                            (scaledHeight / 2) + keepoutMarginScaled
-                        )
-                        .setCollisionGroups(GROUP_COMPONENT);
+                            radius
+                        ).setCollisionGroups(GROUP_COMPONENTS);
+                        sim.world.createCollider(cylinderColliderDesc, body);
+                    } else {
+                        let halfExtentsX, halfExtentsZ;
+
+                        if (node.pins && node.pins.length > 0) {
+                            let minX = Infinity, maxX = -Infinity, minZ = Infinity, maxZ = -Infinity;
+                            node.pins.forEach(pin => {
+                                minX = Math.min(minX, pin.x * SCALE);
+                                maxX = Math.max(maxX, pin.x * SCALE);
+                                minZ = Math.min(minZ, pin.y * SCALE); // KiCad Y is physics Z
+                                maxZ = Math.max(maxZ, pin.y * SCALE);
+                            });
+                            halfExtentsX = (maxX - minX) / 2 + keepoutMarginScaled;
+                            halfExtentsZ = (maxZ - minZ) / 2 + keepoutMarginScaled;
+                        } else {
+                            // Fallback for components without pin data
+                            halfExtentsX = (node.width * SCALE / 2) + keepoutMarginScaled;
+                            halfExtentsZ = (node.height * SCALE / 2) + keepoutMarginScaled;
+                        }
+
+                        const mainColliderDesc = sim.RAPIER.ColliderDesc.cuboid(
+                            halfExtentsX,
+                            sim.componentHeight / 2,
+                            halfExtentsZ
+                        ).setCollisionGroups(GROUP_COMPONENTS);
                         sim.world.createCollider(mainColliderDesc, body);
                     }
 
 
-                    sim.bodies.set(node.id, body);
-    
+                    const side = node.side || 'top';
                     const componentGroup = new sim.THREE.Group();
-                    componentGroup.userData = { rapierBody: body, id: node.id, side: 'top' };
+                    componentGroup.userData = { rapierBody: body, id: node.id, side };
                     sim.scene.add(componentGroup);
                     sim.meshes.set(node.id, componentGroup);
                     
                     const visualGroup = new sim.THREE.Group();
-                    visualGroup.rotation.x = Math.PI; // Start face up
+                    visualGroup.rotation.x = side === 'top' ? Math.PI : 0; // Flip if on top
                     componentGroup.add(visualGroup);
 
                     if (node.glbPath) {
@@ -364,14 +456,38 @@ const RAPIER_LAYOUT_TOOL: ToolCreatorPayload = {
                     } else {
                         visualGroup.add(createFallbackBox(node));
                     }
-    
-                    node.pins.forEach(pin => {
-                        const pinMesh = new sim.THREE.Mesh(pinGeometry, pinMaterial);
-                        pinMesh.position.set(pin.x * SCALE, (sim.componentHeight / 2) + 0.1, pin.y * SCALE);
-                        pinMesh.userData = { nodeId: node.id, pinName: pin.name };
-                        visualGroup.add(pinMesh);
-                        sim.pinMeshes.set(\`\${node.id}-\${pin.name}\`, pinMesh);
+                    
+                    // --- NEW: Ground Plane Vias ---
+                    const viaMaterial = new sim.THREE.MeshStandardMaterial({ color: 0xb87333, metalness: 0.9, roughness: 0.2 });
+                    const viaGeometry = new sim.THREE.CylinderGeometry(0.2 * SCALE, 0.2 * SCALE, pcbHeight, 16);
+
+                    const componentNets = new Map(); // Map<string, string> pinName -> netName
+                    edges.forEach(edge => {
+                        const [sourceRef, sourcePin] = edge.source.split('-');
+                        const [targetRef, targetPin] = edge.target.split('-');
+                        if (sourceRef === node.id) componentNets.set(sourcePin, edge.label);
+                        if (targetRef === node.id) componentNets.set(targetPin, edge.label);
                     });
+    
+                    if (node.pins) {
+                        node.pins.forEach(pin => {
+                            const pinMesh = new sim.THREE.Mesh(pinGeometry, pinMaterial);
+                            pinMesh.position.set(pin.x * SCALE, (sim.componentHeight / 2) + 0.1, pin.y * SCALE);
+                            pinMesh.userData = { nodeId: node.id, pinName: pin.name };
+                            visualGroup.add(pinMesh);
+                            sim.pinMeshes.set(\`\${node.id}-\${pin.name}\`, pinMesh);
+
+                            const netName = componentNets.get(pin.name);
+                            if (netName && groundNetNames.has(netName)) {
+                                const viaMesh = new sim.THREE.Mesh(viaGeometry, viaMaterial);
+                                // Position the via so its center is at the PCB's center (y=0 world).
+                                // componentGroup is at COMPONENT_Y, so we offset the via by -COMPONENT_Y
+                                const yOffsetForVia = -(componentGroup.userData.side === 'top' ? COMPONENT_Y_TOP : COMPONENT_Y_BOTTOM);
+                                viaMesh.position.set(pin.x * SCALE, yOffsetForVia, pin.y * SCALE);
+                                componentGroup.add(viaMesh);
+                            }
+                        });
+                    }
                 });
                 
                 sim.initializePositions();
@@ -408,11 +524,13 @@ const RAPIER_LAYOUT_TOOL: ToolCreatorPayload = {
 
                                 const qRelInv = qRel.clone().invert();
                                 const translationOffset = new sim.THREE.Vector3(relX, relY, relZ);
+                                
+                                // This is the translation part of the inverse transform: -v * q_inv
                                 const finalTranslationOffset = translationOffset.clone().applyQuaternion(qRelInv).multiplyScalar(-1);
 
                                 const jointParams = sim.RAPIER.JointData.fixed(
-                                    { x: 0, y: 0, z: 0 }, { w: 1, x: 0, y: 0, z: 0 },
-                                    { x: finalTranslationOffset.x, y: finalTranslationOffset.y, z: finalTranslationOffset.z },
+                                    { x: 0, y: 0, z: 0 }, { w: 1, x: 0, y: 0, z: 0 }, // parent local frame (identity)
+                                    { x: finalTranslationOffset.x, y: finalTranslationOffset.y, z: finalTranslationOffset.z }, // child local frame
                                     { w: qRelInv.w, x: qRelInv.x, y: qRelInv.y, z: qRelInv.z }
                                 );
                                 
@@ -493,7 +611,7 @@ const RAPIER_LAYOUT_TOOL: ToolCreatorPayload = {
                 physFolder.add(physicsParams, 'separationForce', 0, 2000).step(1).name('Separation Force');
                 physFolder.add(physicsParams, 'separationFactor', 1.0, 10.0).step(0.1).name('Separation Factor');
                 physFolder.add(physicsParams, 'centerAttraction', 0, 2000).step(1).name('Center Attraction');
-                physFolder.add(physicsParams, 'boardGravity', 0, 100).step(1).name('Board Gravity');
+                physFolder.add(physicsParams, 'boardGravity', 0, 1000).step(1).name('Board Gravity');
                 physFolder.add(physicsParams, 'linearDamping', 0, 2000).step(1).name('Linear Damping');
                 physFolder.add(physicsParams, 'angularDamping', 0, 2000).step(1).name('Angular Damping');
                 physFolder.add(physicsParams, 'gridAttraction', 0, 2000).step(1).name('Grid Attraction');
@@ -631,8 +749,6 @@ const RAPIER_LAYOUT_TOOL: ToolCreatorPayload = {
                         const springForce = springConstant * posErrorY * massA;
 
                         // Derivative term (the "damper") to prevent oscillation
-                        // For a critically damped spring, Kd = 2 * sqrt(m * Kp_eff). Here Kp_eff = springConstant * massA.
-                        // So, Kd_eff = 2 * massA * sqrt(springConstant)
                         const dampingCoefficient = 2 * Math.sqrt(springConstant) * massA;
                         const dampingForce = -dampingCoefficient * velY;
                         
@@ -644,13 +760,10 @@ const RAPIER_LAYOUT_TOOL: ToolCreatorPayload = {
                         for (let j = i + 1; j < bodyEntries.length; j++) {
                             const [idB, bodyB] = bodyEntries[j];
                             const nodeB = sim.nodeMap.get(idB);
-                            const meshB = sim.meshes.get(idB);
-                            if (!nodeB || !meshB || !bodyB.isDynamic()) continue;
+                            if (!nodeB || !bodyB.isDynamic()) continue;
                             
                             const massB = bodyB.mass();
                             if (massB <= 0) continue;
-
-                            if (meshA.userData.side !== meshB.userData.side) continue;
 
                             const posB = bodyB.translation();
                             const deltaX = posA.x - posB.x;
@@ -676,8 +789,10 @@ const RAPIER_LAYOUT_TOOL: ToolCreatorPayload = {
                         }
                     }
 
-                    // 2. Pin Attraction (Springs)
+                    // 2. Pin Attraction (Springs) - FILTERING GROUND NETS
                     graph.edges.forEach((edge) => {
+                        if (groundNetNames.has(edge.label)) return; // Skip ground nets
+
                         const [sourceRef, sourcePinName] = edge.source.split('-');
                         const [targetRef, targetPinName] = edge.target.split('-');
                         const bodyA = sim.bodies.get(sourceRef);
@@ -696,7 +811,6 @@ const RAPIER_LAYOUT_TOOL: ToolCreatorPayload = {
                             
                             const rapierForce = new sim.RAPIER.Vector3(force.x, 0, force.z);
                             
-                            // Apply force at the pin's XZ location, but at the body's Y center-of-mass to avoid unwanted torque.
                             const rapierPinA_at_com_y = new sim.RAPIER.Vector3(pinA_world.x, bodyA.translation().y, pinA_world.z);
                             const rapierPinB_at_com_y = new sim.RAPIER.Vector3(pinB_world.x, bodyB.translation().y, pinB_world.z);
                             
@@ -715,6 +829,14 @@ const RAPIER_LAYOUT_TOOL: ToolCreatorPayload = {
                     if (line) {
                         const [sourceRef, sourcePinName] = edge.source.split('-');
                         const [targetRef, targetPinName] = edge.target.split('-');
+                        
+                        // Hide ground net lines for a cleaner view
+                        if (groundNetNames.has(edge.label)) {
+                            line.visible = false;
+                            return;
+                        }
+                        line.visible = true;
+
                         const pos1 = getPinPosition(sourceRef, sourcePinName);
                         const pos2 = getPinPosition(targetRef, targetPinName);
                         if (pos1 && pos2) {
@@ -735,7 +857,7 @@ const RAPIER_LAYOUT_TOOL: ToolCreatorPayload = {
                 sim.renderer.render(sim.scene, sim.camera);
                 sim.animationFrameId = requestAnimationFrame(animate);
             };
-
+    
             const updateMousePosition = (event) => {
                  if (!sim.renderer || !sim.renderer.domElement) return new sim.THREE.Vector2(0,0);
                  const rect = sim.renderer.domElement.getBoundingClientRect();

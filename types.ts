@@ -124,6 +124,7 @@ export interface KnowledgeGraph {
     y: number;
     width: number;
     height: number;
+    shape?: 'rectangle' | 'circle';
   };
   constraints?: any[];
 }
