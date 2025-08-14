@@ -61,4 +61,3 @@ To unlock the agent's ability to interact with your local file system and execut
 *   The frontend application will automatically detect the server and enable server-side tools.
 
 > **Security Warning:** The backend server is designed to execute code based on AI-generated commands. It is a powerful tool for agent development but should **never** be exposed to the internet.
-
