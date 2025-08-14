@@ -1,6 +1,4 @@
 
-
-
 import React, { useState, useCallback, useRef, useEffect } from 'react';
 import { SWARM_AGENT_SYSTEM_PROMPT } from '../constants';
 import { contextualizeWithSearch } from '../services/aiService';
@@ -37,6 +35,7 @@ export const useSwarmManager = (props: UseSwarmManagerProps) => {
     const [currentUserTask, setCurrentUserTask] = useState<any>(null);
     const [currentSystemPrompt, setCurrentSystemPrompt] = useState<string>(SWARM_AGENT_SYSTEM_PROMPT);
     const [pauseState, setPauseState] = useState<PauseState>(null);
+    const [lastSwarmRunHistory, setLastSwarmRunHistory] = useState<EnrichedAIResponse[] | null>(null);
     const [isSequential, setIsSequential] = useState(false);
     const [activeToolsForTask, setActiveToolsForTask] = useState<ScoredTool[]>([]);
     const [relevanceTopK, setRelevanceTopK] = useState<number>(25);
@@ -63,13 +62,24 @@ export const useSwarmManager = (props: UseSwarmManagerProps) => {
             setActiveToolsForTask([]); // Clear the active tools on stop
             const reasonText = reason ? `: ${reason}` : ' by user.';
             logEvent(`[INFO] 🛑 Task stopped${reasonText}`);
+            setLastSwarmRunHistory(swarmHistoryRef.current);
         }
     }, [logEvent]);
 
     const clearPauseState = useCallback(() => {
         setPauseState(null);
     }, []);
+
+    const clearLastSwarmRunHistory = useCallback(() => setLastSwarmRunHistory(null), []);
     
+    const clearSwarmHistory = useCallback(() => {
+        swarmHistoryRef.current = [];
+    }, []);
+
+    const appendToSwarmHistory = useCallback((item: EnrichedAIResponse) => {
+        swarmHistoryRef.current.push(item);
+    }, []);
+
     const runSwarmCycle = useCallback(async (
         processRequest: (prompt: any, systemInstruction: string, agentId: string, relevantTools: LLMTool[]) => Promise<AIToolCall[] | null>,
         executeActionRef: React.MutableRefObject<ExecuteActionFunction | null>,
@@ -176,7 +186,7 @@ export const useSwarmManager = (props: UseSwarmManagerProps) => {
                                     setPauseState({
                                         type: 'KICAD_LAYOUT',
                                         data: parsedStdout.layout_data,
-                                        isInteractive: result.toolCall.arguments.waitForUserInput,
+                                        isInteractive: parsedStdout.waitForUserInput === true,
                                         projectName: result.toolCall.arguments.projectName,
                                     });
                                     handleStopSwarm('Pausing for layout.');
@@ -245,6 +255,7 @@ export const useSwarmManager = (props: UseSwarmManagerProps) => {
     const startSwarmTask = useCallback(async (options: StartSwarmTaskOptions) => {
         const { task, systemPrompt, sequential = false, resume = false, historyEventToInject = null } = options;
         if (!resume) {
+            setLastSwarmRunHistory(null);
             swarmHistoryRef.current = [];
             swarmIterationCounter.current = 0;
             const timestamp = new Date().toLocaleTimeString();
@@ -291,6 +302,7 @@ export const useSwarmManager = (props: UseSwarmManagerProps) => {
             isSwarmRunning,
             currentUserTask,
             pauseState,
+            lastSwarmRunHistory,
             activeToolsForTask,
             relevanceTopK,
             relevanceThreshold,
@@ -299,9 +311,12 @@ export const useSwarmManager = (props: UseSwarmManagerProps) => {
             startSwarmTask,
             handleStopSwarm,
             clearPauseState,
+            clearLastSwarmRunHistory,
             runSwarmCycle,
             setRelevanceTopK,
             setRelevanceThreshold,
+            clearSwarmHistory,
+            appendToSwarmHistory,
         },
         getSwarmState: () => ({
             isRunning: isSwarmRunning,

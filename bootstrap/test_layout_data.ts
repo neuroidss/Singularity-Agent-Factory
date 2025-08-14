@@ -1,47 +1,92 @@
+import type { KnowledgeGraph } from '../types';
 
-import type { KnowledgeGraph, KicadSchematic } from '../types';
-
-// This data is derived from the FreeEEG8-alpha project.
-// The U4 XIAO module has been replaced by two 7-pin headers (J_XIAO_1, J_XIAO_2)
-// to create a mezzanine board configuration.
-
-const freeEEG8Schematic: KicadSchematic = [
-  ["J1",["AIN0P"],"freeeeg8-alpha:pogo_pin_d5x10mm_smd"],
-  ["J2",["AIN1P"],"freeeeg8-alpha:pogo_pin_d5x10mm_smd"],
-  ["J3",["AIN2P"],"freeeeg8-alpha:pogo_pin_d5x10mm_smd"],
-  ["J4",["AIN3P"],"freeeeg8-alpha:pogo_pin_d5x10mm_smd"],
-  ["J5",["AIN4P"],"freeeeg8-alpha:pogo_pin_d5x10mm_smd"],
-  ["J6",["AIN5P"],"freeeeg8-alpha:pogo_pin_d5x10mm_smd"],
-  ["J7",["AIN6P"],"freeeeg8-alpha:pogo_pin_d5x10mm_smd"],
-  ["J8",["AIN7P"],"freeeeg8-alpha:pogo_pin_d5x10mm_smd"],
-  ["J9",["AINREF"],"freeeeg8-alpha:pogo_pin_d5x10mm_smd"],
-  ["J10",["GND"],"freeeeg8-alpha:pogo_pin_d5x10mm_smd"],
-  // Corrected U1 pinout based on user-provided JSON
-  ["U1",["AIN2P","AINREF","AINREF","AIN3P","AIN4P","AINREF","AINREF","AIN5P","AIN6P","AINREF","AINREF","AIN7P","GND","REFIN","AVDD","SYNC/RESET","CS","DRDY","SCLK","DOUT","DIN","XTAL2","XTAL1/CLKIN","CAP","GND","DVDD","ADC_NC","GND","AIN0P","AINREF","AINREF","AIN1P"],"Package_QFP:LQFP-32_5x5mm_P0.5mm"],
-  ["C1",["GND","CAP"],"Capacitor_SMD:C_0402_1005Metric"],
-  ["C2",["GND","REFIN"],"Capacitor_SMD:C_0402_1005Metric"],
-  ["C3",["AVDD","GND"],"Capacitor_SMD:C_0402_1005Metric"],
-  ["C4",["DVDD","GND"],"Capacitor_SMD:C_0402_1005Metric"],
-  ["U2",["IN","GND","EN","NC","AVDD"],"Package_TO_SOT_SMD:SOT-23-5"],
-  ["C5",["AVDD","GND"],"Capacitor_SMD:C_0603_1608Metric"],
-  ["C6",["GND","5V"],"Capacitor_SMD:C_0603_1608Metric"],
-  ["U3",["IN","GND","EN","NC","DVDD"],"Package_TO_SOT_SMD:SOT-23-5"],
-  ["C7",["GND","DVDD"],"Capacitor_SMD:C_0603_1608Metric"],
-  ["C8",["5V","GND"],"Capacitor_SMD:C_0603_1608Metric"],
-  ["U4",["SYNC/RESET","DRDY","CS","XIAO_NC1","XIAO_NC2","XIAO_NC3","XIAO_NC4","XIAO_NC5","SCLK","DOUT","DIN","XIAO_NC6","GND","5V","SWCLK","SWDIO","GND","RESET","NFC1","NFC2","BAT-","BAT+"],"freeeeg8-alpha:XIAO-nRF52840-Sense-14P-2.54-21X17.8MM"],
-  ["X1",["OUT","GND","IN","DVDD"],"freeeeg8-alpha:Oscillator_SMD_EuroQuartz_XO32-4Pin_3.2x2.5mm_HandSoldering"],
+// This data is derived from the FreeEEG8-alpha project, but rearranged according to the new spec.
+export const COMPONENTS = [
+  { ref: "J1", part: "POGO_PIN", value: "POGO", footprint: "freeeeg8-alpha:pogo_pin_d5x10mm_smd_bottom", assetTransforms: { svg: { rotation: [-90, 0, 0] } } },
+  { ref: "J2", part: "POGO_PIN", value: "POGO", footprint: "freeeeg8-alpha:pogo_pin_d5x10mm_smd_bottom", assetTransforms: { svg: { rotation: [-90, 0, 0] } } },
+  { ref: "J3", part: "POGO_PIN", value: "POGO", footprint: "freeeeg8-alpha:pogo_pin_d5x10mm_smd_bottom", assetTransforms: { svg: { rotation: [-90, 0, 0] } } },
+  { ref: "J4", part: "POGO_PIN", value: "POGO", footprint: "freeeeg8-alpha:pogo_pin_d5x10mm_smd_bottom", assetTransforms: { svg: { rotation: [-90, 0, 0] } } },
+  { ref: "J5", part: "POGO_PIN", value: "POGO", footprint: "freeeeg8-alpha:pogo_pin_d5x10mm_smd_bottom", assetTransforms: { svg: { rotation: [-90, 0, 0] } } },
+  { ref: "J6", part: "POGO_PIN", value: "POGO", footprint: "freeeeg8-alpha:pogo_pin_d5x10mm_smd_bottom", assetTransforms: { svg: { rotation: [-90, 0, 0] } } },
+  { ref: "J7", part: "POGO_PIN", value: "POGO", footprint: "freeeeg8-alpha:pogo_pin_d5x10mm_smd_bottom", assetTransforms: { svg: { rotation: [-90, 0, 0] } } },
+  { ref: "J8", part: "POGO_PIN", value: "POGO", footprint: "freeeeg8-alpha:pogo_pin_d5x10mm_smd_bottom", assetTransforms: { svg: { rotation: [-90, 0, 0] } } },
+  { ref: "J9", part: "POGO_PIN", value: "POGO", footprint: "freeeeg8-alpha:pogo_pin_d5x10mm_smd_bottom", assetTransforms: { svg: { rotation: [-90, 0, 0] } } },
+  { ref: "J10", part: "POGO_PIN", value: "POGO", footprint: "freeeeg8-alpha:pogo_pin_d5x10mm_smd_bottom", assetTransforms: { svg: { rotation: [-90, 0, 0] } } },
+  { ref: "U1", part: "ADC", value: "ADS131M08", footprint: "Package_QFP:LQFP-32_5x5mm_P0.5mm", assetTransforms: { glb: { rotation: [0, 0, 0], scale: 1.0, offset: [0, -0.0016, 0] }, svg: { rotation: [0, 0, 0], scale: 1.0, offset: [0, 0, 0] } } },
+  { ref: "C1", part: "CAP", value: "1uF", footprint: "Capacitor_SMD:C_0402_1005Metric", assetTransforms: { glb: { rotation: [-90, 0, 0] }, svg: { rotation: [-90, 0, 0] } } },
+  { ref: "C2", part: "CAP", value: "1uF", footprint: "Capacitor_SMD:C_0402_1005Metric", assetTransforms: { glb: { rotation: [-90, 0, 0] }, svg: { rotation: [-90, 0, 0] } } },
+  { ref: "C3", part: "CAP", value: "10uF", footprint: "Capacitor_SMD:C_0402_1005Metric", assetTransforms: { glb: { rotation: [-90, 0, 0] }, svg: { rotation: [-90, 0, 0] } } },
+  { ref: "C4", part: "CAP", value: "10uF", footprint: "Capacitor_SMD:C_0402_1005Metric", assetTransforms: { glb: { rotation: [-90, 0, 0] }, svg: { rotation: [-90, 0, 0] } } },
+  { ref: "U2", part: "LDO", value: "LP5907QMFX-3.3Q1", footprint: "Package_TO_SOT_SMD:SOT-23-5", assetTransforms: { glb: { rotation: [-90, 0, 0] }, svg: { rotation: [-90, 0, 0] } } },
+  { ref: "C5", part: "CAP", value: "2.2uF", footprint: "Capacitor_SMD:C_0603_1608Metric", assetTransforms: { glb: { rotation: [-90, 0, 0] }, svg: { rotation: [-90, 0, 0] } } },
+  { ref: "C6", part: "CAP", value: "2.2uF", footprint: "Capacitor_SMD:C_0603_1608Metric", assetTransforms: { glb: { rotation: [-90, 0, 0] }, svg: { rotation: [-90, 0, 0] } } },
+  { ref: "U3", part: "LDO", value: "LP5907QMFX-3.3Q1", footprint: "Package_TO_SOT_SMD:SOT-23-5", assetTransforms: { glb: { rotation: [-90, 0, 0] }, svg: { rotation: [-90, 0, 0] } } },
+  { ref: "C7", part: "CAP", value: "2.2uF", footprint: "Capacitor_SMD:C_0603_1608Metric", assetTransforms: { glb: { rotation: [-90, 0, 0] }, svg: { rotation: [-90, 0, 0] } } },
+  { ref: "C8", part: "CAP", value: "2.2uF", footprint: "Capacitor_SMD:C_0603_1608Metric", assetTransforms: { glb: { rotation: [-90, 0, 0] }, svg: { rotation: [-90, 0, 0] } } },
+  { ref: "J_XIAO_1", part: "HEADER", value: "XIAO_HEADER", footprint: "Connector_PinHeader_2.54mm:PinHeader_1x07_P2.54mm_Vertical", assetTransforms: { glb: { rotation: [0, 90, 0], scale: 1.0, offset: [0, -0.0016, 0] }, svg: { rotation: [0, 0, 0], scale: 1.0, offset: [0, 0, 0] } } },
+  { ref: "J_XIAO_2", part: "HEADER", value: "XIAO_HEADER", footprint: "Connector_PinHeader_2.54mm:PinHeader_1x07_P2.54mm_Vertical", assetTransforms: { glb: { rotation: [0, 90, 0], scale: 1.0, offset: [0, -0.0016, 0] }, svg: { rotation: [0, 0, 0], scale: 1.0, offset: [0, 0, 0] } } },
+  { ref: "X1", part: "OSC", value: "8.192MHz", footprint: "freeeeg8-alpha:Oscillator_SMD_EuroQuartz_XO32-4Pin_3.2x2.5mm_HandSoldering", assetTransforms: { glb: { rotation: [-90, 0, 0] }, svg: { rotation: [-90, 0, 0] } } },
 ];
 
-const getFootprintDimensions = (footprint: string): { width: number; height: number } => {
-    if (footprint.includes('pogo_pin')) return { width: 5, height: 5 };
-    if (footprint.includes('LQFP-32_5x5mm')) return { width: 7, height: 7 };
-    if (footprint.includes('C_0402')) return { width: 1.0, height: 0.5 };
-    if (footprint.includes('SOT-23-5')) return { width: 2.9, height: 1.6 };
-    if (footprint.includes('C_0603')) return { width: 1.6, height: 0.8 };
-    if (footprint.includes('R_0402')) return { width: 1.0, height: 0.5 };
-    if (footprint.includes('Oscillator') && footprint.includes('3.2x2.5mm')) return { width: 3.2, height: 2.5 };
-    if (footprint.includes('PinHeader_1x07')) return { width: 2.54 * 7, height: 2.54 };
-    return { width: 2, height: 2 };
+const NETS = {
+  "AIN0P": ["J1-1", "U1-29"],
+  "AIN1P": ["J2-1", "U1-32"],
+  "AIN2P": ["J3-1", "U1-1"],
+  "AIN3P": ["J4-1", "U1-4"],
+  "AIN4P": ["J5-1", "U1-5"],
+  "AIN5P": ["J6-1", "U1-8"],
+  "AIN6P": ["J7-1", "U1-9"],
+  "AIN7P": ["J8-1", "U1-12"],
+  "AINREF": ["J9-1", "U1-2", "U1-3", "U1-6", "U1-7", "U1-10", "U1-11", "U1-30", "U1-31"],
+  "GND": ["J10-1", "U1-13", "U1-25", "U1-28", "C1-1", "C2-1", "C3-2", "C4-2", "U2-2", "C5-2", "C6-1", "U3-2", "C7-1", "C8-2", "J_XIAO_2-1", "X1-2"],
+  "CAP": ["C1-2", "U1-24"],
+  "REFIN": ["C2-2", "U1-14"],
+  "AVDD": ["C3-1", "U2-5", "C5-1", "U1-15"],
+  "DVDD": ["C4-1", "U3-5", "C7-2", "X1-4", "U1-26"],
+  "5V": ["C6-2", "C8-1", "J_XIAO_2-2"],
+  "SYNC/RESET": ["U1-16", "J_XIAO_1-1"],
+  "CS": ["U1-17", "J_XIAO_1-3"],
+  "DRDY": ["U1-18", "J_XIAO_1-2"],
+  "SCLK": ["U1-19", "J_XIAO_1-5"],
+  "DOUT": ["U1-20", "J_XIAO_1-6"],
+  "DIN": ["U1-21", "J_XIAO_1-7"],
+  "XTAL2": ["U1-22"], // Unconnected
+  "XTAL1/CLKIN": ["U1-23", "X1-1"],
+  "ADC_NC": ["U1-27"], // Unconnected
+  "LDO_IN": ["U2-1", "U3-1"],
+  "LDO_EN": ["U2-3", "U3-3"],
+};
+
+const footprintToGlbMap: Record<string, string> = {
+    'Package_QFP:LQFP-32_5x5mm_P0.5mm': 'http://localhost:5173/Singularity-Agent-Factory/assets/LQFP-32_5x5mm_P0.5mm.glb',
+    'Capacitor_SMD:C_0402_1005Metric': 'https://raw.githubusercontent.com/lewis-s-clark/kicad-3d-models-in-gltf/main/Capacitor_SMD.gltf/C_0402_1005Metric.glb',
+    'Package_TO_SOT_SMD:SOT-23-5': 'https://raw.githubusercontent.com/lewis-s-clark/kicad-3d-models-in-gltf/main/Package_TO_SOT_SMD.gltf/SOT-23-5.glb',
+    'Capacitor_SMD:C_0603_1608Metric': 'https://raw.githubusercontent.com/lewis-s-clark/kicad-3d-models-in-gltf/main/Capacitor_SMD.gltf/C_0603_1608Metric.glb',
+    'Connector_PinHeader_2.54mm:PinHeader_1x07_P2.54mm_Vertical': 'http://localhost:5173/Singularity-Agent-Factory/assets/PinHeader_1x07_P2.54mm_Vertical.glb',
+    'freeeeg8-alpha:Oscillator_SMD_EuroQuartz_XO32-4Pin_3.2x2.5mm_HandSoldering': 'https://raw.githubusercontent.com/lewis-s-clark/kicad-3d-models-in-gltf/main/Crystal.gltf/Crystal_SMD_3225-4Pin_3.2x2.5mm.glb',
+    // Pogo pin is custom, will fallback to placeholder
+};
+
+const footprintToSvgMap: Record<string, string> = {
+    'Package_QFP:LQFP-32_5x5mm_P0.5mm': 'http://localhost:5173/Singularity-Agent-Factory/assets/LQFP-32_5x5mm_P0.5mm.svg',
+    'Capacitor_SMD:C_0402_1005Metric': 'assets/test_footprints/C_0402_1005Metric.svg',
+    'Package_TO_SOT_SMD:SOT-23-5': 'assets/test_footprints/SOT-23-5.svg',
+    'Capacitor_SMD:C_0603_1608Metric': 'assets/test_footprints/C_0603_1608Metric.svg',
+    'Connector_PinHeader_2.54mm:PinHeader_1x07_P2.54mm_Vertical': 'http://localhost:5173/Singularity-Agent-Factory/assets/PinHeader_1x07_P2.54mm_Vertical.svg',
+    'freeeeg8-alpha:Oscillator_SMD_EuroQuartz_XO32-4Pin_3.2x2.5mm_HandSoldering': 'assets/test_footprints/Oscillator_SMD_EuroQuartz_XO32-4Pin_3.2x2.5mm_HandSoldering.svg',
+    'freeeeg8-alpha:pogo_pin_d5x10mm_smd_bottom': 'assets/test_footprints/pogo_pin_d5x10mm_smd_bottom.svg',
+};
+
+const getFootprintDimensions = (footprint: string): { width: number; height: number; courtyardWidth: number; courtyardHeight: number; } => {
+    // Courtyard is typically ~0.25mm to 0.5mm larger than the component body on each side.
+    if (footprint.includes('pogo_pin')) return { width: 5, height: 5, courtyardWidth: 5.5, courtyardHeight: 5.5 };
+    if (footprint.includes('LQFP-32_5x5mm')) return { width: 7, height: 7, courtyardWidth: 7.5, courtyardHeight: 7.5 }; // Includes leads
+    if (footprint.includes('C_0402')) return { width: 1.0, height: 0.5, courtyardWidth: 1.2, courtyardHeight: 0.7 };
+    if (footprint.includes('SOT-23-5')) return { width: 2.9, height: 1.6, courtyardWidth: 3.2, courtyardHeight: 1.9 };
+    if (footprint.includes('C_0603')) return { width: 1.6, height: 0.8, courtyardWidth: 1.8, courtyardHeight: 1.0 };
+    if (footprint.includes('Oscillator') && footprint.includes('3.2x2.5mm')) return { width: 3.2, height: 2.5, courtyardWidth: 3.5, courtyardHeight: 2.8 };
+    if (footprint.includes('PinHeader_1x07')) return { width: 2.54 * 7, height: 2.54, courtyardWidth: (2.54*7) + 0.5, courtyardHeight: 2.54 + 0.5 };
+    return { width: 2, height: 2, courtyardWidth: 2.5, courtyardHeight: 2.5 };
 };
 
 const getPinPositions = (ref: string, footprint: string): { name: string, x: number, y: number }[] => {
@@ -51,35 +96,34 @@ const getPinPositions = (ref: string, footprint: string): { name: string, x: num
 
     if (ref.startsWith('J') && footprint.includes('pogo_pin')) return [{ name: '1', x: 0, y: 0 }];
     if (ref.startsWith('C') || ref.startsWith('R')) return [{ name: '1', x: -w2, y: 0 }, { name: '2', x: w2, y: 0 }];
-    if (ref === 'X1') return [{ name: '1', x: -w2, y: h2 }, { name: '2', x: -w2, y: -h2 }, { name: '3', x: w2, y: -h2 }, { name: '4', x: w2, y: h2 }];
+    if (ref === 'X1') return [{ name: '1', x: w2, y: h2 }, { name: '2', x: -w2, y: h2 }, { name: '3', x: -w2, y: -h2 }, { name: '4', x: w2, y: -h2 }];
     
     if (ref === 'U1') { // 32-pin TQFP
         const pins = [];
-        const pitch = 0.8; // Effective pitch for a 7x7 package
-        const side_len = 7 * pitch;
-        const s2 = side_len / 2;
+        const pitch = (5.0 / 9.0); // Pitch for a 5x5mm package
+        const s2 = 2.5; // half size
         // Pins 1-8 (left)
-        for (let i = 0; i < 8; i++) pins.push({ name: String(i + 1), x: -s2, y: s2 - i * pitch });
+        for (let i = 0; i < 8; i++) pins.push({ name: String(8-i), x: -s2, y: (s2 - pitch/2) - i * pitch });
         // Pins 9-16 (bottom)
-        for (let i = 0; i < 8; i++) pins.push({ name: String(i + 9), x: -s2 + i * pitch, y: -s2 });
+        for (let i = 0; i < 8; i++) pins.push({ name: String(i + 9), x: (-s2 + pitch/2) + i * pitch, y: -s2 });
         // Pins 17-24 (right)
-        for (let i = 0; i < 8; i++) pins.push({ name: String(i + 17), x: s2, y: -s2 + i * pitch });
+        for (let i = 0; i < 8; i++) pins.push({ name: String(24-i), x: s2, y: (-s2 + pitch/2) + i * pitch });
         // Pins 25-32 (top)
-        for (let i = 0; i < 8; i++) pins.push({ name: String(i + 25), x: s2 - i * pitch, y: s2 });
+        for (let i = 0; i < 8; i++) pins.push({ name: String(i + 25), x: (s2 - pitch/2) - i * pitch, y: s2 });
         return pins;
     }
 
     if (ref.startsWith('U2') || ref.startsWith('U3')) { // SOT-23-5
         return [
-            { name: '1', x: -1.2, y: 0.65 }, { name: '2', x: -1.2, y: 0 }, { name: '3', x: -1.2, y: -0.65 },
-            { name: '4', x: 1.2, y: -0.65 }, { name: '5', x: 1.2, y: 0.65 }
+            { name: '1', x: -0.95, y: -0.95 }, { name: '2', x: 0, y: -0.95 }, { name: '3', x: 0.95, y: -0.95 },
+            { name: '4', x: 0.95, y: 0.95 }, { name: '5', x: -0.95, y: 0.95 }
         ];
     }
     
     if (ref.startsWith('J_XIAO')) { // 1x7 Header
         const pins = [];
         for (let i = 0; i < 7; i++) {
-            pins.push({ name: String(i + 1), x: (i - 3) * 2.54, y: 0 });
+            pins.push({ name: String(i + 1), x: 0, y: (3 - i) * 2.54 });
         }
         return pins;
     }
@@ -88,78 +132,32 @@ const getPinPositions = (ref: string, footprint: string): { name: string, x: num
 
 
 const buildGraph = (): KnowledgeGraph => {
-    const nodes = [];
-    const netToPins: Record<string, string[]> = {};
-    const unwantedComponents = ['U4'];
-    const pogoPins = ["J1", "J2", "J3", "J4", "J5", "J6", "J7", "J8", "J9", "J10"];
-
-
-    // 1. Add all required components
-    for (const [ref, , footprint] of freeEEG8Schematic) {
-        if (unwantedComponents.includes(ref)) continue;
-        const dims = getFootprintDimensions(footprint);
-        nodes.push({
-            id: ref, label: ref, width: dims.width, height: dims.height,
-            footprint: footprint, side: pogoPins.includes(ref) ? 'bottom' : 'top',
-            pins: getPinPositions(ref, footprint),
-            x: 0, y: 0, rotation: 0, svgPath: null, glbPath: null, model3d_props: null,
-        });
-    }
-
-    // 2. Add Mezzanine Connectors for XIAO
-    const xiaoHeaderFootprint = 'Connector_PinHeader_2.54mm:PinHeader_1x07_P2.54mm_Vertical';
-    const xiaoHeaderDims = getFootprintDimensions(xiaoHeaderFootprint);
-    nodes.push({
-        id: "J_XIAO_1", label: "XIAO_LEFT", width: xiaoHeaderDims.width, height: xiaoHeaderDims.height,
-        footprint: xiaoHeaderFootprint, side: 'top',
-        pins: getPinPositions("J_XIAO_1", xiaoHeaderFootprint),
-        x: 0, y: 0, rotation: 0, svgPath: null, glbPath: null, model3d_props: null,
-    });
-    nodes.push({
-        id: "J_XIAO_2", label: "XIAO_RIGHT", width: xiaoHeaderDims.width, height: xiaoHeaderDims.height,
-        footprint: xiaoHeaderFootprint, side: 'top',
-        pins: getPinPositions("J_XIAO_2", xiaoHeaderFootprint),
-        x: 0, y: 0, rotation: 0, svgPath: null, glbPath: null, model3d_props: null,
+    const pogoPinsRefs = ["J1", "J2", "J3", "J4", "J5", "J6", "J7", "J8", "J9", "J10"];
+    
+    // --- Create Nodes without explicit positions ---
+    const nodes = COMPONENTS.map(comp => {
+        const dims = getFootprintDimensions(comp.footprint);
+        return {
+            id: comp.ref,
+            label: comp.ref,
+            width: dims.width,
+            height: dims.height,
+            courtyardDimensions: { width: dims.courtyardWidth, height: dims.courtyardHeight },
+            footprint: comp.footprint,
+            side: pogoPinsRefs.includes(comp.ref) ? 'bottom' : 'top',
+            pins: getPinPositions(comp.ref, comp.footprint),
+            svgPath: footprintToSvgMap[comp.footprint] || null,
+            glbPath: footprintToGlbMap[comp.footprint] || null,
+            assetTransforms: (comp as any).assetTransforms, // Keep the transforms
+            model3d_props: null,
+            // x, y, rotation will be determined by the simulation
+        };
     });
 
-    // 3. Populate netToPins map and handle U4 rerouting
-    const u4Data = freeEEG8Schematic.find(c => c[0] === 'U4');
-    const u4PinToNetMap = u4Data ? u4Data[1] : [];
-    
-    // Map U4 pins to XIAO header pins
-    const u4ToXiaoMapping = {
-       "SYNC/RESET": "J_XIAO_1-1", "DRDY": "J_XIAO_1-2", "CS": "J_XIAO_1-3",
-       "SCLK": "J_XIAO_1-5", "DOUT": "J_XIAO_1-6", "DIN": "J_XIAO_1-7",
-       "GND": "J_XIAO_2-1", "5V": "J_XIAO_2-2"
-    };
-
-    for (const [ref, netNames, footprint] of freeEEG8Schematic) {
-        if (ref === 'U4') continue; // Skip U4 itself
-        
-        const componentNode = nodes.find(n => n.id === ref);
-        const pins = componentNode ? componentNode.pins : [];
-        
-        netNames.forEach((netName, i) => {
-            if (!netToPins[netName]) netToPins[netName] = [];
-            const pinName = pins[i] ? pins[i].name : String(i + 1);
-            netToPins[netName].push(`${ref}-${pinName}`);
-        });
-    }
-    
-    for (const netName of u4PinToNetMap) {
-        if (u4ToXiaoMapping[netName]) {
-             if (!netToPins[netName]) netToPins[netName] = [];
-             if (!netToPins[netName].includes(u4ToXiaoMapping[netName])) {
-                netToPins[netName].push(u4ToXiaoMapping[netName]);
-             }
-        }
-    }
-
-
-    // 4. Create edges from the populated netToPins map
+    // --- Create Edges ---
     const edges = [];
-    for (const netName in netToPins) {
-        const pins = Array.from(new Set(netToPins[netName])); // Remove duplicates
+    for (const netName in NETS) {
+        const pins = Array.from(new Set(NETS[netName])); // Remove duplicates
         if (pins.length > 1) {
             for (let i = 0; i < pins.length; i++) {
                 for (let j = i + 1; j < pins.length; j++) {
@@ -168,27 +166,19 @@ const buildGraph = (): KnowledgeGraph => {
             }
         }
     }
+    
+    const BOARD_DIAMETER = 30;
 
     return {
         nodes,
         edges,
         board_outline: {
-            x: 0,
-            y: 0,
-            width: 25, // Circular board with 25mm diameter
-            height: 25,
+            x: -BOARD_DIAMETER / 2,
+            y: -BOARD_DIAMETER / 2,
+            width: BOARD_DIAMETER,
+            height: BOARD_DIAMETER,
             shape: 'circle',
         },
-        constraints: [
-            {
-                type: "fixed_group",
-                anchor: "J_XIAO_1",
-                components: [
-                    { "ref": "J_XIAO_1", "offsetX_mm": 0, "offsetY_mm": 0, "angle_deg": 0 },
-                    { "ref": "J_XIAO_2", "offsetX_mm": 0, "offsetY_mm": 17.78, "angle_deg": 0 }
-                ]
-            }
-        ],
     };
 };
 

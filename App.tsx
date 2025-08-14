@@ -1,17 +1,16 @@
 
 
-
-
 import React, { useState, useCallback, useMemo, useEffect, useRef } from 'react';
-import { CORE_TOOLS, AI_MODELS, SERVER_URL } from './constants';
+import { CORE_TOOLS, AI_MODELS } from './constants';
 import { UIToolRunner } from './components/UIToolRunner';
 import { loadStateFromStorage, saveStateToStorage } from './versioning';
+import { DEMO_WORKFLOW } from './bootstrap/demo_workflow';
 
 import type { LLMTool, EnrichedAIResponse, AIToolCall, MainView } from './types';
 import { useAppStateManager } from './hooks/useAppStateManager';
 import { useToolManager } from './hooks/useToolManager';
-import { useRobotManager } from './hooks/useRobotManager';
 import { useKicadManager } from './hooks/useKicadManager';
+import { useRobotManager } from './hooks/useRobotManager';
 import { useSwarmManager } from './hooks/useSwarmManager';
 import { useAppRuntime } from './hooks/useAppRuntime';
 import { useToolRelevance } from './hooks/useToolRelevance';
@@ -28,18 +27,13 @@ const App: React.FC = () => {
     } = useAppStateManager();
 
     // Manages client and server tools, and server connection status
+    const toolManager = useToolManager({ logEvent });
     const {
-        tools, setTools, allTools, allToolsRef, isServerConnected,
-        fetchServerTools, generateMachineReadableId
-    } = useToolManager({ logEvent });
-    
-    // Manages the state of the robotics simulation
-    const {
-        robotState,
-        robotSetters,
-        getRobotStateForRuntime,
-        handleManualControl: originalHandleManualControl,
-    } = useRobotManager({ logEvent });
+        tools, setTools, allTools, allToolsRef,
+        isServerConnected,
+        generateMachineReadableId,
+        forceRefreshServerTools,
+    } = toolManager;
     
     // Hook for determining tool relevance using embeddings
     const { findRelevantTools } = useToolRelevance({ allTools, logEvent });
@@ -63,37 +57,59 @@ const App: React.FC = () => {
         logKicadEvent,
         currentProjectNameRef,
         getKicadSystemPrompt,
+        kicadProjectState,
+        kicadSimulators,
     } = useKicadManager({
         logEvent,
         startSwarmTask: swarmHandlers.startSwarmTask,
         allTools,
+        clearSwarmHistory: swarmHandlers.clearSwarmHistory,
+        appendToSwarmHistory: swarmHandlers.appendToSwarmHistory,
     });
     
+    // Manages the Robotics simulation.
+    const {
+        robotState,
+        robotSetters,
+        getRobotStateForRuntime,
+        handleManualControl,
+    } = useRobotManager({ logEvent });
+    
+    // Manages the Strategic Memory Knowledge Graph view
+    const {
+        state: kgState,
+        handlers: kgHandlers,
+        graphStateRef,
+    } = useKnowledgeGraphManager({ logEvent });
+
     // The core execution engine. It depends on state from other managers.
     const {
         executeAction,
         executeActionRef,
         processRequest,
-        runServerTool,
     } = useAppRuntime({
         // Dependencies
-        allToolsRef, isServerConnected, logEvent, fetchServerTools, generateMachineReadableId,
+        allToolsRef, logEvent, generateMachineReadableId,
         apiConfig: appState.apiConfig, selectedModel: appState.selectedModel,
-        robotState, robotSetters, getRobotStateForRuntime,
+        isServerConnected,
         setTools,
-        // Pass state setters for tools that need to update the UI
+        forceRefreshServerTools,
+        // Kicad setters and simulators
         setPcbArtifacts: (artifacts) => kicadSetters.setPcbArtifacts(artifacts),
         kicadLogEvent: logKicadEvent,
         setCurrentKicadArtifact: kicadSetters.setCurrentKicadArtifact,
         updateWorkflowChecklist: kicadHandlers.updateWorkflowChecklist,
+        kicadSimulators: kicadSimulators,
+        // Robot setters
+        getRobotStateForRuntime,
+        setRobotStates: robotSetters.setRobotStates,
+        setObservationHistory: robotSetters.setObservationHistory,
+        setAgentPersonalities: robotSetters.setAgentPersonalities,
+        // Knowledge Graph setters
+        getKnowledgeGraphState: () => graphStateRef.current,
+        setKnowledgeGraphState: kgHandlers.setGraph,
     });
 
-    // Manages the Strategic Memory Knowledge Graph view
-    const {
-        state: kgState,
-        handlers: kgHandlers,
-    } = useKnowledgeGraphManager({ executeActionRef, logEvent, isServerConnected });
-    
     // --- Centralized Swarm Pause Handler ---
     useEffect(() => {
         if (swarmState.pauseState?.type === 'KICAD_LAYOUT') {
@@ -106,7 +122,8 @@ const App: React.FC = () => {
             // Set the project name so the workflow can be resumed correctly
             kicadHandlers.setCurrentProjectName(projectName);
             
-            // The view remains KICAD, as the graph is now rendered inside the panel.
+            // Switch the main view to KiCad to show the layout tool
+            appSetters.setMainView('KICAD');
             
             // Important: Clear the pause state after handling it to prevent re-triggering
             swarmHandlers.clearPauseState();
@@ -115,68 +132,57 @@ const App: React.FC = () => {
 
 
     // --- Automatic Tool Suite Installation ---
-    const kicadInstallerRun = useRef(false);
-    const strategyInstallerRun = useRef(false);
-
+    const installerRunRef = useRef({kicad: false, strategy: false});
     useEffect(() => {
         const installSuitesIfNeeded = async () => {
-            if (!isServerConnected) {
-                kicadInstallerRun.current = false;
-                strategyInstallerRun.current = false;
-                return;
-            }
-
-            // Give a moment for state updates from reset to propagate.
-            await new Promise(resolve => setTimeout(resolve, 500));
+            // Give a moment for state to initialize
+            await new Promise(resolve => setTimeout(resolve, 100));
 
             // Install KiCad Suite
-            if (!kicadInstallerRun.current) {
+            if (!installerRunRef.current.kicad) {
                 const installerExists = allTools.some(t => t.name === 'Install KiCad Engineering Suite');
                 const coreKicadToolExists = allTools.some(t => t.name === 'Define KiCad Component');
                 if (installerExists && !coreKicadToolExists) {
-                    logEvent('[SYSTEM] KiCad server tools not found. Attempting automatic installation...');
+                    installerRunRef.current.kicad = true;
+                    logEvent('[SYSTEM] KiCad tools not found. Attempting automatic installation...');
                     try {
-                        kicadInstallerRun.current = true; 
                         const result = await executeActionRef.current({ name: 'Install KiCad Engineering Suite', arguments: {} }, 'system-installer');
                         if (result.executionError) throw new Error(result.executionError);
-                        logEvent('[SUCCESS] KiCad Engineering Suite auto-installed successfully.');
+                        logEvent(`[SUCCESS] KiCad Engineering Suite auto-installed successfully.`);
                     } catch (e) {
-                        const errorMessage = e instanceof Error ? e.message : String(e);
-                        logEvent(`[ERROR] Automatic KiCad tool installation failed: ${errorMessage}`);
-                        kicadInstallerRun.current = false;
+                        installerRunRef.current.kicad = false; // Allow retry
+                        logEvent(`[ERROR] KiCad tool installation failed: ${e instanceof Error ? e.message : String(e)}`);
                     }
                 } else if (coreKicadToolExists) {
-                    kicadInstallerRun.current = true;
-                    logEvent('[SYSTEM] KiCad server tools found and ready.');
+                    installerRunRef.current.kicad = true;
                 }
             }
             
             // Install Strategic Cognition Suite
-            if (!strategyInstallerRun.current) {
-                const installerExists = allTools.some(t => t.name === 'Install Strategic Cognition Suite');
+            if (!installerRunRef.current.strategy) {
+                 const installerExists = allTools.some(t => t.name === 'Install Strategic Cognition Suite');
                 const coreStrategyToolExists = allTools.some(t => t.name === 'Read Strategic Memory');
-                if (installerExists && !coreStrategyToolExists) {
+                 if (installerExists && !coreStrategyToolExists) {
+                    installerRunRef.current.strategy = true;
                     logEvent('[SYSTEM] Strategic Cognition Suite not found. Attempting auto-installation...');
                     try {
-                        strategyInstallerRun.current = true; 
                         const result = await executeActionRef.current({ name: 'Install Strategic Cognition Suite', arguments: {} }, 'system-installer');
                         if (result.executionError) throw new Error(result.executionError);
                         logEvent('[SUCCESS] Strategic Cognition Suite auto-installed successfully.');
                     } catch (e) {
-                        const errorMessage = e instanceof Error ? e.message : String(e);
-                        logEvent(`[ERROR] Automatic Strategic Cognition Suite installation failed: ${errorMessage}`);
-                        strategyInstallerRun.current = false;
+                        installerRunRef.current.strategy = false; // Allow retry
+                        logEvent(`[ERROR] Strategic Cognition Suite installation failed: ${e instanceof Error ? e.message : String(e)}`);
                     }
                 } else if (coreStrategyToolExists) {
-                    strategyInstallerRun.current = true;
-                    logEvent('[SYSTEM] Strategic Cognition Suite found and ready.');
+                    installerRunRef.current.strategy = true;
                 }
             }
         };
 
         installSuitesIfNeeded();
-    }, [isServerConnected, allTools, executeActionRef, logEvent]);
+    }, [allTools, executeActionRef, logEvent]);
     
+
     // --- DERIVED STATE & PROPS ---
 
     // Kick off the swarm cycle when it's running.
@@ -185,10 +191,6 @@ const App: React.FC = () => {
             swarmHandlers.runSwarmCycle(processRequest, executeActionRef, allTools);
         }
     }, [swarmState.isSwarmRunning, swarmHandlers.runSwarmCycle, processRequest, executeActionRef, allTools]);
-
-
-    // Some handlers need access to the fully initialized runtime
-    const handleManualControl = (toolName: string, args: any) => originalHandleManualControl(toolName, args, executeActionRef);
     
     // Persist tool state to local storage
     useEffect(() => { saveStateToStorage({ tools }); }, [tools]);
@@ -209,35 +211,48 @@ const App: React.FC = () => {
     }, [appState.userInput, swarmHandlers.startSwarmTask, logEvent, allTools]);
 
     const handleResetTools = useCallback(async () => {
-        if (window.confirm('This will perform a full factory reset:\\n\\n- Deletes ALL custom tools on the CLIENT.\\n- Deletes ALL custom tools on the SERVER.\\n- Restores the original toolset.\\n\\nThis cannot be undone. Are you absolutely sure?')) {
-            localStorage.removeItem('singularity-agent-factory-state');
-            const { initializeTools } = await import('./hooks/useToolManager');
-            setTools(initializeTools());
-            appSetters.setApiCallCount(0);
-            logEvent('[INFO] Client-side state and tools have been reset.');
+        if (!window.confirm('This will perform a full factory reset, deleting ALL custom tools and restoring the original toolset. This cannot be undone. Are you absolutely sure?')) {
+            return;
+        }
 
-            if (isServerConnected) {
-                try {
-                    logEvent('[INFO] Sending command to reset server-side tools...');
-                    const resetResult = await executeActionRef.current({ name: 'System_Reset_Server_Tools', arguments: {} }, 'system-reset');
-                    if (resetResult.executionError) throw new Error(resetResult.executionError);
-                    
-                    // Reset the installer flags BEFORE fetching the now-empty tool list.
-                    kicadInstallerRun.current = false;
-                    strategyInstallerRun.current = false;
-                    
-                    await fetchServerTools();
-                    logEvent(`[SUCCESS] Server-side tools cleared. Response: ${resetResult.executionResult.message}`);
-                    logEvent('[INFO] Reset complete. System will attempt to reinstall server tool suites.');
-                } catch(e) {
-                    const errorMessage = e instanceof Error ? e.message : String(e);
-                    logEvent(`[ERROR] A failure occurred during the server reset process: ${errorMessage}`);
-                }
-            } else {
-                 logEvent('[INFO] Server not connected, skipping server tool reset.');
+        // 1. Stop any running tasks to prevent interference.
+        if (swarmState.isSwarmRunning) {
+            swarmHandlers.handleStopSwarm('System reset initiated.');
+        }
+        logEvent('[SYSTEM] Starting full system reset...');
+
+        // 2. Reset server tools first, if connected.
+        if (isServerConnected) {
+            logEvent('[SYSTEM] Sending reset command to server...');
+            try {
+                const result = await executeActionRef.current({ name: 'System_Reset_Server_Tools', arguments: {} }, 'system-reset');
+                if (result.executionError) throw new Error(result.executionError);
+                logEvent(`[SUCCESS] Server tools have been cleared.`);
+            } catch (e) {
+                const errorMsg = e instanceof Error ? e.message : String(e);
+                logEvent(`[ERROR] Failed to reset server tools: ${errorMsg}. Halting reset.`);
+                return;
             }
         }
-    }, [logEvent, fetchServerTools, isServerConnected, setTools, appSetters.setApiCallCount, executeActionRef]);
+
+        // 3. Immediately force a refresh of the server tools state on the client.
+        // This is crucial to avoid a race condition with the installer.
+        try {
+            await toolManager.forceRefreshServerTools();
+            logEvent('[SYSTEM] Client state synchronized with empty server.');
+        } catch (e) {
+            logEvent('[WARN] Could not confirm server tool state after reset. Proceeding with client reset.');
+        }
+
+        // 4. Reset client-side state. This change will reliably trigger the installer useEffect.
+        localStorage.removeItem('singularity-agent-factory-state');
+        const { initializeTools } = await import('./hooks/useToolManager'); // Re-import to get fresh state
+        setTools(initializeTools());
+        appSetters.setApiCallCount(0);
+        installerRunRef.current = { kicad: false, strategy: false };
+        logEvent('[SUCCESS] Full system reset complete. Reinstalling default tool suites...');
+    
+    }, [logEvent, setTools, appSetters, isServerConnected, executeActionRef, toolManager, swarmState.isSwarmRunning, swarmHandlers]);
 
     const getTool = (name: string): LLMTool => {
         const tool = allToolsRef.current.find(t => t.name === name);
@@ -249,15 +264,7 @@ const App: React.FC = () => {
     };
 
     const handleCommitLayoutAndContinue = useCallback(async (finalPositions: any) => {
-        // Handle the testbed case where no swarm task is running
-        if (!swarmState.currentUserTask) {
-            logEvent("Testbed layout committed. Positions logged to console.");
-            console.log("Final Testbed Positions:", finalPositions);
-            kicadSetters.setCurrentLayoutData(null); // Return to the main KiCad panel
-            return;
-        }
-
-        logKicadEvent("💾 Committing updated layout to server...");
+        logKicadEvent("💾 Committing updated layout...");
         
         const projectName = currentProjectNameRef.current;
         if (!projectName || !executeActionRef?.current) {
@@ -268,8 +275,6 @@ const App: React.FC = () => {
         kicadSetters.setCurrentLayoutData(null); // Clear the layout data to switch UI back to logs
         
         try {
-            // This action is performed "out-of-band" from the main swarm loop.
-            // Its result MUST be captured to inform the agent's next decision.
             const layoutUpdateResult = await executeActionRef.current({
                 name: 'Update KiCad Component Positions',
                 arguments: { projectName: projectName, componentPositionsJSON: JSON.stringify(finalPositions) }
@@ -278,33 +283,62 @@ const App: React.FC = () => {
             if (layoutUpdateResult.executionError) {
                 throw new Error(layoutUpdateResult.executionError);
             }
+            
+            // Add the result to history so the logs are consistent
+            swarmHandlers.appendToSwarmHistory(layoutUpdateResult);
 
-            // Log this action to the KiCad panel.
             logKicadEvent(`✔️ ${layoutUpdateResult.executionResult?.message || "Layout positions updated."}`);
             
-            // The original task is still active. We just need to trigger the swarm to run again.
-            // The agent will see that the layout step is done and plan the next steps.
-            const resumeTask = {
-                userRequest: swarmState.currentUserTask.userRequest,
-                useSearch: swarmState.currentUserTask.useSearch,
-                projectName: projectName,
-            };
-            
-            // The agent is smart enough to continue based on history. We use the same powerful prompt.
-            await swarmHandlers.startSwarmTask({
-                task: resumeTask,
-                systemPrompt: getKicadSystemPrompt(projectName),
-                sequential: true,
-                resume: true, // Prevent history from being wiped
-                historyEventToInject: layoutUpdateResult, // ** CRITICAL: Inject the result into history **
-                allTools: allTools,
-            });
+            // --- NEW LOGIC: Check if we are resuming a demo or an LLM task ---
+            if (kicadState.isDemoRunning) {
+                logKicadEvent('[SIM] ▶️ Resuming automated workflow...');
+                
+                const arrangeStepIndex = DEMO_WORKFLOW.findIndex(step => step.name === 'Arrange Components');
+                if (arrangeStepIndex === -1) {
+                    throw new Error("Could not find 'Arrange Components' step in demo workflow to resume from.");
+                }
+                
+                const remainingWorkflow = DEMO_WORKFLOW.slice(arrangeStepIndex + 1);
+                
+                // We need to run the rest of the workflow.
+                await kicadHandlers.runDemoWorkflow(remainingWorkflow, executeActionRef.current);
+                
+            } else {
+                // Original logic for resuming an LLM-driven task
+                const resumeTask = {
+                    userRequest: swarmState.currentUserTask.userRequest,
+                    useSearch: swarmState.currentUserTask.useSearch,
+                    projectName: projectName,
+                };
+                
+                await swarmHandlers.startSwarmTask({
+                    task: resumeTask,
+                    systemPrompt: getKicadSystemPrompt(projectName),
+                    sequential: true,
+                    resume: true, 
+                    historyEventToInject: layoutUpdateResult,
+                    allTools: allTools,
+                });
+            }
             
         } catch(e) {
              const errorMessage = e instanceof Error ? e.message : String(e);
             logKicadEvent(`❌ EXECUTION HALTED while updating positions: ${errorMessage}`);
         }
-    }, [logKicadEvent, executeActionRef, swarmHandlers.startSwarmTask, kicadSetters, currentProjectNameRef, getKicadSystemPrompt, swarmState.currentUserTask, allTools, logEvent]);
+    }, [logKicadEvent, executeActionRef, swarmHandlers, kicadSetters, currentProjectNameRef, getKicadSystemPrompt, swarmState.currentUserTask, allTools, kicadState.isDemoRunning, kicadHandlers]);
+    
+    const handleStartDemo = useCallback(() => {
+        if (executeActionRef.current) {
+            kicadHandlers.handleStartDemo(DEMO_WORKFLOW, executeActionRef.current);
+        } else {
+            logEvent("[ERROR] Cannot start demo: execution context not ready.");
+        }
+    }, [kicadHandlers, executeActionRef, logEvent]);
+
+    const handleResetDemo = useCallback(() => {
+        kicadHandlers.handleResetDemo();
+    }, [kicadHandlers]);
+
 
     // --- PROPS FOR UI TOOLS ---
 
@@ -314,16 +348,27 @@ const App: React.FC = () => {
         setSelectedModel: appSetters.setSelectedModel
     };
     const debugLogProps = { logs: appState.eventLog, onReset: handleResetTools, apiCallCount: appState.apiCallCount, apiCallLimit: -1 };
-    const localAiServerProps = { isServerConnected, logEvent, onStartServer: () => runServerTool('Start Local AI Server'), onStopServer: () => runServerTool('Stop Local AI Server'), onGetStatus: () => runServerTool('Get Local AI Server Status') };
-    const pcbViewerProps = kicadState.pcbArtifacts ? { ...kicadState.pcbArtifacts, serverUrl: SERVER_URL, onClose: () => kicadSetters.setPcbArtifacts(null) } : null;
+    const localAiServerProps = { logEvent };
+    const pcbViewerProps = kicadState.pcbArtifacts ? { ...kicadState.pcbArtifacts, onClose: () => kicadSetters.setPcbArtifacts(null) } : null;
     const kicadPanelProps = { 
         onStartTask: kicadHandlers.handleStartKicadTask, 
+        onStartDemo: handleStartDemo,
+        onResetDemo: handleResetDemo,
         kicadLog: kicadState.kicadLog, 
-        isGenerating: swarmState.isSwarmRunning || !!kicadState.currentLayoutData, // Keep panel in "generating" state during layout
+        isGenerating: swarmState.isSwarmRunning || kicadState.isDemoRunning || !!kicadState.currentLayoutData,
         currentArtifact: kicadState.currentKicadArtifact, 
-        serverUrl: SERVER_URL, 
         workflowSteps: kicadState.workflowSteps,
-        currentLayoutData: kicadState.currentLayoutData, // Pass this to let the panel know layout is active
+        demoWorkflow: DEMO_WORKFLOW,
+        // New props for integrated layout view
+        currentLayoutData: kicadState.currentLayoutData,
+        isLayoutInteractive: kicadState.isLayoutInteractive,
+        onCommitLayout: handleCommitLayoutAndContinue,
+        getTool: getTool,
+    };
+    const agentControlProps = {
+        robotState,
+        personalities: robotState.agentPersonalities,
+        handleManualControl: (tool: string, args?: any) => handleManualControl(tool, args, executeActionRef),
     };
     const relevanceConfigProps = {
         topK: swarmState.relevanceTopK,
@@ -337,57 +382,86 @@ const App: React.FC = () => {
     };
     
     const renderMainView = () => {
-        if (kicadState.pcbArtifacts) return <UIToolRunner tool={getTool('KiCad PCB Viewer')} props={pcbViewerProps} />;
-
-        // Prioritize the Rapier layout tool if its data is present (for testbed or workflow)
-        if (kicadState.currentLayoutData) {
-            const layoutProps = {
-                graph: kicadState.currentLayoutData,
-                isLayoutInteractive: kicadState.isLayoutInteractive,
-                onCommit: handleCommitLayoutAndContinue,
-                serverUrl: SERVER_URL,
-            };
-            return <UIToolRunner tool={getTool('Rapier 3D Physics Layout')} props={layoutProps} />;
+        // --- Highest Priority: PCB result viewer ---
+        if (kicadState.pcbArtifacts) {
+            return <UIToolRunner tool={getTool('KiCad PCB Viewer')} props={pcbViewerProps} />;
         }
 
         switch(appState.mainView) {
-            case 'ROBOTICS': return <UIToolRunner tool={getTool('Robot Simulation Environment')} props={{ robotStates: robotState.robotStates, environmentState: robotState.environmentState }} />;
-            case 'KNOWLEDGE_GRAPH':
+            case 'ROBOTICS': {
+                const robotGraph = {
+                    nodes: [
+                        ...robotState.robotStates.map(r => ({ id: r.id, label: r.id, type: 'robot', width: 10, height: 10, x: r.x, y: r.y, rotation: r.rotation })),
+                        ...robotState.environmentState.map((e, i) => ({ id: e.id || `env_${e.type}_${i}`, label: e.type, type: e.type, width: 10, height: 10, x: e.x, y: e.y, rotation: 0 }))
+                    ],
+                    edges: [],
+                    board_outline: { x: -60, y: -60, width: 120, height: 120, shape: 'rectangle' }
+                };
+                const layoutProps = {
+                    graph: robotGraph,
+                    layoutStrategy: 'physics',
+                    mode: 'robotics',
+                    isLayoutInteractive: false,
+                    onCommit: () => {},
+                };
+                 return <UIToolRunner tool={getTool('Interactive PCB Layout Tool')} props={layoutProps} />;
+            }
+            case 'KNOWLEDGE_GRAPH': {
                 const kgViewerProps = {
                     graph: kgState.graph,
                     isLoading: kgState.isLoading,
                     onRefresh: kgHandlers.fetchGraph,
-                    serverUrl: SERVER_URL,
                 };
                 return <UIToolRunner tool={getTool('Strategic Memory Graph Viewer')} props={kgViewerProps} />;
+            }
             case 'KICAD':
-            default:
+            default: {
+                // The KiCad Panel now handles its own internal state, including showing the layout tool.
+                // This simplifies the top-level logic and keeps the progress view persistent.
                 return <UIToolRunner tool={getTool('KiCad Design Automation Panel')} props={kicadPanelProps} />;
+            }
         }
     };
 
     return (
         <div className="min-h-screen bg-gray-900 text-white flex flex-col p-4 sm:p-6 lg:p-8">
             <UIToolRunner tool={getTool('Application Header')} props={{}} />
-            <main className="flex-grow grid grid-cols-1 lg:grid-cols-5 gap-6 mt-4">
-                {/* Left Column */}
-                <div className="lg:col-span-2 space-y-6">
-                    <UIToolRunner tool={getTool('Main View Selector')} props={{ mainView: appState.mainView, setMainView: appSetters.setMainView, isPcbResultVisible: !!kicadState.pcbArtifacts || !!kicadState.currentLayoutData }} />
-                    {renderMainView()}
-                    {appState.mainView === 'ROBOTICS' && <UIToolRunner tool={getTool('Manual Robot Control')} props={{ handleManualControl, isSwarmRunning: swarmState.isSwarmRunning }} />}
-                    <UIToolRunner tool={getTool('Local AI Server Panel')} props={localAiServerProps} />
-                    <UIToolRunner tool={getTool('Configuration Panel')} props={configProps} />
-                    <UIToolRunner tool={getTool('Tool Relevance Configuration')} props={relevanceConfigProps} />
-                    <UIToolRunner tool={getTool('User Input Form')} props={{ userInput: appState.userInput, setUserInput: appSetters.setUserInput, handleSubmit, isSwarmRunning: swarmState.isSwarmRunning }} />
-                </div>
 
-                {/* Right Column */}
-                <div className="lg:col-span-3 space-y-6">
-                     <UIToolRunner tool={getTool('Agent Status Display')} props={{ agentSwarm: swarmState.agentSwarm, isSwarmRunning: swarmState.isSwarmRunning, handleStopSwarm: swarmHandlers.handleStopSwarm, currentUserTask: swarmState.currentUserTask }} />
-                     {swarmState.isSwarmRunning && <UIToolRunner tool={getTool('Active Tool Context')} props={activeToolsProps} />}
-                    <UIToolRunner tool={getTool('Tool List Display')} props={{ tools: allTools, isServerConnected }} />
-                </div>
-            </main>
+            {swarmState.lastSwarmRunHistory ? (
+                <main className="flex-grow mt-4">
+                    <div className="h-full max-h-[calc(100vh-200px)]">
+                        <UIToolRunner
+                            tool={getTool('Workflow Capture Panel')}
+                            props={{
+                                history: swarmState.lastSwarmRunHistory,
+                                onClose: swarmHandlers.clearLastSwarmRunHistory
+                            }}
+                        />
+                    </div>
+                </main>
+            ) : (
+                <main className="flex-grow grid grid-cols-1 lg:grid-cols-5 gap-6 mt-4">
+                    {/* Left Column */}
+                    <div className="lg:col-span-2 space-y-6">
+                        <UIToolRunner tool={getTool('Main View Selector')} props={{ mainView: appState.mainView, setMainView: appSetters.setMainView, isPcbResultVisible: !!kicadState.pcbArtifacts }} />
+                        {appState.mainView === 'ROBOTICS' && (
+                             <UIToolRunner tool={getTool('Agent Control Panel')} props={agentControlProps} />
+                        )}
+                        {renderMainView()}
+                        <UIToolRunner tool={getTool('Local AI Server Panel')} props={localAiServerProps} />
+                        <UIToolRunner tool={getTool('Configuration Panel')} props={configProps} />
+                        <UIToolRunner tool={getTool('Tool Relevance Configuration')} props={relevanceConfigProps} />
+                        <UIToolRunner tool={getTool('User Input Form')} props={{ userInput: appState.userInput, setUserInput: appSetters.setUserInput, handleSubmit, isSwarmRunning: swarmState.isSwarmRunning }} />
+                    </div>
+
+                    {/* Right Column */}
+                    <div className="lg:col-span-3 space-y-6">
+                         <UIToolRunner tool={getTool('Agent Status Display')} props={{ agentSwarm: swarmState.agentSwarm, isSwarmRunning: swarmState.isSwarmRunning, handleStopSwarm: swarmHandlers.handleStopSwarm, currentUserTask: swarmState.currentUserTask }} />
+                         {swarmState.isSwarmRunning && <UIToolRunner tool={getTool('Active Tool Context')} props={activeToolsProps} />}
+                        <UIToolRunner tool={getTool('Tool List Display')} props={{ tools: allTools, isServerConnected: isServerConnected }} />
+                    </div>
+                </main>
+            )}
             <UIToolRunner tool={getTool('Debug Log View')} props={debugLogProps} />
         </div>
     );

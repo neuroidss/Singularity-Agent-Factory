@@ -17,7 +17,7 @@ export const UI_DISPLAY_TOOLS: ToolCreatorPayload[] = [
         ],
         implementationCode: `
           const Spinner = () => (
-            <svg className="animate-spin -ml-1 mr-3 h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+            <svg className="animate-spin -ml-1 mr-3 h-5 w-5 text-white" xmlns="http://www.w.org/2000/svg" fill="none" viewBox="0 0 24 24">
                 <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
                 <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
             </svg>
@@ -216,10 +216,17 @@ export const UI_DISPLAY_TOOLS: ToolCreatorPayload[] = [
                     loader.load(fullGlbUrl, (gltf) => {
                         if (!isMounted) return;
                         const model = gltf.scene;
-                        
+
+                        // Correct the orientation from KiCad's Z-up to Three.js's Y-up
+                        model.rotation.x = -Math.PI / 2;
+                        model.updateMatrixWorld(true);
+
                         const box = new THREE.Box3().setFromObject(model);
                         const center = box.getCenter(new THREE.Vector3());
+
+                        // Center the model and place its bottom on the Y=0 plane
                         model.position.sub(center);
+                        model.position.y -= box.min.y;
                         
                         const size = box.getSize(new THREE.Vector3());
                         const maxDim = Math.max(size.x, size.y, size.z);
@@ -227,9 +234,10 @@ export const UI_DISPLAY_TOOLS: ToolCreatorPayload[] = [
                         let cameraZ = Math.abs(maxDim / 2 / Math.tan(fov / 2));
                         cameraZ *= 1.5;
                         camera.position.z = cameraZ;
+                        camera.position.y = cameraZ * 0.75;
                         
-                        const minZ = box.min.z;
-                        const cameraToFarEdge = (minZ < 0) ? -minZ + cameraZ : cameraZ - minZ;
+                        const minZ_rotated = box.min.z;
+                        const cameraToFarEdge = (minZ_rotated < 0) ? -minZ_rotated + cameraZ : cameraZ - minZ_rotated;
                         camera.far = cameraToFarEdge * 3;
                         camera.updateProjectionMatrix();
 

@@ -1,4 +1,7 @@
+
+
 import type { ToolCreatorPayload } from '../types';
+import { STRATEGIC_MEMORY_SCRIPT } from './strategy_manager_script';
 
 const STRATEGIC_MEMORY_GRAPH_VIEWER_PAYLOAD: ToolCreatorPayload = {
     name: 'Strategic Memory Graph Viewer',
@@ -17,6 +20,7 @@ const STRATEGIC_MEMORY_GRAPH_VIEWER_PAYLOAD: ToolCreatorPayload = {
 
         React.useEffect(() => {
             if (isLoading || !graph || !graph.nodes) {
+                if(mountRef.current) mountRef.current.innerHTML = '';
                 return;
             }
 
@@ -116,7 +120,7 @@ const STRATEGIC_MEMORY_GRAPH_VIEWER_PAYLOAD: ToolCreatorPayload = {
                     // Center attraction
                     sim.bodies.forEach(body => {
                         const pos = body.translation();
-                        const force = { x: -pos.x, y: -pos.y, z: -pos.z };
+                        const force = { x: -pos.x * 0.1, y: -pos.y * 0.1, z: -pos.z * 0.1 };
                         body.addForce(force, true);
                     });
 
@@ -127,7 +131,7 @@ const STRATEGIC_MEMORY_GRAPH_VIEWER_PAYLOAD: ToolCreatorPayload = {
                         if (bodyA && bodyB) {
                             const posA = bodyA.translation();
                             const posB = bodyB.translation();
-                            const springConstant = 0.5;
+                            const springConstant = 0.2;
                             const force = {
                                 x: (posB.x - posA.x) * springConstant,
                                 y: (posB.y - posA.y) * springConstant,
@@ -168,6 +172,7 @@ const STRATEGIC_MEMORY_GRAPH_VIEWER_PAYLOAD: ToolCreatorPayload = {
                 return () => {
                     isMounted = false;
                     if (sim.animationFrameId) cancelAnimationFrame(sim.animationFrameId);
+                    if (sim.world) sim.world.free();
                     if (mountRef.current && sim.renderer.domElement && mountRef.current.contains(sim.renderer.domElement)) {
                         mountRef.current.removeChild(sim.renderer.domElement);
                     }
@@ -214,89 +219,90 @@ const STRATEGIC_MEMORY_GRAPH_VIEWER_PAYLOAD: ToolCreatorPayload = {
     `
 };
 
-const READ_MEMORY_TOOL_PAYLOAD: ToolCreatorPayload = {
-    name: 'Read Strategic Memory',
-    description: 'Reads the entire strategic memory graph from the persistent server storage.',
-    category: 'Server',
-    executionEnvironment: 'Server',
-    purpose: 'To load the agent\'s long-term knowledge and plans into its current context for strategic decision-making.',
-    parameters: [],
-    implementationCode: 'python scripts/strategy_manager.py read'
-};
-
-const DEFINE_DIRECTIVE_TOOL_PAYLOAD: ToolCreatorPayload = {
-    name: 'Define Strategic Directive',
-    description: 'Creates a new high-level, long-term "Directive" node in the strategic memory graph. This is the foundation for long-term planning.',
-    category: 'Server',
-    executionEnvironment: 'Server',
-    purpose: 'To allow the agent to formalize and persist its long-term goals, moving beyond short-term task execution.',
-    parameters: [
-        { name: 'id', type: 'string', description: 'A short, unique, machine-readable ID for the directive (e.g., "master_rf_design").', required: true },
-        { name: 'label', type: 'string', description: 'A human-readable description of the directive.', required: true },
-        { name: 'parent', type: 'string', description: 'Optional ID of an existing node this directive is related to.', required: false },
-    ],
-    implementationCode: 'python scripts/strategy_manager.py define_directive'
-};
-
-const UPDATE_MEMORY_TOOL_PAYLOAD: ToolCreatorPayload = {
-    name: 'Update Strategic Memory',
-    description: 'Adds or updates nodes and edges in the strategic memory graph to record new knowledge, plans, or relationships.',
-    category: 'Server',
-    executionEnvironment: 'Server',
-    purpose: 'To enable the agent to learn and build upon its knowledge over time, creating a persistent and evolving understanding of its world.',
-    parameters: [
-        { name: 'nodes', type: 'array', description: 'A JSON string of an array of node objects to add or update. Each object needs at least an "id" and "label".', required: false },
-        { name: 'edges', type: 'array', description: 'A JSON string of an array of edge objects to add. Each object needs a "source" and "target" ID.', required: false },
-    ],
-    implementationCode: 'python scripts/strategy_manager.py update_memory'
-};
+const STRATEGY_TOOL_DEFINITIONS: ToolCreatorPayload[] = [
+    {
+        name: 'Read Strategic Memory',
+        description: 'Reads the entire strategic memory graph from the persistent server storage.',
+        category: 'Server',
+        executionEnvironment: 'Server',
+        purpose: 'To load the agent\'s long-term knowledge and plans into its current context for strategic decision-making.',
+        parameters: [],
+        implementationCode: 'python scripts/strategic_memory.py read'
+    },
+    {
+        name: 'Define Strategic Directive',
+        description: 'Creates a new high-level, long-term "Directive" node in the strategic memory graph. This is the foundation for long-term planning.',
+        category: 'Server',
+        executionEnvironment: 'Server',
+        purpose: 'To allow the agent to formalize and persist its long-term goals, moving beyond short-term task execution.',
+        parameters: [
+            { name: 'id', type: 'string', description: 'A short, unique, machine-readable ID for the directive (e.g., "master_rf_design").', required: true },
+            { name: 'label', type: 'string', description: 'A human-readable description of the directive.', required: true },
+            { name: 'parent', type: 'string', description: 'Optional ID of an existing node this directive is related to.', required: false },
+        ],
+        implementationCode: 'python scripts/strategic_memory.py define_directive'
+    },
+    {
+        name: 'Update Strategic Memory',
+        description: 'Adds or updates nodes and edges in the strategic memory graph to record new knowledge, plans, or relationships.',
+        category: 'Server',
+        executionEnvironment: 'Server',
+        purpose: 'To enable the agent to learn and build upon its knowledge over time, creating a persistent and evolving understanding of its world.',
+        parameters: [
+            { name: 'nodes', type: 'array', description: 'A JSON string of an array of node objects to add or update. Each object needs at least an "id" and "label".', required: false },
+            { name: 'edges', type: 'array', description: 'A JSON string of an array of edge objects to add. Each object needs a "source" and "target" ID.', required: false },
+        ],
+        implementationCode: 'python scripts/strategic_memory.py update_memory'
+    },
+];
 
 const STRATEGY_INSTALLER_TOOL: ToolCreatorPayload = {
     name: 'Install Strategic Cognition Suite',
-    description: 'A one-time setup action that installs the Python script and all necessary tools for managing the agent\'s long-term Strategic Memory.',
+    description: 'A one-time setup action that installs all necessary client-side tools for managing the agent\'s long-term Strategic Memory simulation.',
     category: 'Automation',
     executionEnvironment: 'Client',
     purpose: "To bootstrap the agent's ability for long-term planning and learning by installing its strategic memory management system.",
     parameters: [],
     implementationCode: `
-        const serverToolPayloads = [
-            ${JSON.stringify(READ_MEMORY_TOOL_PAYLOAD)},
-            ${JSON.stringify(DEFINE_DIRECTIVE_TOOL_PAYLOAD)},
-            ${JSON.stringify(UPDATE_MEMORY_TOOL_PAYLOAD)},
+        // --- Step 1: Write the Python script to the server ---
+        console.log('[INFO] Writing Strategic Memory Python script to the server...');
+        if (runtime.isServerConnected()) {
+            try {
+                await runtime.tools.run('Server File Writer', { 
+                    filePath: 'strategic_memory.py', 
+                    content: ${JSON.stringify(STRATEGIC_MEMORY_SCRIPT)} 
+                });
+                console.log('[INFO] Strategic Memory script written successfully.');
+            } catch (e) {
+                throw new Error(\`Failed to write script 'strategic_memory.py' to server: \${e.message}\`);
+            }
+        } else {
+            console.log('[INFO] Server not connected. Skipping Python script creation. Strategy tools will be simulated.');
+        }
+
+        // --- Step 2: Create the tool definitions ---
+        const toolPayloads = [
+            ...${JSON.stringify(STRATEGY_TOOL_DEFINITIONS)},
+            ${JSON.stringify(STRATEGIC_MEMORY_GRAPH_VIEWER_PAYLOAD)}
         ];
-        const clientToolPayloads = [${JSON.stringify(STRATEGIC_MEMORY_GRAPH_VIEWER_PAYLOAD)}];
         
-        // This is a placeholder for the actual Python script content which will be defined in its own file.
-        // In a real scenario, this might be fetched or imported.
-        const strategyManagerScriptContent = runtime.getStrategyManagerScript();
-
-        // Step 1: Write the Python script to the server
-        await runtime.tools.run('Server File Writer', {
-            filePath: 'strategy_manager.py',
-            content: strategyManagerScriptContent
-        });
-
-        // Step 2: Create all server-side tools
-        for (const payload of serverToolPayloads) {
+        for (const payload of toolPayloads) {
             try {
                 await runtime.tools.run('Tool Creator', payload);
             } catch (e) {
-                console.warn(\`[WARN] Server tool '\${payload.name}' might already exist. Skipping. Error: \${e.message}\`);
+                console.warn(\`[WARN] Client tool '\${payload.name}' might already exist. Skipping. Error: \${e.message}\`);
             }
         }
         
-        // Step 3: Create the client-side UI tool
-        for (const payload of clientToolPayloads) {
+        if (runtime.isServerConnected()) {
             try {
-                await runtime.tools.run('Tool Creator', payload);
+                const { count } = await runtime.forceRefreshServerTools();
+                console.log(\`[INFO] Client state synchronized with server. \${count} server tools loaded.\`);
             } catch (e) {
-                 console.warn(\`[WARN] Client tool '\${payload.name}' might already exist. Skipping. Error: \${e.message}\`);
+                console.error('[ERROR] Failed to force-refresh server tools after installation:', e);
             }
         }
         
-        // Step 4: Refresh server tools list in the client
-        await runtime.fetchServerTools();
-
         return { success: true, message: 'Strategic Cognition Suite installed successfully.' };
     `
 };

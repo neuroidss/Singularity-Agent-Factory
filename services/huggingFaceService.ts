@@ -35,13 +35,11 @@ const getPipeline = async (modelId: string, onProgress: (message: string) => voi
     (window as any).env.allowLocalModels = false;
     (window as any).env.useFbgemm = false;
     
-    // The options for the pipeline.
+    // The options for the pipeline. Using fp16 for reduced memory usage.
     const pipelineOptions = {
         device: huggingFaceDevice,
         progress_callback: handleProgress(onProgress),
-        quantization: 'auto'
-//        quantization: 'int8'
-//        quantization: 'fp16'
+        dtype: 'fp16'
     };
     
     // By casting the options argument to 'any' at the call site, we prevent TypeScript from creating

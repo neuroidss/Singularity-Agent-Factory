@@ -1,4 +1,3 @@
-
 //server/kicad_cli_commands.ts is typescript file with text variable with python code of server/kicad_cli_commands.py
 export const KICAD_CLI_COMMANDS_SCRIPT = `
 import os
@@ -40,7 +39,7 @@ os.makedirs(STATE_DIR, exist_ok=True)
 FREEROUTING_JAR_PATH = os.path.join(os.path.dirname(__file__), 'freerouting.jar')
 
 
-# --- Tool Implementations ---
+# --- Utility Functions ---
 class AutoStopper:
     """A stateful class to decide when to stop the autorouter."""
     def __init__(self, patience=50, low_progress_threshold=10.0):
@@ -53,7 +52,7 @@ class AutoStopper:
             message_text = msg.get('msg', '')
             
             # This regex captures the number of changes from both relevant message formats
-            match = re.search(r"(?:making|There were only) (\\\\d+\\\\.?\\\\d*) changes", message_text)
+            match = re.search("(?:making|There were only) (\\\\d+\\\\.?\\\\d*) changes", message_text)
 
             if match:
                 changes = float(match.group(1))
@@ -63,7 +62,7 @@ class AutoStopper:
                     self.low_progress_count = 0 # Reset if progress is good
             
             if self.low_progress_count >= self.patience:
-                print(f"INFO: Stopping autorouter due to low progress ({self.low_progress_count} consecutive rounds with < {self.low_progress_threshold} changes).", file=sys.stderr)
+                print(f"INFO: Stopping autorouter due to low progress (\\{self.low_progress_count} consecutive rounds with < \\{self.low_progress_threshold} changes).", file=sys.stderr)
                 return True # Signal to stop
         return False # Signal to continue
 
@@ -84,6 +83,30 @@ def log_error_and_exit(message):
 def run_subprocess(command):
     return subprocess.Popen(command, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
 
+def add_rule_to_state(project_name, rule_object):
+    """A helper function to safely add a rule to the project's state file."""
+    state_file = get_state_path(project_name, 'state.json')
+    lock_path = state_file + '.lock'
+    with open(lock_path, 'w') as lock_file:
+        fcntl.flock(lock_file, fcntl.LOCK_EX)
+        try:
+            try:
+                state = json.load(open(state_file)) if os.path.exists(state_file) else {}
+            except json.JSONDecodeError:
+                state = {}
+
+            if 'rules' not in state or not isinstance(state['rules'], list):
+                state['rules'] = []
+            
+            state['rules'].append(rule_object)
+            
+            with open(state_file, 'w') as f:
+                json.dump(state, f, indent=2)
+        finally:
+             fcntl.flock(lock_file, fcntl.LOCK_UN)
+
+# --- Tool Implementations ---
+
 def define_components(args):
     """Adds a single component definition, exports its SVG footprint, and returns its dimensions."""
     state_file = get_state_path(args.projectName, 'state.json')
@@ -91,6 +114,7 @@ def define_components(args):
     
     svg_path_rel = None
     dimensions = None
+    CrtYd_dimensions = None
     pins_data = []
 
     with open(lock_path, 'w') as lock_file:
@@ -119,22 +143,34 @@ def define_components(args):
                          fp = pcbnew.FootprintLoad(library_path, footprint_name)
 
                     if fp:
+                        # Sanitize component reference to be a valid filename part
+                        sanitized_ref = re.sub(r'[\\\\/:*?"<>|]+', '_', args.componentReference)
+                        
                         # Export SVG
-                        final_svg_filename = f"{args.componentReference}_{footprint_name}.svg"
+                        final_svg_filename = f"{sanitized_ref}_{footprint_name}.svg"
                         final_svg_path_abs = os.path.join(STATE_DIR, final_svg_filename)
                         
-                        cli_command = [ 'kicad-cli', 'fp', 'export', 'svg', '--footprint', footprint_name, '--output', STATE_DIR, '--layers', 'F.SilkS,F.CrtYd,F.Fab,F.Cu', '--black-and-white', library_path ]
+                        cli_command = [ 'kicad-cli', 'fp', 'export', 'svg', '--footprint', footprint_name, '--output', STATE_DIR, '--layers', 'F.Fab,F.Cu', '--black-and-white', library_path ]
                         temp_svg_path = os.path.join(STATE_DIR, f"{footprint_name}.svg")
                         if os.path.exists(temp_svg_path): os.remove(temp_svg_path)
                         subprocess.run(cli_command, check=True, capture_output=True, text=True)
                         if os.path.exists(temp_svg_path):
                             if os.path.exists(final_svg_path_abs): os.remove(final_svg_path_abs)
                             os.rename(temp_svg_path, final_svg_path_abs)
-                            svg_path_rel = os.path.relpath(final_svg_path_abs, os.path.join(os.path.dirname(__file__), '..'))
+                            svg_path_rel = os.path.relpath(final_svg_path_abs, os.path.join(os.path.dirname(__file__), '..')).replace(os.path.sep, '/')
 
-                        # Extract Dimensions
+                        # Extract Dimensions (Physical BBox)
                         bbox = fp.GetBoundingBox(True, False)
                         dimensions = {'width': pcbnew.ToMM(bbox.GetWidth()), 'height': pcbnew.ToMM(bbox.GetHeight())}
+
+                        # Extract CrtYd Dimensions
+                        fp.BuildCourtyardCaches()
+                        fp_side = fp.GetSide()
+                        CrtYd_layer = pcbnew.F_CrtYd if fp_side == pcbnew.F_Cu else pcbnew.B_CrtYd
+                        CrtYd_shape = fp.GetCourtyard(CrtYd_layer)
+                        CrtYd_bbox = CrtYd_shape.BBox()
+                        if CrtYd_bbox.IsValid() and CrtYd_bbox.GetWidth() > 0 and CrtYd_bbox.GetHeight() > 0:
+                            CrtYd_dimensions = {'width': pcbnew.ToMM(CrtYd_bbox.GetWidth()), 'height': pcbnew.ToMM(CrtYd_bbox.GetHeight())}
 
                         # Extract Pin Data
                         for pad in fp.Pads():
@@ -146,13 +182,16 @@ def define_components(args):
                                 "rotation": pad.GetOrientationDegrees()
                             })
             except Exception as e:
-                print(f"Warning: Could not process footprint {args.footprintIdentifier}. Reason: {e}", file=sys.stderr)
+                print(f"Warning: Could not process footprint \\{args.footprintIdentifier}. Reason: \\{e}", file=sys.stderr)
 
             new_component = {
                 "ref": args.componentReference, "part": args.componentDescription,
                 "value": args.componentValue, "footprint": args.footprintIdentifier,
-                "pin_count": args.numberOfPins, "svgPath": svg_path_rel, "dimensions": dimensions,
+                "pin_count": args.numberOfPins, "svgPath": svg_path_rel, 
+                "dimensions": dimensions,
+                "CrtYdDimensions": CrtYd_dimensions,
                 "pins": pins_data,
+                "side": args.side
             }
             state['components'] = [c for c in state['components'] if c['ref'] != new_component['ref']]
             state['components'].append(new_component)
@@ -165,60 +204,64 @@ def define_components(args):
     data_to_return = {"pins": pins_data}
     if svg_path_rel: data_to_return['svgPath'] = svg_path_rel
     if dimensions: data_to_return['dimensions'] = dimensions
+    if CrtYd_dimensions: data_to_return['CrtYdDimensions'] = CrtYd_dimensions
 
-    log_and_return(f"Component {args.componentReference} defined.", data=data_to_return)
+    log_and_return(f"Component \\{args.componentReference} defined.", data=data_to_return)
 
-def define_placement_constraint(args):
-    """Adds a placement constraint to the board's state file."""
-    state_file = get_state_path(args.projectName, 'state.json')
-    lock_path = state_file + '.lock'
-    with open(lock_path, 'w') as lock_file:
-        fcntl.flock(lock_file, fcntl.LOCK_EX)
-        try:
-            state = json.load(open(state_file)) if os.path.exists(state_file) else {}
-            if 'constraints' not in state: state['constraints'] = []
-            
-            try:
-                components_arg = ast.literal_eval(args.components)
-            except (ValueError, SyntaxError):
-                log_error_and_exit("Invalid --components format. Expected a Python-style list. Received: {}".format(args.components))
+def add_absolute_position_constraint(args):
+    rule = {"type": "AbsolutePositionConstraint", "component": args.componentReference, "x": args.x, "y": args.y}
+    add_rule_to_state(args.projectName, rule)
+    log_and_return(f"Rule added: Lock {args.componentReference} to ({args.x}, {args.y}).")
 
-            new_constraint = { "type": args.type }
-            
-            if args.type == 'fixed_group':
-                if not isinstance(components_arg, list) or not all(isinstance(i, dict) for i in components_arg):
-                     log_error_and_exit("For 'fixed_group', --components must be a list of dictionaries.")
-                if not args.anchor:
-                     log_error_and_exit("--anchor is required for 'fixed_group' constraint.")
-                new_constraint['anchor'] = args.anchor
-                new_constraint['components'] = components_arg
-            elif args.type == 'relative_position':
-                if not isinstance(components_arg, list) or len(components_arg) != 2:
-                    log_error_and_exit("For 'relative_position', --components must be a list of two component refs.")
-                if args.offsetX_mm is None or args.offsetY_mm is None:
-                    log_error_and_exit("offsetX_mm and offsetY_mm are required for 'relative_position' constraint.")
-                new_constraint['components'] = components_arg
-                new_constraint['offsetX_mm'] = float(args.offsetX_mm)
-                new_constraint['offsetY_mm'] = float(args.offsetY_mm)
-            elif args.type == 'fixed_orientation':
-                if not isinstance(components_arg, list) or len(components_arg) == 0:
-                     log_error_and_exit("For 'fixed_orientation', --components must be a non-empty list of component refs.")
-                if args.angle_deg is None:
-                    log_error_and_exit("angle_deg is required for 'fixed_orientation' constraint.")
-                new_constraint['components'] = components_arg
-                new_constraint['angle_deg'] = float(args.angle_deg)
-            else:
-                log_error_and_exit(f"Unsupported constraint type: {args.type}")
+def add_proximity_constraint(args):
+    try:
+        groups = json.loads(args.groupsJSON)
+        if not isinstance(groups, list): raise ValueError()
+    except (json.JSONDecodeError, ValueError):
+        log_error_and_exit(f"Invalid --groupsJSON format. Expected JSON array of arrays. Received: {args.groupsJSON}")
+    rule = {"type": "ProximityConstraint", "groups": groups}
+    add_rule_to_state(args.projectName, rule)
+    log_and_return(f"Rule added: Proximity constraint for {len(groups)} groups.")
 
-            state['constraints'].append(new_constraint)
-            
-            with open(state_file, 'w') as f:
-                json.dump(state, f, indent=2)
-        finally:
-             fcntl.flock(lock_file, fcntl.LOCK_UN)
-    
-    log_and_return(f"Placement constraint of type '{args.type}' defined.")
+def add_alignment_constraint(args):
+    try:
+        components = json.loads(args.componentsJSON)
+        if not isinstance(components, list): raise ValueError()
+    except (json.JSONDecodeError, ValueError):
+        log_error_and_exit(f"Invalid --componentsJSON format. Expected JSON array of strings. Received: {args.componentsJSON}")
+    rule = {"type": "AlignmentConstraint", "axis": args.axis, "components": components}
+    add_rule_to_state(args.projectName, rule)
+    log_and_return(f"Rule added: Align {len(components)} components along {args.axis} axis.")
 
+def add_symmetry_constraint(args):
+    try:
+        pairs = json.loads(args.pairsJSON)
+        if not isinstance(pairs, list): raise ValueError()
+    except (json.JSONDecodeError, ValueError):
+        log_error_and_exit(f"Invalid --pairsJSON format. Expected JSON array of pairs. Received: {args.pairsJSON}")
+    rule = {"type": "SymmetryConstraint", "axis": args.axis, "pairs": pairs}
+    add_rule_to_state(args.projectName, rule)
+    log_and_return(f"Rule added: Symmetry for {len(pairs)} pairs across {args.axis} axis.")
+
+def add_circular_constraint(args):
+    try:
+        components = json.loads(args.componentsJSON)
+        if not isinstance(components, list): raise ValueError()
+    except (json.JSONDecodeError, ValueError):
+        log_error_and_exit(f"Invalid --componentsJSON format. Expected JSON array of strings. Received: {args.componentsJSON}")
+    rule = {"type": "CircularConstraint", "components": components, "radius": args.radius, "center": [args.centerX, args.centerY]}
+    add_rule_to_state(args.projectName, rule)
+    log_and_return(f"Rule added: Circular arrangement for {len(components)} components.")
+
+def add_layer_constraint(args):
+    try:
+        components = json.loads(args.componentsJSON)
+        if not isinstance(components, list): raise ValueError()
+    except (json.JSONDecodeError, ValueError):
+        log_error_and_exit(f"Invalid --componentsJSON format. Expected JSON array of strings. Received: {args.componentsJSON}")
+    rule = {"type": "LayerConstraint", "layer": args.layer, "components": components}
+    add_rule_to_state(args.projectName, rule)
+    log_and_return(f"Rule added: Place {len(components)} components on {args.layer} layer.")
 
 def define_net(args):
     """Adds a single net definition to the board's state file, with file locking."""
@@ -240,10 +283,10 @@ def define_net(args):
                 if not isinstance(pins_data, list):
                     raise ValueError("Input did not evaluate to a list.")
             except (ValueError, SyntaxError):
-                log_error_and_exit(f"""Invalid --pins format. Expected a Python-style list of strings, e.g., '["U1-1", "R1-2"]'. Received: {args.pins}""")
+                log_error_and_exit(f\"\"\"Invalid --pins format. Expected a Python-style list of strings, e.g., '["U1-1", "R1-2"]'. Received: \\{args.pins}\"\"\")
 
             if not pins_data:
-                log_error_and_exit(f"No valid pins found in argument: '{args.pins}'")
+                log_error_and_exit(f"No valid pins found in argument: '\\{args.pins}'")
 
             new_net = { "name": args.netName, "pins": pins_data }
             # Remove existing net with same name to allow updates
@@ -255,7 +298,7 @@ def define_net(args):
         finally:
              fcntl.flock(lock_file, fcntl.LOCK_UN)
     
-    log_and_return(f"Net '{args.netName}' defined successfully with {len(pins_data)} pins.")
+    log_and_return(f"Net '\\{args.netName}' defined successfully with \\{len(pins_data)} pins.")
 
 
 def generate_netlist(args):
@@ -276,14 +319,24 @@ def generate_netlist(args):
     with circuit:
         for comp_data in state.get("components", []):
             try:
-                if comp_data.get("pin_count", 0) > 0:
-                     p = Part(tool=SKIDL, name=comp_data['part'], ref=comp_data['ref'], footprint=comp_data['footprint'])
-                     p.value = comp_data['value']
-                     p += [Pin(num=i) for i in range(1, comp_data['pin_count'] + 1)]
+                part_value = comp_data.get('value', '')
+                pin_count = comp_data.get('pin_count', 0)
+                
+                # Use lib:part syntax only if pin_count is 0 AND value contains a colon
+                if ':' in part_value and pin_count == 0:
+                    lib, name = part_value.split(':', 1)
+                    Part(lib=f"\\{lib}.kicad_sym", name=name, ref=comp_data['ref'], footprint=comp_data['footprint'])
                 else:
-                     Part(lib=f"{comp_data['value'].split(':')[0]}.kicad_sym", name=comp_data['value'].split(':')[1], ref=comp_data['ref'], footprint=comp_data['footprint'])
+                    # Otherwise, create a generic part.
+                    # This handles parts with pin_count > 0,
+                    # and parts with pin_count == 0 but a simple value (e.g. a resistor with value "10k").
+                    p = Part(tool=SKIDL, name=comp_data['part'], ref=comp_data['ref'], footprint=comp_data['footprint'])
+                    p.value = comp_data['value']
+                    if pin_count > 0:
+                        p += [Pin(num=i) for i in range(1, pin_count + 1)]
+
             except Exception as e:
-                log_error_and_exit(f"Failed to create SKiDL part for {comp_data['ref']}: {e}. Ensure the library is available or provide a pin_count.")
+                log_error_and_exit(f"Failed to create SKiDL part for \\{comp_data['ref']}: \\{e}. Ensure the library is available or provide a pin_count.")
 
         nets_data = state.get("nets", [])
         for net_obj in nets_data:
@@ -293,13 +346,13 @@ def generate_netlist(args):
             net = Net(net_name)
             pins_to_connect = []
             for pin_str in pins_to_connect_str:
-                match = re.match(r'([A-Za-z]+[0-9]+)-([0-9A-Za-z_]+)', pin_str)
+                match = re.match(r'([A-Za-z0-9_]+)-([0-9A-Za-z_]+)', pin_str)
                 if not match:
-                    log_error_and_exit(f"Invalid pin format '{pin_str}' in net '{net_name}'. Expected format 'REF-PIN'.")
+                    log_error_and_exit(f"Invalid pin format '\\{pin_str}' in net '\\{net_name}'. Expected format 'REF-PIN'.")
                 ref, pin_num = match.groups()
                 part = next((p for p in circuit.parts if str(p.ref) == ref), None)
                 if not part:
-                    log_error_and_exit(f"Part with reference '{ref}' not found in circuit for connection.")
+                    log_error_and_exit(f"Part with reference '\\{ref}' not found in circuit for connection.")
                 
                 pins_to_connect.append(part[pin_num])
             
@@ -308,7 +361,7 @@ def generate_netlist(args):
     netlist_path = get_state_path(args.projectName, 'netlist.net')
     circuit.generate_netlist(file_=netlist_path)
     
-    log_and_return(f"Netlist generated successfully at {netlist_path}.")
+    log_and_return(f"Netlist generated successfully at \\{netlist_path}.")
 
 def create_initial_pcb(args):
     """Creates a blank PCB file and imports the netlist using kinet2pcb."""
@@ -319,19 +372,27 @@ def create_initial_pcb(args):
         log_error_and_exit("Netlist file not found. Please generate the netlist first.")
 
     try:
-        command = ['kinet2pcb', '-i', netlist_path, '-o', pcb_path]
+        # Define a path for custom project-specific footprint libraries
+        custom_footprints_path = os.path.join(STATE_DIR, 'footprints')
+        
+        command = ['kinet2pcb', '-i', netlist_path, '-o', pcb_path, '-l', '.']
+        
+        # Add the custom library path to the command if it exists, allowing kinet2pcb to find custom footprints.
+        if os.path.isdir(custom_footprints_path):
+            command.extend(['-l', custom_footprints_path])
+        
         result = subprocess.run(command, check=True, capture_output=True, text=True)
     except FileNotFoundError:
         log_error_and_exit("The 'kinet2pcb' command was not found. Please ensure KiCad's bin directory is in your system's PATH.")
     except subprocess.CalledProcessError as e:
-        log_error_and_exit(f"An error occurred while running kinet2pcb. Stderr: {e.stderr}. Stdout: {e.stdout}")
+        log_error_and_exit(f"An error occurred while running kinet2pcb. Stderr: \\{e.stderr}. Stdout: \\{e.stdout}")
     except Exception as e:
-        log_error_and_exit(f"An unexpected error occurred during initial PCB creation: {str(e)}")
+        log_error_and_exit(f"An unexpected error occurred during initial PCB creation: \\{str(e)}")
 
     if not os.path.exists(pcb_path):
-        log_error_and_exit(f"kinet2pcb ran without error, but the output PCB file '{os.path.basename(pcb_path)}' was not created.")
+        log_error_and_exit(f"kinet2pcb ran without error, but the output PCB file '\\{os.path.basename(pcb_path)}' was not created.")
 
-    log_and_return(f"Initial PCB created at {pcb_path} from netlist using kinet2pcb.")
+    log_and_return(f"Initial PCB created at \\{pcb_path} from netlist using kinet2pcb.")
 
 def create_board_outline(args):
     pcb_path = get_state_path(args.projectName, 'pcb.kicad_pcb')
@@ -399,7 +460,7 @@ def create_board_outline(args):
         circle.SetEnd(pcbnew.VECTOR2I(center.x + radius_nm, center.y)) # Point on circumference
         board.Add(circle)
         
-        message = f"Circular board outline created (diameter: {diameter_mm:.2f}mm)."
+        message = f"Circular board outline created (diameter: \\{diameter_mm:.2f}mm)."
 
     else: # Default to rectangle
         width_mm, height_mm = args.boardWidthMillimeters, args.boardHeightMillimeters
@@ -439,7 +500,7 @@ def create_board_outline(args):
             seg.SetStart(points[i]); seg.SetEnd(points[i+1]); seg.SetLayer(pcbnew.Edge_Cuts); seg.SetWidth(pcbnew.FromMM(0.1))
             board.Add(seg)
         
-        message = f"Rectangular board outline created ({width_mm:.2f}mm x {height_mm:.2f}mm)."
+        message = f"Rectangular board outline created (\\{width_mm:.2f}mm x \\{height_mm:.2f}mm)."
 
     pcbnew.SaveBoard(pcb_path, board)
     log_and_return(message)
@@ -459,8 +520,15 @@ def arrange_components(args):
     board.BuildConnectivity()
     state_data = json.load(open(state_file))
 
+    # --- DETECT BOARD SHAPE ---
+    board_shape = 'rectangle' # Default
+    for drawing in board.GetDrawings():
+        if drawing.GetLayerName() == 'Edge.Cuts' and drawing.GetShape() == pcbnew.S_CIRCLE:
+            board_shape = 'circle'
+            break
+
     edge_cuts = merge_all_drawings(board, 'Edge.Cuts')
-    if not edge_cuts:
+    if not edge_cuts or not edge_cuts[0]:
         board_bbox = board.ComputeBoundingBox(False)
         if board_bbox.GetWidth() == 0 or board_bbox.GetHeight() == 0:
              board_bbox = pcbnew.BOX2I(pcbnew.VECTOR2I(0,0), pcbnew.VECTOR2I(pcbnew.FromMM(50), pcbnew.FromMM(50)))
@@ -474,10 +542,12 @@ def arrange_components(args):
         min_y, max_y = min(all_y), max(all_y)
 
     layout_data = {
-        "nodes": [], "edges": [], "constraints": state_data.get("constraints", []),
+        "nodes": [], "edges": [], "rules": state_data.get("rules", []),
+        "layoutStrategy": args.layoutStrategy,
         "board_outline": {
             "x": pcbnew.ToMM(min_x), "y": pcbnew.ToMM(min_y),
             "width": pcbnew.ToMM(max_x - min_x), "height": pcbnew.ToMM(max_y - min_y),
+            "shape": board_shape
         }
     }
     
@@ -493,47 +563,65 @@ def arrange_components(args):
             bbox = fp.GetBoundingBox(True, False)
             width, height = pcbnew.ToMM(bbox.GetWidth()), pcbnew.ToMM(bbox.GetHeight())
 
-        # --- 3D Model Export ---
+        CrtYd_dims = None
+        if state_comp and state_comp.get('CrtYdDimensions'):
+            CrtYd_dims = state_comp['CrtYdDimensions']
+        else:
+            fp.BuildCourtyardCaches()
+            fp_side = fp.GetSide()
+            CrtYd_layer = pcbnew.F_CrtYd if fp_side == pcbnew.F_Cu else pcbnew.B_CrtYd
+            CrtYd_shape = fp.GetCourtyard(CrtYd_layer)
+            CrtYd_bbox = CrtYd_shape.BBox()
+            if CrtYd_bbox.IsValid() and CrtYd_bbox.GetWidth() > 0 and CrtYd_bbox.GetHeight() > 0:
+                CrtYd_dims = {'width': pcbnew.ToMM(CrtYd_bbox.GetWidth()), 'height': pcbnew.ToMM(CrtYd_bbox.GetHeight())}
+
+
+        # --- 3D Model Logic: Extract properties first, then find/generate path ---
         model_path, model_props = None, None
         models = fp.Models()
         if models and len(models) > 0:
             model_3d = models[0]
-            if model_3d.m_Filename:
-                temp_board = pcbnew.CreateEmptyBoard()
-                fp_clone = pcbnew.FOOTPRINT(fp)
-                fp_clone.SetPosition(pcbnew.VECTOR2I(0,0))
-                temp_board.Add(fp_clone)
-                
-                temp_pcb_path = os.path.join(STATE_DIR, f"temp_{ref}.kicad_pcb")
-                pcbnew.SaveBoard(temp_pcb_path, temp_board)
-                
-                glb_filename = f"{args.projectName}_{ref}.glb"
-                glb_path_abs = os.path.join(STATE_DIR, glb_filename)
-                glb_path_rel = os.path.relpath(glb_path_abs, os.path.join(os.path.dirname(__file__), '..'))
-                
-                glb_export_cmd = ['kicad-cli', 'pcb', 'export', 'glb', '--output', glb_path_abs, '--subst-models', '--force', temp_pcb_path]
-                
-                try:
-                    subprocess.run(glb_export_cmd, check=True, capture_output=True, text=True)
-                    if os.path.exists(glb_path_abs):
-                        model_path = glb_path_rel
-                        model_props = {
-                            "offset": {"x": model_3d.m_Offset.x, "y": model_3d.m_Offset.y, "z": model_3d.m_Offset.z},
-                            "scale": {"x": model_3d.m_Scale.x, "y": model_3d.m_Scale.y, "z": model_3d.m_Scale.z},
-                            "rotation": {"x": model_3d.m_Rotation.x, "y": model_3d.m_Rotation.y, "z": model_3d.m_Rotation.z}
-                        }
-                except subprocess.CalledProcessError as e:
-                    print(f"Warning: Failed to export GLB for {ref}. Stderr: {e.stderr}", file=sys.stderr)
-                finally:
-                    if os.path.exists(temp_pcb_path): os.remove(temp_pcb_path)
+            model_props = {
+                "offset": {"x": model_3d.m_Offset.x, "y": model_3d.m_Offset.y, "z": model_3d.m_Offset.z},
+                "scale": {"x": model_3d.m_Scale.x, "y": model_3d.m_Scale.y, "z": model_3d.m_Scale.z},
+                "rotation": {"x": model_3d.m_Rotation.x, "y": model_3d.m_Rotation.y, "z": model_3d.m_Rotation.z}
+            }
+            
+            print(f"INFO: [GLB Export] Found 3D model '\\{model_3d.m_Filename}' for '\\{ref}'. Attempting to generate GLB.", file=sys.stderr)
+
+            temp_board = pcbnew.CreateEmptyBoard()
+            fp_clone = pcbnew.FOOTPRINT(fp)
+            fp_clone.SetPosition(pcbnew.VECTOR2I(0,0))
+            temp_board.Add(fp_clone)
+            
+            temp_pcb_path = os.path.join(STATE_DIR, f"temp_{ref}.kicad_pcb")
+            pcbnew.SaveBoard(temp_pcb_path, temp_board)
+            
+            glb_filename = f"{args.projectName}_{ref}.glb"
+            glb_path_abs = os.path.join(STATE_DIR, glb_filename)
+            glb_path_rel = os.path.relpath(glb_path_abs, os.path.join(os.path.dirname(__file__), '..'))
+            
+            glb_export_cmd = ['kicad-cli', 'pcb', 'export', 'glb', '--output', glb_path_abs, '--subst-models', '--include-tracks', '--include-pads', '--include-zones', '--force', temp_pcb_path]
+            
+            try:
+                result = subprocess.run(glb_export_cmd, check=True, capture_output=True, text=True)
+                if os.path.exists(glb_path_abs):
+                    model_path = glb_path_rel.replace(os.path.sep, '/')
+                    print(f"INFO: [GLB Export] Successfully exported GLB for '\\{ref}' to '\\{model_path}'.", file=sys.stderr)
+            except subprocess.CalledProcessError as e:
+                print(f"WARNING: [GLB Export] Failed for '\\{ref}'. Stderr: \\{e.stderr}", file=sys.stderr)
+            finally:
+                if os.path.exists(temp_pcb_path): os.remove(temp_pcb_path)
 
         layout_data["nodes"].append({
             "id": ref, "label": ref, "x": pcbnew.ToMM(fp.GetPosition().x), "y": pcbnew.ToMM(fp.GetPosition().y),
             "rotation": fp.GetOrientationDegrees(), "width": width, "height": height,
+            "CrtYdDimensions": CrtYd_dims,
             "svgPath": state_comp.get('svgPath') if state_comp else None,
             "glbPath": model_path, "model3d_props": model_props,
             "pins": state_comp.get('pins', []),
-            "pin_count": len(state_comp.get('pins', [])) if state_comp and state_comp.get('pins') else (state_comp.get('pin_count', 0) if state_comp else 0)
+            "pin_count": len(state_comp.get('pins', [])) if state_comp and state_comp.get('pins') else (state_comp.get('pin_count', 0) if state_comp else 0),
+            "side": state_comp.get('side', 'top') if state_comp else 'top'
         })
 
     layout_data["edges"] = []
@@ -546,7 +634,7 @@ def arrange_components(args):
                         "source": pins_on_net[i], "target": pins_on_net[j], "label": net['name']
                     })
     
-    log_and_return("Extracted layout data. The client UI will now handle component arrangement.", {"layout_data": layout_data})
+    log_and_return("Extracted layout data. The client UI will now handle component arrangement.", {"layout_data": layout_data, "waitForUserInput": args.waitForUserInput})
 
 
 def update_component_positions(args):
@@ -563,6 +651,18 @@ def update_component_positions(args):
             fp.SetPosition(pcbnew.VECTOR2I(pcbnew.FromMM(pos_data['x']), pcbnew.FromMM(pos_data['y'])))
             if 'rotation' in pos_data:
                 fp.SetOrientation(pcbnew.EDA_ANGLE(float(pos_data['rotation']), pcbnew.DEGREES_T))
+            
+            if 'side' in pos_data:
+                desired_side_str = pos_data['side']
+                current_side_layer = fp.GetSide()
+                
+                is_currently_on_bottom = (current_side_layer == pcbnew.B_Cu)
+                
+                if desired_side_str == 'bottom' and not is_currently_on_bottom:
+                    fp.SetLayerAndFlip(pcbnew.B_Cu)
+                elif desired_side_str == 'top' and is_currently_on_bottom:
+                    fp.SetLayerAndFlip(pcbnew.F_Cu)
+
     
     # --- NEW LOGIC: Recalculate board outline based on new positions ---
     # 1. Remove old outline
@@ -601,7 +701,7 @@ def update_component_positions(args):
         board.Add(seg)
 
     pcbnew.SaveBoard(pcb_path, board)
-    log_and_return(f"Component positions updated and board outline resized to {width_mm:.2f}mm x {height_mm:.2f}mm.")
+    log_and_return(f"Component positions updated and board outline resized to \\{width_mm:.2f}mm x \\{height_mm:.2f}mm.")
 
 
 def autoroute_pcb(args):
@@ -619,7 +719,7 @@ def autoroute_pcb(args):
         f.write(str(dsn_content))
 
     if not os.path.exists(FREEROUTING_JAR_PATH):
-        log_error_and_exit(f"FreeRouting JAR not found at {FREEROUTING_JAR_PATH}")
+        log_error_and_exit(f"FreeRouting JAR not found at \\{FREEROUTING_JAR_PATH}")
     
     command = ["java", "-jar", FREEROUTING_JAR_PATH, "-de", dsn_path, "-do", ses_path, "-mp", "10", "-ep", "10"]
     proc = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
@@ -639,7 +739,7 @@ def autoroute_pcb(args):
             time.sleep(0.1)
     
     if proc.returncode != 0 and not stop_routing:
-        log_error_and_exit(f"FreeRouting failed. Check server logs. Last output: {proc.stderr.read()}")
+        log_error_and_exit(f"FreeRouting failed. Check server logs. Last output: \\{proc.stderr.read()}")
     
     if not os.path.exists(ses_path):
         log_error_and_exit("Routed session file (.ses) not created by FreeRouting.")
@@ -693,9 +793,9 @@ def autoroute_pcb(args):
 def export_fabrication_files(args):
     pcb_path = get_state_path(args.projectName, 'pcb.kicad_pcb')
     if not os.path.exists(pcb_path):
-        log_error_and_exit(f"PCB file '{os.path.basename(pcb_path)}' not found for project '{args.projectName}'. Cannot export fabrication files.")
+        log_error_and_exit(f"PCB file '\\{os.path.basename(pcb_path)}' not found for project '\\{args.projectName}'. Cannot export fabrication files.")
 
-    fab_dir = os.path.join(STATE_DIR, f"{args.projectName}_fab")
+    fab_dir = os.path.join(STATE_DIR, f"\\{args.projectName}_fab")
     os.makedirs(fab_dir, exist_ok=True)
 
     try:
@@ -732,16 +832,16 @@ def export_fabrication_files(args):
         shutil.rmtree(fab_dir)
 
     except subprocess.CalledProcessError as e:
-        error_message = f"kicad-cli failed. Command: '{' '.join(e.cmd)}'. Stderr: {e.stderr}"
+        error_message = f"kicad-cli failed. Command: '\\{' '.join(e.cmd)}'. Stderr: \\{e.stderr}"
         log_error_and_exit(error_message)
     except Exception as e:
-        log_error_and_exit(f"An unexpected error occurred during fabrication export: {e}")
+        log_error_and_exit(f"An unexpected error occurred during fabrication export: \\{e}")
 
     log_and_return("Fabrication files exported and zipped.", {
         "artifacts": {
             "boardName": args.projectName,
-            "glbPath": glb_path_rel,
-            "fabZipPath": zip_path_rel
+            "glbPath": glb_path_rel.replace(os.path.sep, '/'),
+            "fabZipPath": zip_path_rel.replace(os.path.sep, '/')
         }
     })
 `

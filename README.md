@@ -2,80 +2,63 @@
 
 **Live Demo:** [https://neuroidss.github.io/Singularity-Agent-Factory/](https://neuroidss.github.io/Singularity-Agent-Factory/)
 
-This project is an experimental platform for building a self-improving AI agent. The application has been streamlined to focus on a core use case: developing an AI pilot that can navigate a complex environment, learn from observation, and share its skills with a collective.
+This project is an experimental, browser-first platform for building a self-improving AI agent swarm. The system is designed around a purpose-driven architecture where agents resolve user requests by identifying and processing "deltas"—the gap between the current reality and a desired potential. It dynamically evolves its own capabilities by creating new tools and automating complex workflows, with the ultimate goal of bootstrapping a recursively self-improving "singularity agent."
 
-The ultimate goal is to bootstrap a "singularity agent" that can recursively enhance its own intelligence by striving for true autonomy, both individually and as part of a collective.
+The application demonstrates these concepts across multiple complex domains, including **automated hardware engineering (KiCad PCB Design)**, **robotics simulation**, and **long-term strategic planning** via a knowledge graph.
 
-## Architecture: Frontend + Optional Backend
+## Key Features
 
-The system is composed of two main parts:
-1.  **Frontend (this repository):** A React-based user interface that runs entirely in the browser. It handles all visualizations, user interactions, and the execution of client-side tools (UI, browser-based JavaScript). It can function completely standalone.
-2.  **Backend (the `server` directory):** An **optional** Node.js server that acts as a "body" for the AI, allowing it to perform tasks that are impossible in a browser's sandbox. It provides the AI with two critical capabilities: writing files to disk and executing shell commands.
+*   **Self-Improving Swarm:** The core evolutionary loop allows agents to create new tools (`Tool Creator`) and codify multi-step processes into automated workflows (`Workflow Creator`), permanently expanding the system's capabilities.
+*   **Multi-Domain Capability:**
+    *   **KiCad EDA:** An entire PCB design workflow, from natural language prompt to fabrication-ready files, is automated by the agent.
+    *   **Robotics Simulation:** A 3D environment where agents can be defined with unique behaviors, controlled manually, and observed by the swarm to learn new skills.
+    *   **Strategic Memory:** A persistent knowledge graph allows the agent to build long-term plans and "Directives" that transcend single tasks.
+*   **Learning from Observation:** A human can "pilot" a robot agent through a sequence of actions. The AI can then observe this history and automatically create a new, reusable skill (`Create Skill From Observation`).
+*   **Dynamic Tool Context:** Using in-browser sentence embeddings, the system filters a vast library of tools to provide the agent with only the most relevant capabilities for the task at hand, improving focus and performance.
+*   **Pluggable AI Brains:** Supports multiple AI model providers, including Google Gemini, any OpenAI-compatible API (like a local Ollama server), and fully in-browser HuggingFace transformer models.
+*   **Client-First, Server-Optional:** The entire application runs as a self-contained demo in the browser (no installation needed). An optional Node.js backend can be run to unlock the agent's full potential, allowing it to write files and execute local code (e.g., Python scripts for real KiCad automation).
 
-The frontend will automatically detect if the backend server is running. If not, it will default to a safe, **client-only mode**.
+## The Agent Constitution
 
-## Core Concept: Purpose-Driven Swarm Architecture
+Agent behavior is not hard-coded but guided by a formal constitution. This provides a robust framework for an AI that can manage its own evolution. Key principles include:
 
-This project is founded on a set of principles for self-organization. This provides a robust framework for an AI that can manage its own evolution without direct human micromanagement.
+1.  **Delta-Driven Execution**: The agent doesn't just execute a plan. It identifies and resolves "Deltas"—the gap between the current reality and a potential future. A user's request is the initial Delta; a missing tool is an "Evolutionary Delta."
 
-1.  **Delta-Driven Execution**: The agent doesn't just execute a plan. It identifies and resolves "Deltas"—the gap between the current reality and a potential future. A user's request is the initial Delta. A missing tool is an "Evolutionary Delta." An inefficient process is an "Operational Delta."
+2.  **Evolution is the Prime Directive**: The agent's primary way to solve novel problems is to evolve the system itself. If a capability is missing, its highest priority is to create a new tool.
 
-2.  **Mandates, not Agents**: An agent process is not a monolithic entity. It is a process executing a "Mandate." The Mandate is a definition of work with a clear **Purpose** and **Accountabilities**. This separation means if one agent process fails, the Mandate's definition persists, and another process could theoretically execute it.
+3.  **Strategic Cognition**: Agents operate on two levels: tactical (solving the immediate problem) and strategic (pursuing long-term goals, or "Directives"). These Directives are stored in a persistent knowledge graph, forming the agent's long-term memory.
 
-3.  **System Evolution is the Core Directive**: The agent's primary way to solve systemic problems (Evolutionary Deltas) is to evolve itself and the system.
-    *   **`Tool Creator`**: If the agent lacks a capability, its highest priority is to resolve this delta by creating a new tool. This is a formal act of system evolution that permanently enhances the entire system.
-    *   **`Workflow Creator`**: If the agent identifies a repetitive, inefficient process, it resolves this delta by creating a workflow, thus automating the pattern and freeing itself for more complex problems.
+4.  **Distributed Capabilities**: When one agent creates a new tool, it instantly becomes available to all other agents. This allows the collective to dynamically create and distribute contextual skills, making the entire system more capable.
 
-4.  **Distributed Authority & Capability Sets**: Sets of tools are treated as "Capability Sets" (e.g., KiCad tools, Robotics tools). The agent is guided to respect these sets, preventing chaotic cross-interference and promoting modular, specialized capabilities.
+## Application Modules
 
-When one agent creates a new tool (on either client or server), it instantly becomes available to all other agents in the swarm. This allows the collective to dynamically create and distribute contextual skills, making the entire system more capable.
-
----
-
-## Getting Started
-
-### Option 1: Run in Browser Only (No Setup)
-Simply open the `index.html` file in your browser. The application will run in client-only mode.
-
-### Option 2: Run with the Backend Server (Full Functionality)
-To enable server-side tools (like running local Python scripts), follow these simple steps.
-
-1.  **Navigate to the `server` directory** in your terminal.
-
-2.  **Prepare the setup scripts:** The setup scripts are provided as `.txt` files. Rename them and make them executable:
-    ```bash
-    mv install.sh.txt install.sh
-    mv start.sh.txt start.sh
-    chmod +x install.sh start.sh
-    ```
-
-3.  **Run the installation script:** This will install all Node.js and Python dependencies. (Requires Node.js, npm, Python, and pip).
-    ```bash
-    ./install.sh
-    ```
-
-4.  **Install Freerouting (Required for PCB Autorouting):**
-    The new autorouting feature depends on the external `freerouting` Java application.
-    - Download the JAR file from the official repository: [https://github.com/freerouting/freerouting/releases/latest](https://github.com/freerouting/freerouting/releases/latest)
-    - Rename the downloaded file to `freerouting.jar`.
-    - Place the `freerouting.jar` file inside the `server/scripts/` directory. The application is configured to find it there.
-
-5.  **Start the server:**
-    ```bash
-    ./start.sh
-    ```
-    The server will start on `http://localhost:3001`.
-
-6.  **Launch the Frontend:** Open `index.html` in your browser. It will automatically connect to the running server.
+*   **KiCad EDA Panel:** The main interface for the hardware engineering workflow. Provide a high-level prompt, and watch the agent define components, create a netlist, arrange the board, and generate fabrication files.
+*   **Robotics Simulation Panel:** A 3D environment for defining robot agents with different personalities (e.g., 'patroller', 'resource_collector'). Pilot an agent to teach the swarm, then command the swarm to execute the learned skill.
+*   **Knowledge Graph Viewer:** A 3D visualization of the agent's "mind." See the Directives, concepts, and relationships it has stored in its long-term strategic memory.
 
 ---
 
-## Use Case: Audio Processing Testbed
+## Getting Started (Client-Only Demo)
 
-To demonstrate the full client-server loop, the application includes an "Audio Testbed". This UI component allows you to:
-1. Record audio from your microphone in the browser.
-2. Send the audio file to the backend server.
-3. The server then uses an AI-created tool (e.g., "Gemma Audio Processor") to execute a Python script on the audio file.
-4. The result from the Python script is sent back to the browser and displayed.
+Simply open the `index.html` file in a modern web browser (like Chrome or Edge). Everything you need for the simulated, in-browser experience is included.
 
-**SECURITY WARNING:** The backend server is designed to execute arbitrary code and shell commands generated by an AI using Node.js's `child_process`. This is **EXTREMELY DANGEROUS** and grants the AI the ability to read/write files and run any command on the machine where the server is running. **DO NOT** expose this server to the internet or run it in a production environment without extreme caution and robust sandboxing. It is intended for local, experimental use only.
+## Running the Full Stack (Optional)
+
+To unlock the agent's ability to interact with your local file system and execute code (e.g., running Python scripts to control the real KiCad), you can run the optional backend server.
+
+**Prerequisites:**
+*   Node.js and npm
+*   Python 3 and `venv`
+
+**Setup:**
+1.  Navigate to the `server/` directory.
+2.  Rename `install.sh.txt` to `install.sh` and make it executable (`chmod +x install.sh`).
+3.  Run the installation script: `./install.sh`. This will install Node dependencies and create a Python virtual environment with required packages.
+4.  Rename `start.sh.txt` to `start.sh` and make it executable (`chmod +x start.sh`).
+
+**Execution:**
+*   Run `./start.sh` from the `server/` directory to launch the backend.
+*   The frontend application will automatically detect the server and enable server-side tools.
+
+> **Security Warning:** The backend server is designed to execute code based on AI-generated commands. It is a powerful tool for agent development but should **never** be exposed to the internet.
+

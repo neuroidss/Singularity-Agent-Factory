@@ -3,49 +3,82 @@ import type { ToolCreatorPayload } from '../types';
 
 export const UI_AGENT_TOOLS: ToolCreatorPayload[] = [
     {
-        name: 'Manual Robot Control',
-        description: "Provides UI buttons for direct manual control of the lead robot ('agent-1'), and for creating new skills from observed actions.",
+        name: 'Agent Control Panel',
+        description: 'A unified UI for managing the robotics simulation, including defining agents, controlling the simulation, and manual piloting for skill observation.',
         category: 'UI Component',
         executionEnvironment: 'Client',
-        purpose: 'To allow a human pilot to control an agent directly, providing a mechanism for demonstrating complex behaviors that the agent can then learn from.',
+        purpose: 'To provide a comprehensive control interface for the robotics simulation and learning environment.',
         parameters: [
-          { name: 'handleManualControl', type: 'object', description: 'Function to call for a manual action.', required: true },
-          { name: 'isSwarmRunning', type: 'boolean', description: 'Whether the agent is currently active.', required: true },
+          { name: 'robotState', type: 'object', description: 'The current state of all robots and the environment.', required: true },
+          { name: 'personalities', type: 'array', description: 'The defined personalities for the agents.', required: true },
+          { name: 'handleManualControl', type: 'object', description: 'Function to execute a manual command.', required: true },
         ],
         implementationCode: `
-          const ControlButton = ({ action, label, children, args = {} }) => (
-            <button
-              onClick={() => handleManualControl(action, args)}
-              disabled={isSwarmRunning}
-              className="p-3 bg-slate-700 hover:bg-slate-600 rounded-lg text-white font-semibold transition-colors disabled:bg-slate-800 disabled:cursor-not-allowed"
-              title={label}
-            >
-              {children}
-            </button>
-          );
-    
+          const { robotState, personalities, handleManualControl } = props;
+          const { robotStates, environmentState, observationHistory } = robotState;
+          
+          const pilotAgentId = 'robot-1'; // Hardcode pilot for now
+
+          const handleDefineAgent = () => {
+              handleManualControl('Define Robot Agent', { id: 'robot-1', startX: 2, startY: 2, behaviorType: 'seek_target', targetId: 'red_car' });
+              handleManualControl('Define Robot Agent', { id: 'robot-2', startX: 10, startY: 10, behaviorType: 'patroller' });
+          };
+          
+          const getStatusColor = (status) => {
+            if (status.includes('FAIL')) return 'text-red-400';
+            if (status.includes('SUCCESS')) return 'text-green-400';
+            return 'text-gray-300';
+          };
+      
           return (
-            <div className="bg-gray-800/60 border border-gray-700 rounded-xl p-4">
-              <h3 className="text-lg font-bold text-indigo-300 mb-2">Pilot Controls (agent-1)</h3>
-              <p className="text-xs text-gray-400 mb-4">Control the lead robot directly. The agent can learn from your actions if you later use the "Create Skill From Observation" tool.</p>
-              <div className="grid grid-cols-3 gap-2 text-center">
-                <div></div>
-                <ControlButton action="Move Forward" label="Move Forward">↑</ControlButton>
-                <div></div>
-                <ControlButton action="Turn Left" label="Turn Left">←</ControlButton>
-                <ControlButton action="Pickup Resource" label="Pickup Resource">P</ControlButton>
-                <ControlButton action="Turn Right" label="Turn Right">→</ControlButton>
-                <div></div>
-                <ControlButton action="Deliver Resource" label="Deliver Resource">D</ControlButton>
-                <div></div>
+            <div className="bg-gray-800/60 border border-gray-700 rounded-xl p-4 space-y-4">
+              <h3 className="text-lg font-bold text-indigo-300">Robotics Control</h3>
+              
+              {/* Simulation Controls */}
+              <div className="grid grid-cols-3 gap-2">
+                <button onClick={() => handleManualControl('Start Robot Simulation')} className="bg-green-600 hover:bg-green-700 text-white font-semibold py-2 px-3 rounded-lg">Start</button>
+                <button onClick={() => handleManualControl('Step Robot Simulation')} className="bg-blue-600 hover:bg-blue-700 text-white font-semibold py-2 px-3 rounded-lg">Step</button>
+                <button onClick={() => handleManualControl('Stop Robot Simulation')} className="bg-red-600 hover:bg-red-700 text-white font-semibold py-2 px-3 rounded-lg">Stop</button>
               </div>
+
+              {/* Agent Definition */}
+               <button onClick={handleDefineAgent} className="w-full bg-purple-600 hover:bg-purple-700 text-white font-semibold py-2 px-3 rounded-lg">Define Agents</button>
+              
+              {/* Manual Piloting */}
+              <div className="pt-2 border-t border-gray-700">
+                  <h4 className="font-semibold text-gray-300 text-center mb-2">Manual Pilot for {pilotAgentId}</h4>
+                  <div className="grid grid-cols-3 gap-2 justify-items-center">
+                      <div></div>
+                      <button onClick={() => handleManualControl('Move Forward', { agentId: pilotAgentId })} className="bg-gray-600 hover:bg-gray-500 rounded-md p-3">⬆️</button>
+                      <div></div>
+                      <button onClick={() => handleManualControl('Turn Left', { agentId: pilotAgentId })} className="bg-gray-600 hover:bg-gray-500 rounded-md p-3">⬅️</button>
+                      <button onClick={() => handleManualControl('Create Skill From Observation', { skillName: 'LearnedPatrol', skillDescription: 'A pattern learned from manual piloting.' })} className="bg-yellow-600 hover:bg-yellow-500 rounded-md p-3 text-sm font-bold">Learn</button>
+                      <button onClick={() => handleManualControl('Turn Right', { agentId: pilotAgentId })} className="bg-gray-600 hover:bg-gray-500 rounded-md p-3">➡️</button>
+                  </div>
+              </div>
+              
+               {/* Agent Status Display */}
+               <div className="pt-2 border-t border-gray-700">
+                  <h4 className="font-semibold text-gray-300 mb-2">Agent Status</h4>
+                   <div className="space-y-2">
+                     {robotStates.map(agent => (
+                       <div key={agent.id} className="bg-gray-900/50 p-2 rounded-lg text-sm">
+                         <div className="flex justify-between">
+                           <span className="font-bold">{agent.id}</span>
+                           <span className="font-mono">({agent.x}, {agent.y}) rot: {agent.rotation}°</span>
+                         </div>
+                       </div>
+                     ))}
+                     {robotStates.length === 0 && <p className="text-gray-500 text-sm">No active agents.</p>}
+                   </div>
+               </div>
             </div>
           );
         `
     },
     {
         name: 'Agent Status Display',
-        description: 'Visualizes the status and activity of the agent.',
+        description: 'Visualizes the status and activity of the agent swarm master.',
         category: 'UI Component',
         executionEnvironment: 'Client',
         purpose: "To provide a real-time visualization of the agent's state, actions, and health.",

@@ -1,63 +1,23 @@
 
 import type { ToolCreatorPayload } from '../types';
-import { GEMMA_SERVER_SCRIPT, LOCAL_AI_PANEL_TOOL_PAYLOAD } from './local_ai_tools';
+import { LOCAL_AI_PANEL_TOOL_PAYLOAD } from './local_ai_tools';
 
 export const AUTOMATION_TOOLS: ToolCreatorPayload[] = [
     {
         name: 'Install Local Multimodal AI Demo',
-        description: 'Installs the complete local AI server feature. This includes writing the Python server script to the backend and creating the necessary server-side control tools and the client-side UI panel.',
+        description: 'Installs the local multimodal AI demo feature. In client-only mode, this creates a UI panel that informs the user about the feature.',
         category: 'Automation',
         executionEnvironment: 'Client',
         purpose: 'To demonstrate the agent\'s ability to dynamically add complex, multimodal capabilities to itself and the swarm.',
         parameters: [],
         implementationCode: `
-            const scriptContent = ${JSON.stringify(GEMMA_SERVER_SCRIPT)};
             const panelPayload = ${JSON.stringify(LOCAL_AI_PANEL_TOOL_PAYLOAD)};
             
-            // Payloads for the new server-side tools
-            const startServerToolPayload = {
-                name: 'Start Local AI Server',
-                description: 'Starts the python gemma_server.py process on the backend.',
-                category: 'Server',
-                parameters: [],
-                implementationCode: 'start_local_ai', // Special keyword for server
-                purpose: 'To activate the local multimodal AI model.'
-            };
-            const stopServerToolPayload = {
-                name: 'Stop Local AI Server',
-                description: 'Stops the python gemma_server.py process on the backend.',
-                category: 'Server',
-                parameters: [],
-                implementationCode: 'stop_local_ai', // Special keyword for server
-                purpose: 'To deactivate the local multimodal AI model and free resources.'
-            };
-            const statusServerToolPayload = {
-                name: 'Get Local AI Server Status',
-                description: 'Gets the status and logs of the local AI server process from the backend.',
-                category: 'Server',
-                parameters: [],
-                implementationCode: 'status_local_ai', // Special keyword for server
-                purpose: 'To monitor the local multimodal AI model.'
-            };
-
-            // Step 1: Write the Python script to the server's filesystem
-            await runtime.tools.run('Server File Writer', {
-                filePath: 'gemma_server.py',
-                content: scriptContent
-            });
-            
-            // Step 2: Create the server-side control tools by calling the Tool Creator
-            await runtime.tools.run('Tool Creator', { ...startServerToolPayload, executionEnvironment: 'Server' });
-            await runtime.tools.run('Tool Creator', { ...stopServerToolPayload, executionEnvironment: 'Server' });
-            await runtime.tools.run('Tool Creator', { ...statusServerToolPayload, executionEnvironment: 'Server' });
-
-            // Step 3: Create the client-side UI panel
+            // In client-only mode, we only create the UI panel.
+            // The panel's implementation is updated to handle the lack of a server.
             await runtime.tools.run('Tool Creator', { ...panelPayload, executionEnvironment: 'Client' });
-            
-            // Step 4: Manually trigger a fetch of server tools to update the client UI immediately
-            await runtime.fetchServerTools();
 
-            return { success: true, message: 'Local AI Demo installed. The control tools and UI panel are now available.' };
+            return { success: true, message: 'Local AI Demo UI panel installed. Feature is simulated in client-only mode.' };
         `
     },
     {
@@ -97,4 +57,4 @@ export const AUTOMATION_TOOLS: ToolCreatorPayload[] = [
           return { success: true, message: \`Successfully created new skill '\${skillName}' based on \${observedActions.length} observed actions.\` };
         `
     },
-]
+];

@@ -1,13 +1,8 @@
 
-
-
-
 import React from 'react';
 import type { LLMTool, AIModel } from './types';
 import { ModelProvider } from './types';
 import { BOOTSTRAP_TOOL_PAYLOADS } from './bootstrap';
-
-export const SERVER_URL = 'http://localhost:3001';
 
 export const AI_MODELS: AIModel[] = [
     { id: 'gemini-2.5-flash-lite', name: 'Gemini 2.5 Flash-Lite', provider: ModelProvider.GoogleAI },
@@ -92,10 +87,23 @@ export const CORE_TOOLS: LLMTool[] = [
       { name: 'content', type: 'string', description: 'The full content to write to the file.', required: true },
     ],
     implementationCode: `
-      if (!runtime.server.isConnected()) {
-        throw new Error("Cannot write file: The backend server is not connected.");
+      if (!runtime.isServerConnected()) {
+          console.warn(\`[SIM] Server not connected. Simulating write to \${args.filePath}\`);
+          return { success: true, message: \`File '\${args.filePath}' would be written in a server environment.\` };
       }
-      return await runtime.server.writeFile(args.filePath, args.content);
+      
+      const response = await fetch('http://localhost:3001/api/files/write', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ filePath: args.filePath, content: args.content }),
+      });
+      
+      const result = await response.json();
+      if (!response.ok) {
+          throw new Error(result.error || \`Server responded with status \${response.status}\`);
+      }
+      
+      return { success: true, ...result };
     `,
   },
   {
@@ -120,32 +128,37 @@ export const CORE_TOOLS: LLMTool[] = [
       if (!executionEnvironment || (executionEnvironment !== 'Client' && executionEnvironment !== 'Server')) {
         throw new Error("executionEnvironment is required and must be 'Client' or 'Server'.");
       }
-
       if (category === 'UI Component' && executionEnvironment !== 'Client') {
         throw new Error("'UI Component' tools must have an executionEnvironment of 'Client'.");
       }
-      if (category === 'Server' && executionEnvironment !== 'Server') {
-        throw new Error("'Server' category tools must have the category 'Server'.");
-      }
-      if (executionEnvironment === 'Server' && category !== 'Server') {
-        throw new Error("Tools with executionEnvironment 'Server' must have the category 'Server'.");
-      }
-
       const validCategories = ['UI Component', 'Functional', 'Automation', 'Server'];
       if (!validCategories.includes(category)) {
           throw new Error("Invalid category. Must be one of: " + validCategories.join(', '));
       }
-      
-      if (executionEnvironment === 'Server') {
-        if (!runtime.server.isConnected()) {
-          throw new Error("Cannot create server tool: The backend server is not connected. Advise the user to start the server for this functionality.");
+
+      // If the tool is for the server AND we are connected, create it on the server.
+      if (executionEnvironment === 'Server' && runtime.isServerConnected()) {
+        try {
+            const response = await fetch('http://localhost:3001/api/tools/create', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ category, ...toolPayload }),
+            });
+            const result = await response.json();
+            if (!response.ok) {
+                throw new Error(result.error || \`Server responded with status \${response.status}\`);
+            }
+            // Polling will pick up the new tool, no need for a manual reload call.
+            return { success: true, message: \`Server tool '\${result.tool.name}' created successfully.\` };
+        } catch (e) {
+            throw new Error(\`Failed to create server tool via API: \${e.message}\`);
         }
-        // Delegate to the server to create the tool
-        return await runtime.server.createTool({ category, ...toolPayload });
       } else {
-        // Create the tool on the client-side
+        // Fallback: Create the tool on the client side.
+        // This handles 'Client' tools, and 'Server' tools when in offline/demo mode.
         const newTool = runtime.tools.add({ category, ...toolPayload });
-        return { success: true, message: \`Successfully created new client-side tool: '\${newTool.name}'. Purpose: \${toolPayload.purpose}\` };
+        const location = executionEnvironment === 'Server' ? 'client-side (simulated)' : 'client-side';
+        return { success: true, message: \`Successfully created new \${location} tool: '\${newTool.name}'. Purpose: \${toolPayload.purpose}\` };
       }
     `
   },
@@ -172,14 +185,14 @@ export const CORE_TOOLS: LLMTool[] = [
         const results = [];
         const workflowSteps = \${JSON.stringify(steps, null, 2)};
         for (const step of workflowSteps) {
-            console.log(\`Running workflow step: \${step.toolName}\`);
+            console.log(\\\`Running workflow step: \\\${step.toolName}\\\`);
             try {
-                // runtime.tools.run can execute client or server tools transparently
+                // runtime.tools.run can execute any tool transparently
                 const result = await runtime.tools.run(step.toolName, step.arguments);
                 results.push({ step: step.toolName, success: true, result });
             } catch (e) {
                 results.push({ step: step.toolName, success: false, error: e.message });
-                throw new Error(\`Workflow '\${name}' failed at step '\${step.toolName}': \${e.message}\`);
+                throw new Error(\\\`Workflow '\${name}' failed at step '\\\${step.toolName}': \\\${e.message}\\\`);
             }
         }
         return { success: true, message: "Workflow completed successfully.", results };
@@ -201,53 +214,21 @@ export const CORE_TOOLS: LLMTool[] = [
       id: 'system_reload_tools',
       name: 'System Reload Tools',
       description: 'Forces the backend server to re-read its tools.json file, loading any new or modified tools into memory without a restart.',
-      category: 'Functional',
+      category: 'Server',
       version: 1,
       purpose: "To give the agent direct control over its server-side capabilities, allowing for dynamic updates without manual intervention.",
       parameters: [],
-      implementationCode: `
-        if (!runtime.server.isConnected()) {
-          throw new Error("Cannot reload server tools: The backend server is not connected.");
-        }
-        const response = await fetch(\`\${runtime.server.getUrl()}/api/execute\`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ name: 'System_Reload_Tools', arguments: {} })
-        });
-        const result = await response.json();
-        if (!response.ok) {
-           throw new Error(result.error || 'Server failed to reload tools');
-        }
-        // Manually trigger a fetch of the updated tools to refresh the client UI
-        await runtime.fetchServerTools();
-        return result;
-      `
+      implementationCode: `# This is a special server-side command. The server has built-in logic to handle this tool name. It re-reads 'tools.json' and updates the live tool cache.`
     },
     {
       id: 'system_reset_server_tools',
       name: 'System_Reset_Server_Tools',
       description: 'Deletes all custom server-side tools from tools.json and reloads the server cache, effectively performing a factory reset on server capabilities.',
-      category: 'Functional',
+      category: 'Server',
       version: 1,
       purpose: "To provide a way to recover from a corrupted server state or to reset the agent's learned server skills without a manual server restart and file deletion.",
       parameters: [],
-      implementationCode: `
-      if (!runtime.server.isConnected()) {
-        throw new Error("Cannot reset server tools: The backend server is not connected.");
-      }
-      const response = await fetch(\`\${runtime.server.getUrl()}/api/execute\`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ name: 'System_Reset_Server_Tools', arguments: {} })
-      });
-      const result = await response.json();
-      if (!response.ok) {
-         throw new Error(result.error || 'Server failed to reset tools');
-      }
-      // Manually trigger a fetch of the updated tools to refresh the client UI
-      await runtime.fetchServerTools();
-      return result;
-    `
+      implementationCode: `# This is a special server-side command. The server has built-in logic to handle this tool name. It clears 'tools.json' and reloads the server's tool cache.`
     }
 ];
 

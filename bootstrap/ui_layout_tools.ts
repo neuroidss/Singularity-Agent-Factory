@@ -24,7 +24,7 @@ export const UI_LAYOUT_TOOLS: ToolCreatorPayload[] = [
     },
     {
         name: 'Main View Selector',
-        description: 'Displays tabs to switch between the main application views like Robotics, KiCad, and Knowledge Graph.',
+        description: 'Displays tabs to switch between the main application views like KiCad and Knowledge Graph.',
         category: 'UI Component',
         executionEnvironment: 'Client',
         purpose: 'To allow the user to navigate between the different major functionalities of the application.',
@@ -35,7 +35,7 @@ export const UI_LAYOUT_TOOLS: ToolCreatorPayload[] = [
         ],
         implementationCode: `
             if (isPcbResultVisible) {
-                return null; // Don't show tabs when a specific result like the PCB viewer or layout tool is active
+                return null; // Don't show tabs when a specific result like the PCB viewer is active
             }
 
             const tabs = [

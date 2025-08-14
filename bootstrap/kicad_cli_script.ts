@@ -12,7 +12,12 @@ import ast
 # We are assuming all four .py files (kicad_cli.py, kicad_cli_commands.py, kicad_dsn_utils.py, kicad_ses_utils.py) are in the same directory.
 from kicad_cli_commands import (
     define_components,
-    define_placement_constraint,
+    add_absolute_position_constraint,
+    add_proximity_constraint,
+    add_alignment_constraint,
+    add_symmetry_constraint,
+    add_circular_constraint,
+    add_layer_constraint,
     define_net,
     generate_netlist,
     create_initial_pcb,
@@ -50,6 +55,7 @@ def main():
     parser = argparse.ArgumentParser(description="KiCad Automation CLI")
     subparsers = parser.add_subparsers(dest='command', required=True)
 
+    # --- Component Definition ---
     p_define = subparsers.add_parser('define_component')
     p_define.add_argument('--projectName', required=True)
     p_define.add_argument('--componentReference', required=True)
@@ -57,22 +63,53 @@ def main():
     p_define.add_argument('--componentValue', required=True)
     p_define.add_argument('--footprintIdentifier', required=True)
     p_define.add_argument('--numberOfPins', type=int, default=0)
+    p_define.add_argument('--side', type=str, default='top', choices=['top', 'bottom'])
     p_define.set_defaults(func=define_components)
 
-    p_constraint = subparsers.add_parser('define_placement_constraint')
-    p_constraint.add_argument('--projectName', required=True)
-    p_constraint.add_argument('--type', required=True, help="Constraint type: 'relative_position', 'fixed_orientation', or 'fixed_group'")
-    p_constraint.add_argument('--components', required=True, help="Python list of component definitions.")
-    p_constraint.add_argument('--anchor', help="Anchor component reference for 'fixed_group'.")
-    p_constraint.add_argument('--offsetX_mm', type=float)
-    p_constraint.add_argument('--offsetY_mm', type=float)
-    p_constraint.add_argument('--angle_deg', type=float)
-    p_constraint.set_defaults(func=define_placement_constraint)
+    # --- Rule Definitions (Atomic) ---
+    p_abs_pos = subparsers.add_parser('add_absolute_position_constraint')
+    p_abs_pos.add_argument('--projectName', required=True)
+    p_abs_pos.add_argument('--componentReference', required=True)
+    p_abs_pos.add_argument('--x', type=float, required=True)
+    p_abs_pos.add_argument('--y', type=float, required=True)
+    p_abs_pos.set_defaults(func=add_absolute_position_constraint)
 
+    p_prox = subparsers.add_parser('add_proximity_constraint')
+    p_prox.add_argument('--projectName', required=True)
+    p_prox.add_argument('--groupsJSON', required=True, help="JSON string of component groups, e.g., '[['U1','C1'],['U1','C2']]'")
+    p_prox.set_defaults(func=add_proximity_constraint)
+
+    p_align = subparsers.add_parser('add_alignment_constraint')
+    p_align.add_argument('--projectName', required=True)
+    p_align.add_argument('--axis', required=True, choices=['vertical', 'horizontal'])
+    p_align.add_argument('--componentsJSON', required=True, help="JSON string of components to align, e.g., '['J1','J2']'")
+    p_align.set_defaults(func=add_alignment_constraint)
+    
+    p_sym = subparsers.add_parser('add_symmetry_constraint')
+    p_sym.add_argument('--projectName', required=True)
+    p_sym.add_argument('--axis', required=True, choices=['vertical', 'horizontal'])
+    p_sym.add_argument('--pairsJSON', required=True, help="JSON string of component pairs, e.g., '[['R1','R2'],['C1','C2']]'")
+    p_sym.set_defaults(func=add_symmetry_constraint)
+
+    p_circ = subparsers.add_parser('add_circular_constraint')
+    p_circ.add_argument('--projectName', required=True)
+    p_circ.add_argument('--componentsJSON', required=True, help="JSON string of components to arrange.")
+    p_circ.add_argument('--radius', type=float, required=True, help="Radius in mm.")
+    p_circ.add_argument('--centerX', type=float, required=True, help="Center X in mm.")
+    p_circ.add_argument('--centerY', type=float, required=True, help="Center Y in mm.")
+    p_circ.set_defaults(func=add_circular_constraint)
+
+    p_layer = subparsers.add_parser('add_layer_constraint')
+    p_layer.add_argument('--projectName', required=True)
+    p_layer.add_argument('--layer', required=True, choices=['top', 'bottom'])
+    p_layer.add_argument('--componentsJSON', required=True, help="JSON string of components.")
+    p_layer.set_defaults(func=add_layer_constraint)
+
+    # --- Netlist and Board Creation ---
     p_define_net = subparsers.add_parser('define_net')
     p_define_net.add_argument('--projectName', required=True)
     p_define_net.add_argument('--netName', required=True)
-    p_define_net.add_argument('--pins', required=True, help="Python list of pin name strings, e.g., '[\\"U1-1\\", \\"R1-2\\"]'.")
+    p_define_net.add_argument('--pins', required=True, help="Python list of pin name strings, e.g., '[\'U1-1\', \'R1-2\']'.")
     p_define_net.set_defaults(func=define_net)
 
     p_gen_netlist = subparsers.add_parser('generate_netlist')
@@ -91,10 +128,11 @@ def main():
     p_outline.add_argument('--diameterMillimeters', type=float, default=0)
     p_outline.set_defaults(func=create_board_outline)
 
+    # --- Layout and Routing ---
     p_arrange = subparsers.add_parser('arrange_components')
     p_arrange.add_argument('--projectName', required=True)
-    # Use the custom str_to_bool type to handle 'true'/'false' from shell
     p_arrange.add_argument('--waitForUserInput', type=str_to_bool, default=True)
+    p_arrange.add_argument('--layoutStrategy', type=str, default='agent', choices=['agent', 'physics'], help="Layout engine to use: 'agent' or 'physics'.")
     p_arrange.set_defaults(func=arrange_components)
     
     p_update_pos = subparsers.add_parser('update_component_positions')

@@ -12,6 +12,11 @@ export KICAD6_FOOTPRINT_DIR=/usr/share/kicad/footprints
 export KICAD7_FOOTPRINT_DIR=/usr/share/kicad/footprints
 export KICAD8_FOOTPRINT_DIR=/usr/share/kicad/footprints
 export KICAD9_FOOTPRINT_DIR=/usr/share/kicad/footprints
+export KICAD_3DMODEL_DIR=/usr/share/kicad/3dmodels
+export KICAD6_3DMODEL_DIR=/usr/share/kicad/3dmodels
+export KICAD7_3DMODEL_DIR=/usr/share/kicad/3dmodels
+export KICAD8_3DMODEL_DIR=/usr/share/kicad/3dmodels
+export KICAD9_3DMODEL_DIR=/usr/share/kicad/3dmodels
 
 echo "🚀 Starting Singularity Agent Factory Backend Server..."
 npm start

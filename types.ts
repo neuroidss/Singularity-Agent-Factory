@@ -10,6 +10,14 @@ export interface AgentWorker {
   result: any | null;
 }
 
+export interface AgentPersonality {
+  id: string;
+  startX: number;
+  startY: number;
+  behaviorType: 'resource_collector' | 'patroller' | 'seek_target';
+  targetId?: string;
+}
+
 export interface ToolParameter {
   name: string;
   type: 'string' | 'number' | 'boolean' | 'object' | 'array';
@@ -101,12 +109,23 @@ export interface RobotState {
 export interface EnvironmentObject {
   x: number;
   y: number;
-  type: 'wall' | 'resource' | 'collection_point' | 'tree';
+  type: 'wall' | 'resource' | 'collection_point' | 'tree' | 'target';
+  id?: string;
+}
+
+export interface AssetTransform {
+  rotation?: [number, number, number]; // Euler angles in degrees [x, y, z]
+  offset?: [number, number, number];   // Offset in model units [x, y, z]
+  scale?: number | [number, number, number]; // Uniform or non-uniform scale factor
 }
 
 export interface KnowledgeGraphNode {
   id: string;
   label: string;
+  assetTransforms?: {
+    glb?: AssetTransform;
+    svg?: AssetTransform;
+  };
   [key: string]: any;
 }
 
@@ -126,7 +145,8 @@ export interface KnowledgeGraph {
     height: number;
     shape?: 'rectangle' | 'circle';
   };
-  constraints?: any[];
+  rules?: any[];
+  layoutStrategy?: string;
 }
 
 export type KicadSchematic = [string, string[], string][];

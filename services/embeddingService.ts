@@ -1,13 +1,10 @@
-
-
-
 import { pipeline, type FeatureExtractionPipeline } from '@huggingface/transformers';
 
 // List of models to try, from smallest to largest quantized version.
 // This allows for a graceful fallback if a smaller model fails to load on the user's device.
-const EMBEDDING_MODELS = [
+const EMBEDDING_MODELS: {name: string, size: string}[] = [
 //    { name: 'Xenova/paraphrase-MiniLM-L3-v2', size: '17.5MB' }, // Smallest, fastest option
-//    { name: 'Xenova/all-MiniLM-L6-v2', size: '23MB' },       // The original model, a reliable fallback
+    { name: 'Xenova/all-MiniLM-L6-v2', size: '23MB' },       // The original model, a reliable fallback
 ];
 
 class EmbeddingSingleton {
@@ -15,6 +12,11 @@ class EmbeddingSingleton {
     static async getInstance(onProgress: (msg: string) => void): Promise<FeatureExtractionPipeline> {
         if (this.instance !== null) {
             return this.instance;
+        }
+
+        if (EMBEDDING_MODELS.length === 0) {
+            onProgress(`[ERROR] ❌ No embedding models are configured. Tool relevance filtering will be disabled.`);
+            throw new Error("No embedding models configured. This feature is disabled.");
         }
 
         (window as any).env = { ...(window as any).env, allowLocalModels: false, useFbgemm: false };
@@ -36,7 +38,7 @@ class EmbeddingSingleton {
                 const extractor = await pipeline('feature-extraction', modelInfo.name, {
                     device: 'webgpu',
                     progress_callback: progressCallback,
-                    dtype: 'auto' // Use automatic quantization for better compatibility
+                    dtype: 'fp16' // Use fp16 for reduced memory usage and better performance.
                 });
 
                 onProgress(`✅ Successfully loaded embedding model: ${modelInfo.name}`);
