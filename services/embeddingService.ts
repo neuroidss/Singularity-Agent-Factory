@@ -38,7 +38,7 @@ class EmbeddingSingleton {
                 const extractor = await pipeline('feature-extraction', modelInfo.name, {
                     device: 'webgpu',
                     progress_callback: progressCallback,
-                    dtype: 'fp16' // Use fp16 for reduced memory usage and better performance.
+                    dtype: 'auto' // Use automatic quantization for better compatibility
                 });
 
                 onProgress(`✅ Successfully loaded embedding model: ${modelInfo.name}`);
