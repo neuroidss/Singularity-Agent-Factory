@@ -298,9 +298,15 @@ const App: React.FC = () => {
                 }
                 
                 const remainingWorkflow = DEMO_WORKFLOW.slice(arrangeStepIndex + 1);
+
+                // Inject the current project name into the remaining workflow steps
+                const remainingWorkflowWithProject = remainingWorkflow.map(step => ({
+                    ...step,
+                    arguments: { ...step.arguments, projectName }
+                }));
                 
                 // We need to run the rest of the workflow.
-                await kicadHandlers.runDemoWorkflow(remainingWorkflow, executeActionRef.current);
+                await kicadHandlers.runDemoWorkflow(remainingWorkflowWithProject, executeActionRef.current);
                 
             } else {
                 // Original logic for resuming an LLM-driven task

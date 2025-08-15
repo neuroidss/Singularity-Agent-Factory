@@ -413,7 +413,7 @@ def process_component(pads, fp, sel_pads=None):
     name = f"{lib_name}:{item_name}" if lib_name else item_name
     nets={}; parts = [LA('image'), SP(), LQ(name)]
     is_flipped = fp.IsFlipped()
-    if is_flipped: fp.SetLayerAndFlip(0)
+    if is_flipped: fp.SetLayerAndFlip(pcbnew.F_Cu)
 
     outline_layers = ['F.SilkS', 'B.SilkS', 'F.Fab', 'B.Fab', 'F.CrtYd', 'B.CrtYd']
     for layer in outline_layers:
@@ -435,7 +435,7 @@ def process_component(pads, fp, sel_pads=None):
                     net_str = str(net.GetNetname())
                     if net_str not in nets: nets[net_str]=[]
                     nets[net_str].append(f"{fp.GetReference()}-{pd.GetNumber()}")
-    if is_flipped: fp.SetLayerAndFlip(31)
+    if is_flipped: fp.SetLayerAndFlip(pcbnew.B_Cu)
     side = 'back' if is_flipped else 'front'
     place = TU([LA('place'), SP(), LQ(fp.GetReference()), SP(), LV(fp.GetPosition().x), SP(), LV(-fp.GetPosition().y), SP(), LA(side), SP(), LV(fp.GetOrientationDegrees()), SP(), TU([LA('PN'), SP(), LQ(str(fp.GetValue()))])])
     return name, TU(parts), nets, place

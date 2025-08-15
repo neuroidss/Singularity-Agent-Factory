@@ -2,7 +2,8 @@
 
 import type { ToolCreatorPayload } from '../types';
 import { KICAD_CLI_MAIN_SCRIPT } from './kicad_cli_script';
-import { KICAD_CLI_COMMANDS_SCRIPT } from './kicad_cli_commands';
+import { KICAD_CLI_SCHEMATIC_COMMANDS_SCRIPT } from './kicad_cli_commands';
+import { KICAD_CLI_LAYOUT_COMMANDS_SCRIPT } from './kicad_cli_layout_commands';
 import { KICAD_DSN_UTILS_SCRIPT } from './kicad_dsn_utils';
 import { KICAD_SES_UTILS_SCRIPT } from './kicad_ses_utils';
 
@@ -213,6 +214,8 @@ const KICAD_TOOL_DEFINITIONS: ToolCreatorPayload[] = [
         `
     }
 ];
+
+const KICAD_CLI_COMMANDS_SCRIPT = KICAD_CLI_SCHEMATIC_COMMANDS_SCRIPT + KICAD_CLI_LAYOUT_COMMANDS_SCRIPT;
 
 const KICAD_INSTALLER_TOOL: ToolCreatorPayload = {
     name: 'Install KiCad Engineering Suite',
