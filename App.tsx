@@ -57,7 +57,6 @@ const App: React.FC = () => {
         logKicadEvent,
         currentProjectNameRef,
         getKicadSystemPrompt,
-        kicadProjectState,
         kicadSimulators,
     } = useKicadManager({
         logEvent,

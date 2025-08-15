@@ -214,9 +214,16 @@ export const useAppRuntime = (props: UseAppRuntimeProps) => {
         if (toolToExecute.name === 'Update Workflow Checklist') {
              try {
                 const { workflowStepName, checklistItems } = toolCall.arguments;
-                updateWorkflowChecklist(workflowStepName, checklistItems);
+                // The AI returns array parameters as a JSON string. We must parse it.
+                const itemsArray = typeof checklistItems === 'string' ? JSON.parse(checklistItems) : checklistItems;
+
+                if (!Array.isArray(itemsArray)) {
+                    throw new Error(`'checklistItems' for '${workflowStepName}' is not a valid array.`);
+                }
+
+                updateWorkflowChecklist(workflowStepName, itemsArray);
                 enrichedResult.executionResult = { success: true, message: `Checklist updated for '${workflowStepName}'.`};
-                logEvent(`[INFO] ✅ Agent provided a plan for '${workflowStepName}' with ${checklistItems.length} items.`);
+                logEvent(`[INFO] ✅ Agent provided a plan for '${workflowStepName}' with ${itemsArray.length} items.`);
                 return enrichedResult;
              } catch (e) {
                 enrichedResult.executionError = e instanceof Error ? e.message : String(e);

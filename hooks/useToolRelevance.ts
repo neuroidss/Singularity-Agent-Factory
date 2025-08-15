@@ -67,11 +67,9 @@ export const useToolRelevance = ({ allTools, logEvent }: { allTools: LLMTool[], 
         try {
             let contextForEmbedding = "";
             if (systemPromptForContext) {
-                contextForEmbedding = systemPromptForContext;
+                contextForEmbedding += `System Goal: ${systemPromptForContext}\n\n`;
             }
-            if (userRequestText) {
-                contextForEmbedding += `\n\n--- User's Goal ---\n${userRequestText}`;
-            }
+            contextForEmbedding += `User's Current Task: ${userRequestText}`;
 
             if (!contextForEmbedding.trim()) {
                 logEvent('[WARN] No context available for tool relevance search. Providing all tools.');

@@ -9,10 +9,10 @@ import { KICAD_SES_UTILS_SCRIPT } from './kicad_ses_utils';
 const KICAD_TOOL_DEFINITIONS: ToolCreatorPayload[] = [
     {
         name: 'Add Absolute Position Constraint',
-        description: 'Adds a rule to fix a component to an absolute X, Y coordinate on the PCB, typically used for connectors or fixed mechanical parts.',
+        description: 'Fixes an electronic component to an absolute X, Y coordinate on the PCB. Essential for connectors, mounting holes, or parts with fixed mechanical constraints in the final device assembly.',
         category: 'Server',
         executionEnvironment: 'Server',
-        purpose: "To lock critical components to a specific location on the board.",
+        purpose: "To lock critical components to a specific physical location on the board, ensuring mechanical alignment with an enclosure or other hardware, which is a key step in designing a manufacturable product.",
         parameters: [
             { name: 'projectName', type: 'string', description: 'The unique name for this hardware project.', required: true },
             { name: 'componentReference', type: 'string', description: 'The reference designator of the component to fix (e.g., "U1").', required: true },
@@ -23,10 +23,10 @@ const KICAD_TOOL_DEFINITIONS: ToolCreatorPayload[] = [
     },
     {
         name: 'Add Proximity Constraint',
-        description: 'Adds a rule that certain components should be placed close to each other, e.g., a microcontroller and its decoupling capacitors.',
+        description: 'Adds a design rule that specific electronic components must be placed close to each other on the PCB. Critical for high-speed signals or decoupling capacitors.',
         category: 'Server',
         executionEnvironment: 'Server',
-        purpose: "To enforce critical placement for components that have a close electrical relationship, improving signal integrity and performance.",
+        purpose: "To enforce critical placement for components that have a close electrical relationship, improving signal integrity, reducing noise, and ensuring the performance of the final electronic device.",
         parameters: [
             { name: 'projectName', type: 'string', description: 'The unique name for this hardware project.', required: true },
             { name: 'groupsJSON', type: 'string', description: 'A JSON string of an array of arrays, where each inner array is a group of component references that should be close. E.g., \'[["U1", "C1"], ["U1", "C2"]]\'.', required: true },
@@ -35,10 +35,10 @@ const KICAD_TOOL_DEFINITIONS: ToolCreatorPayload[] = [
     },
     {
         name: 'Add Alignment Constraint',
-        description: 'Adds a rule to align a group of components along a specified axis (vertical or horizontal).',
+        description: 'Adds a design rule to align a group of electronic components along a specified axis (vertical or horizontal) on the PCB.',
         category: 'Server',
         executionEnvironment: 'Server',
-        purpose: "To create clean, organized layouts by aligning components like headers or LED arrays.",
+        purpose: "To create clean, organized, and manufacturable PCB layouts by aligning components like headers, LEDs, or resistor arrays, which improves routing and assembly efficiency.",
         parameters: [
             { name: 'projectName', type: 'string', description: 'The unique name for this hardware project.', required: true },
             { name: 'axis', type: 'string', description: 'The axis for alignment: "vertical" or "horizontal".', required: true },
@@ -48,10 +48,10 @@ const KICAD_TOOL_DEFINITIONS: ToolCreatorPayload[] = [
     },
      {
         name: 'Add Symmetry Constraint',
-        description: 'Adds a rule that components in specified pairs should be placed symmetrically across a central axis.',
+        description: 'Adds a design rule that components in specified pairs should be placed symmetrically across a central axis on the PCB.',
         category: 'Server',
         executionEnvironment: 'Server',
-        purpose: "To ensure balanced layouts, especially for analog or differential pair circuits.",
+        purpose: "To ensure balanced electrical and thermal layouts for sensitive circuits, such as analog amplifiers or differential pairs, which is critical for the performance and reliability of the electronic device.",
         parameters: [
             { name: 'projectName', type: 'string', description: 'The unique name for this hardware project.', required: true },
             { name: 'axis', type: 'string', description: 'The axis of symmetry: "vertical" or "horizontal".', required: true },
@@ -61,10 +61,10 @@ const KICAD_TOOL_DEFINITIONS: ToolCreatorPayload[] = [
     },
     {
         name: 'Add Circular Constraint',
-        description: 'Adds a rule to arrange a set of components in a circular pattern around a center point.',
+        description: 'Adds a design rule to arrange a set of electronic components in a circular pattern around a center point on the PCB.',
         category: 'Server',
         executionEnvironment: 'Server',
-        purpose: "To create layouts for circular devices, such as LED rings or sensor arrays.",
+        purpose: "To create specialized PCB layouts for circular devices, such as LED rings, rotary encoders, or circular sensor arrays, enabling unique hardware form factors.",
         parameters: [
             { name: 'projectName', type: 'string', description: 'The unique name for this hardware project.', required: true },
             { name: 'componentsJSON', type: 'string', description: 'A JSON string of an array of component references to arrange in a circle.', required: true },
@@ -76,10 +76,10 @@ const KICAD_TOOL_DEFINITIONS: ToolCreatorPayload[] = [
     },
      {
         name: 'Add Layer Constraint',
-        description: 'Adds a rule to force a set of components to be placed on a specific layer of the PCB.',
+        description: 'Adds a design rule to force a set of components to be placed on a specific layer of the PCB (top or bottom).',
         category: 'Server',
         executionEnvironment: 'Server',
-        purpose: "To control which side of the board components are placed on.",
+        purpose: "To control the physical placement of components on either side of the PCB, optimizing for space, thermal management, or assembly requirements during manufacturing.",
         parameters: [
             { name: 'projectName', type: 'string', description: 'The unique name for this hardware project.', required: true },
             { name: 'layer', type: 'string', description: 'The target layer: "top" or "bottom".', required: true },
@@ -89,10 +89,10 @@ const KICAD_TOOL_DEFINITIONS: ToolCreatorPayload[] = [
     },
     {
         name: 'Define KiCad Component',
-        description: 'Defines a single electronic component by its reference, value, and footprint. This must be called for every component before creating a netlist.',
+        description: 'Defines a single electronic component by its schematic reference, value, and physical footprint. This must be called for every component before creating the netlist for the PCB.',
         category: 'Server',
         executionEnvironment: 'Server',
-        purpose: "To add a component to the project's bill of materials for later inclusion in the netlist.",
+        purpose: "To define the fundamental building blocks of an electronic circuit, creating a complete Bill of Materials (BOM) and providing the necessary data to translate the logical schematic into a physical PCB layout.",
         parameters: [
             { name: 'projectName', type: 'string', description: 'The unique name for this hardware project, used to group all related files.', required: true },
             { name: 'componentReference', type: 'string', description: 'The unique reference designator for the component on the schematic (e.g., U1, R1, C1).', required: true },
@@ -106,10 +106,10 @@ const KICAD_TOOL_DEFINITIONS: ToolCreatorPayload[] = [
     },
     {
         name: 'Define KiCad Net',
-        description: 'Defines a single electrical net by its name and the component pins it connects. This must be called for every net in the design.',
+        description: 'Defines a single electrical connection (a net) by its name and the component pins it connects. This must be called for every net in the schematic design.',
         category: 'Server',
         executionEnvironment: 'Server',
-        purpose: "To add a single electrical connection to the project's netlist definition.",
+        purpose: "To translate a logical connection from an electronic schematic into a physical requirement for the PCB layout, defining the electrical conductivity paths between components.",
         parameters: [
             { name: 'projectName', type: 'string', description: 'The unique name for this hardware project.', required: true },
             { name: 'netName', type: 'string', description: "The name of the net (e.g., 'GND', 'VCC', 'DATA0').", required: true },
@@ -119,10 +119,10 @@ const KICAD_TOOL_DEFINITIONS: ToolCreatorPayload[] = [
     },
     {
         name: 'Generate KiCad Netlist',
-        description: 'Generates the final KiCad netlist file from all previously defined components and nets for a project. This should be called after all components and nets have been defined.',
+        description: 'Generates the final KiCad netlist file from all previously defined components and nets. This is the bridge between the schematic and the PCB layout stages.',
         category: 'Server',
         executionEnvironment: 'Server',
-        purpose: 'To consolidate all defined components and nets into a single, machine-readable netlist file for the PCB layout.',
+        purpose: 'To consolidate all defined components and nets into a single, machine-readable netlist file that serves as the blueprint for the physical PCB layout and routing.',
         parameters: [
             { name: 'projectName', type: 'string', description: 'The unique name for this hardware project.', required: true },
         ],
@@ -130,19 +130,19 @@ const KICAD_TOOL_DEFINITIONS: ToolCreatorPayload[] = [
     },
     {
         name: 'Create Initial PCB',
-        description: 'Creates a blank .kicad_pcb file and imports the generated netlist, placing all footprints at the origin.',
+        description: 'Creates a blank .kicad_pcb file and imports the generated netlist, placing all component footprints at the origin, ready for arrangement.',
         category: 'Server',
         executionEnvironment: 'Server',
-        purpose: 'To create the physical board file and load all the component footprints into it.',
+        purpose: 'To create the physical board file and load all the component footprints into it, officially starting the physical design phase of the hardware project.',
         parameters: [{ name: 'projectName', type: 'string', description: 'The unique name for this hardware project.', required: true }],
         implementationCode: 'python scripts/kicad_cli.py create_initial_pcb'
     },
     {
         name: 'Create Board Outline',
-        description: 'Defines the board shape and size on the Edge.Cuts layer. Can be rectangular or circular. If dimensions are omitted, it auto-sizes based on components.',
+        description: 'Defines the physical shape and size of the PCB on the Edge.Cuts layer. Can be rectangular, circular, or auto-sized based on component placement.',
         category: 'Server',
         executionEnvironment: 'Server',
-        purpose: 'To define the physical dimensions and shape of the final printed circuit board.',
+        purpose: 'To define the physical dimensions and shape of the final printed circuit board, a critical step for mechanical fitting and manufacturing.',
         parameters: [
             { name: 'projectName', type: 'string', description: 'The unique name for this hardware project.', required: true },
             { name: 'shape', type: 'string', description: "The shape of the board outline. Can be 'rectangle' or 'circle'. Defaults to 'rectangle'.", required: false },
@@ -154,10 +154,10 @@ const KICAD_TOOL_DEFINITIONS: ToolCreatorPayload[] = [
     },
     {
         name: 'Arrange Components',
-        description: "Prepares the PCB for interactive or autonomous layout on the client-side. This tool extracts component and net data and sends it to the client's force-directed graph UI.",
+        description: "Extracts component and net data from the PCB file and sends it to the client for interactive or autonomous layout. This step organizes the physical placement of components.",
         category: 'Server',
         executionEnvironment: 'Server',
-        purpose: 'To transition from schematic to physical layout by providing the client UI with all necessary data for an interactive or automated arrangement.',
+        purpose: 'To bridge the gap between the abstract electronic schematic and the physical PCB reality by generating an initial component placement, which is the foundational step for routing and manufacturing.',
         parameters: [
             { name: 'projectName', type: 'string', description: 'The unique name for this hardware project.', required: true },
             { name: 'waitForUserInput', type: 'boolean', description: "Set to 'true' to pause the workflow for interactive manual layout on the client. Set to 'false' to perform an autonomous layout on the client and continue the workflow automatically.", required: true },
@@ -167,10 +167,10 @@ const KICAD_TOOL_DEFINITIONS: ToolCreatorPayload[] = [
     },
     {
         name: 'Update KiCad Component Positions',
-        description: 'Updates the positions of components on the PCB after arrangement and automatically calculates and draws a new board outline to fit the placed components.',
+        description: 'Updates the positions of components on the .kicad_pcb file after arrangement and automatically calculates a new board outline to tightly fit the placed components.',
         category: 'Server',
         executionEnvironment: 'Server',
-        purpose: 'To commit the refined component layout from the interactive UI back to the KiCad board file and create the final board outline.',
+        purpose: 'To commit the refined component layout from the arrangement stage back to the KiCad board file and create the final, optimized board outline for manufacturing.',
         parameters: [
             { name: 'projectName', type: 'string', description: 'The unique name for this hardware project.', required: true },
             { name: 'componentPositionsJSON', type: 'string', description: `A JSON string of an object mapping component references to their new {x, y, rotation, side} coordinates. Example: '{"U1": {"x": 10, "y": 15, "rotation": 90, "side": "top"}, "R1": {"x": 25, "y": 15, "rotation": 0, "side": "bottom"}}'.`, required: true },
@@ -179,28 +179,28 @@ const KICAD_TOOL_DEFINITIONS: ToolCreatorPayload[] = [
     },
     {
         name: 'Autoroute PCB',
-        description: 'Exports the board to DSN format, runs the FreeRouting autorouter, and imports the resulting routes back into the .kicad_pcb file.',
+        description: 'Automatically routes the copper traces between components on the PCB based on the netlist. It exports to a DSN file, runs an external autorouter, and imports the results.',
         category: 'Server',
         executionEnvironment: 'Server',
-        purpose: 'To automatically create the copper traces that connect the components according to the netlist.',
+        purpose: 'To automatically create the copper traces that form the electrical connections between components, transforming the placed board into a functional electronic circuit.',
         parameters: [{ name: 'projectName', type: 'string', description: 'The unique name for this hardware project.', required: true }],
         implementationCode: 'python scripts/kicad_cli.py autoroute_pcb'
     },
     {
         name: 'Export Fabrication Files',
-        description: 'Generates all necessary manufacturing outputs (Gerbers, drill files, 3D renders) and packages them into a zip file.',
+        description: 'Generates all necessary manufacturing outputs (Gerbers, drill files, 3D model) and packages them into a zip file, ready for a PCB fabrication house.',
         category: 'Server',
         executionEnvironment: 'Server',
-        purpose: 'To produce the final, complete set of files required by a manufacturer to produce the physical PCB.',
+        purpose: 'To produce the final, complete manufacturing dataset required by a factory to produce the physical electronic device, marking the successful culmination of the hardware design process.',
         parameters: [{ name: 'projectName', type: 'string', description: 'The unique name for this hardware project.', required: true }],
         implementationCode: 'python scripts/kicad_cli.py export_fabrication_files'
     },
     {
         name: 'Update Workflow Checklist',
-        description: "A client-side tool for the AI agent to communicate its plan for a specific workflow stage to the UI. The UI then uses this list to render a detailed checklist and progress bar for that stage.",
+        description: "Communicates the agent's plan for a specific workflow stage to the UI, which renders a detailed checklist. Used to track progress within complex steps like defining dozens of components.",
         category: 'Functional',
         executionEnvironment: 'Client',
-        purpose: 'To provide granular, real-time progress updates to the user by showing the agent\'s plan and tracking its completion.',
+        purpose: "To provide granular, real-time progress updates of the PCB design process to the user by showing the agent's detailed plan and tracking its completion.",
         parameters: [
             { name: 'workflowStepName', type: 'string', description: 'The name of the workflow step this checklist applies to (e.g., "Define Components").', required: true },
             { name: 'checklistItems', type: 'array', description: 'An array of strings representing the sub-tasks for this step (e.g., ["U1", "C1", "R1"]).', required: true },
