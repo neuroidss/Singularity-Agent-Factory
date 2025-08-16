@@ -2,7 +2,7 @@
 
 import type { ToolCreatorPayload } from '../types';
 import { KICAD_CLI_MAIN_SCRIPT } from './kicad_cli_script';
-import { KICAD_CLI_SCHEMATIC_COMMANDS_SCRIPT } from './kicad_cli_commands';
+import { KICAD_CLI_SCHEMATIC_COMMANDS_SCRIPT } from './kicad_cli_schematic_commands';
 import { KICAD_CLI_LAYOUT_COMMANDS_SCRIPT } from './kicad_cli_layout_commands';
 import { KICAD_DSN_UTILS_SCRIPT } from './kicad_dsn_utils';
 import { KICAD_SES_UTILS_SCRIPT } from './kicad_ses_utils';
@@ -89,6 +89,33 @@ const KICAD_TOOL_DEFINITIONS: ToolCreatorPayload[] = [
         implementationCode: 'python scripts/kicad_cli.py add_layer_constraint'
     },
     {
+        name: 'Add Fixed Property Constraint',
+        description: 'Fixes a specific property of a component, like its rotation or side, preventing it from being changed by the simulation. Use this for components with required orientations.',
+        category: 'Server',
+        executionEnvironment: 'Server',
+        purpose: "To give the agent precise control over individual component properties that are non-negotiable, such as the orientation of a polarized capacitor or a specific connector.",
+        parameters: [
+            { name: 'projectName', type: 'string', description: 'The unique name for this hardware project.', required: true },
+            { name: 'componentReference', type: 'string', description: 'The reference designator of the component (e.g., "U1").', required: true },
+            { name: 'propertiesJSON', type: 'string', description: 'A JSON string of an object with properties to fix. E.g., \'{"rotation": 90}\'.', required: true },
+        ],
+        implementationCode: 'python scripts/kicad_cli.py add_fixed_property_constraint'
+    },
+    {
+        name: 'Add Symmetrical Pair Constraint',
+        description: 'Constrains two components to be symmetrical about an axis with a specific separation distance between them. It automatically handles their relative rotation to face each other.',
+        category: 'Server',
+        executionEnvironment: 'Server',
+        purpose: "To correctly model and place pairs of components like DIP packages or board-edge connectors (e.g., XIAO) that have a fixed, mirrored physical relationship.",
+        parameters: [
+            { name: 'projectName', type: 'string', description: 'The unique name for this hardware project.', required: true },
+            { name: 'pairJSON', type: 'string', description: 'A JSON string of an array with two component references. E.g., \'["J_XIAO_1", "J_XIAO_2"]\'.', required: true },
+            { name: 'axis', type: 'string', description: 'The axis of symmetry: "vertical" or "horizontal".', required: true },
+            { name: 'separation', type: 'number', description: 'The required distance between the two components in millimeters.', required: true },
+        ],
+        implementationCode: 'python scripts/kicad_cli.py add_symmetrical_pair_constraint'
+    },
+    {
         name: 'Define KiCad Component',
         description: 'Defines a single electronic component by its schematic reference, value, and physical footprint. This must be called for every component before creating the netlist for the PCB.',
         category: 'Server',
@@ -162,7 +189,7 @@ const KICAD_TOOL_DEFINITIONS: ToolCreatorPayload[] = [
         parameters: [
             { name: 'projectName', type: 'string', description: 'The unique name for this hardware project.', required: true },
             { name: 'waitForUserInput', type: 'boolean', description: "Set to 'true' to pause the workflow for interactive manual layout on the client. Set to 'false' to perform an autonomous layout on the client and continue the workflow automatically.", required: true },
-            { name: 'layoutStrategy', type: 'string', description: "The layout engine to use: 'agent' for rule-based, 'physics' for Rapier.js simulation. Defaults to 'agent'.", required: false }
+            { name: 'layoutStrategy', type: 'string', description: "The layout engine to use: 'agent' for rule-based, 'physics' for Rapier.js simulation. Defaults to 'agent'.", required: false },
         ],
         implementationCode: 'python scripts/kicad_cli.py arrange_components'
     },
@@ -184,7 +211,9 @@ const KICAD_TOOL_DEFINITIONS: ToolCreatorPayload[] = [
         category: 'Server',
         executionEnvironment: 'Server',
         purpose: 'To automatically create the copper traces that form the electrical connections between components, transforming the placed board into a functional electronic circuit.',
-        parameters: [{ name: 'projectName', type: 'string', description: 'The unique name for this hardware project.', required: true }],
+        parameters: [
+            { name: 'projectName', type: 'string', description: 'The unique name for this hardware project.', required: true },
+        ],
         implementationCode: 'python scripts/kicad_cli.py autoroute_pcb'
     },
     {
@@ -217,63 +246,7 @@ const KICAD_TOOL_DEFINITIONS: ToolCreatorPayload[] = [
 
 const KICAD_CLI_COMMANDS_SCRIPT = KICAD_CLI_SCHEMATIC_COMMANDS_SCRIPT + KICAD_CLI_LAYOUT_COMMANDS_SCRIPT;
 
-const KICAD_INSTALLER_TOOL: ToolCreatorPayload = {
-    name: 'Install KiCad Engineering Suite',
-    description: 'Installs the complete KiCad suite. This one-time action creates all required client-side tools for PCB design simulation. This MUST be called before any other KiCad tool.',
-    category: 'Automation',
-    executionEnvironment: 'Client',
-    purpose: "To fully bootstrap the agent's hardware engineering capabilities by installing all necessary tool definitions for the client-side simulation.",
-    parameters: [],
-    implementationCode: `
-        // --- Step 1: Write the Python scripts to the server ---
-        const scriptsToWrite = [
-            { name: 'kicad_cli.py', content: ${JSON.stringify(KICAD_CLI_MAIN_SCRIPT)} },
-            { name: 'kicad_cli_commands.py', content: ${JSON.stringify(KICAD_CLI_COMMANDS_SCRIPT)} },
-            { name: 'kicad_dsn_utils.py', content: ${JSON.stringify(KICAD_DSN_UTILS_SCRIPT)} },
-            { name: 'kicad_ses_utils.py', content: ${JSON.stringify(KICAD_SES_UTILS_SCRIPT)} },
-        ];
-        
-        console.log(\`[INFO] Writing \${scriptsToWrite.length} KiCad Python scripts to the server...\`);
-        if (runtime.isServerConnected()) {
-            for (const script of scriptsToWrite) {
-                try {
-                    await runtime.tools.run('Server File Writer', { filePath: script.name, content: script.content });
-                } catch (e) {
-                    // If writing fails, we can't proceed with creating server tools.
-                    throw new Error(\`Failed to write script '\${script.name}' to server: \${e.message}\`);
-                }
-            }
-            console.log('[INFO] KiCad Python scripts written successfully.');
-        } else {
-             console.log('[INFO] Server not connected. Skipping Python script creation. KiCad tools will be simulated.');
-        }
-
-        // --- Step 2: Create the tool definitions ---
-        const toolPayloads = ${JSON.stringify(KICAD_TOOL_DEFINITIONS)};
-
-        console.log(\`[INFO] Creating \${toolPayloads.length} KiCad tools...\`);
-        for (const payload of toolPayloads) {
-            try {
-                await runtime.tools.run('Tool Creator', payload);
-            } catch (e) {
-                console.warn(\`[WARN] Tool '\${payload.name}' might already exist. Skipping. Error: \${e.message}\`);
-            }
-        }
-        
-        if (runtime.isServerConnected()) {
-            try {
-                const { count } = await runtime.forceRefreshServerTools();
-                console.log(\`[INFO] Client state synchronized with server. \${count} server tools loaded.\`);
-            } catch (e) {
-                console.error('[ERROR] Failed to force-refresh server tools after installation:', e);
-            }
-        }
-        
-        return { success: true, message: 'KiCad Engineering Suite and all associated tools installed successfully.' };
-    `
-};
-
-export const KICAD_DESIGN_PROMPT_TEXT = `I need a PCB design for a FreeEEG8-alpha inspired mezzanine board.
+const KICAD_DESIGN_PROMPT_TEXT = `I need a PCB design for a FreeEEG8-alpha inspired mezzanine board.
 
 Here is the plan:
 
@@ -337,14 +310,22 @@ const KICAD_UI_PANEL_TOOL: ToolCreatorPayload = {
     parameters: [
         { name: 'onStartTask', type: 'object', description: 'Function to start the LLM agent task.', required: true },
         { name: 'onStartDemo', type: 'object', description: 'Function to start the local simulation.', required: true },
-        { name: 'onResetDemo', type: 'object', description: 'Function to reset the workflow state.', required: true },
+        { name: 'onStopDemo', type: 'object', description: 'Function to stop and reset the workflow state.', required: true },
         { name: 'kicadLog', type: 'array', description: 'Log messages from the KiCad workflow.', required: true },
         { name: 'isGenerating', type: 'boolean', description: 'Flag indicating if the swarm/simulation is running.', required: true },
         { name: 'workflowSteps', type: 'array', description: 'List of workflow steps and their status.', required: true },
         { name: 'currentArtifact', type: 'object', description: 'The currently displayed artifact (e.g., a schematic or board SVG).', required: false },
         { name: 'demoWorkflow', type: 'array', description: 'The array of tool calls for the demo simulation.', required: true },
         { name: 'getTool', type: 'object', description: 'Function to retrieve a tool definition by name.', required: true },
-        // New props for integrated layout view
+        // Interactive Demo Props
+        { name: 'executionState', type: 'string', description: 'The current execution state of the demo.', required: true },
+        { name: 'currentStepIndex', type: 'number', description: 'The index of the current step in the demo.', required: true },
+        { name: 'demoStepStatuses', type: 'array', description: 'The status of each step in the demo.', required: true },
+        { name: 'onPlayPause', type: 'object', description: 'Handler to play/pause the demo.', required: true },
+        { name: 'onStepForward', type: 'object', description: 'Handler to step forward.', required: true },
+        { name: 'onStepBackward', type: 'object', description: 'Handler to step backward.', required: true },
+        { name: 'onRunFromStep', type: 'object', description: 'Handler to run from a specific step.', required: true },
+        // Layout View Props
         { name: 'currentLayoutData', type: 'object', description: 'Graph data for the interactive layout tool.', required: false },
         { name: 'isLayoutInteractive', type: 'boolean', description: 'Flag to determine if the commit button should be active.', required: true },
         { name: 'onCommitLayout', type: 'object', description: 'Callback function to commit the final layout.', required: true },
@@ -354,8 +335,6 @@ const KICAD_UI_PANEL_TOOL: ToolCreatorPayload = {
     const [files, setFiles] = React.useState([]);
     const [urls, setUrls] = React.useState(['']);
     const [useSearch, setUseSearch] = React.useState(false);
-    const [elapsedTime, setElapsedTime] = React.useState(0);
-    const [isDemoRunning, setIsDemoRunning] = React.useState(false);
     
     const scrollContainerRef = React.useRef(null);
     
@@ -364,17 +343,6 @@ const KICAD_UI_PANEL_TOOL: ToolCreatorPayload = {
             scrollContainerRef.current.scrollTop = scrollContainerRef.current.scrollHeight;
         }
     }, [kicadLog]);
-
-    React.useEffect(() => {
-        let timer;
-        if (isGenerating) {
-            if (!isDemoRunning) setElapsedTime(0);
-            timer = setInterval(() => setElapsedTime(t => t + 1), 1000);
-        } else {
-             setElapsedTime(0); // Also reset when stopping
-        }
-        return () => clearInterval(timer);
-    }, [isGenerating, isDemoRunning]);
 
     const handleFileChange = (e) => {
         setFiles(prev => [...prev, ...Array.from(e.target.files)]);
@@ -391,7 +359,6 @@ const KICAD_UI_PANEL_TOOL: ToolCreatorPayload = {
 
     const handleStartLLM = async () => {
         if (isGenerating) return;
-        setIsDemoRunning(false); // Ensure demo mode is off
         const filePayloads = await Promise.all(files.map(file => new Promise((resolve, reject) => {
             const reader = new FileReader();
             reader.onload = () => resolve({ name: file.name, type: file.type, data: reader.result.toString().split(',')[1] });
@@ -400,23 +367,11 @@ const KICAD_UI_PANEL_TOOL: ToolCreatorPayload = {
         })));
         onStartTask({ prompt, files: filePayloads, urls: urls.filter(u => u.trim()), useSearch });
     };
-
-    const handleStartDemoClick = () => {
-        if (isGenerating) return;
-        setIsDemoRunning(true);
-        setElapsedTime(0);
-        onStartDemo();
-    };
-
-    const handleResetDemoClick = () => {
-        setIsDemoRunning(false);
-        setElapsedTime(0);
-        onResetDemo();
-    };
     
-    const timeFormatted = new Date(elapsedTime * 1000).toISOString().substr(14, 5);
-    const currentStepIndex = workflowSteps.findIndex(step => step.status === 'in-progress');
+    const currentStepIndexProgress = workflowSteps.findIndex(step => step.status === 'in-progress');
     const overallProgress = (workflowSteps.filter(s => s.status === 'completed').length / workflowSteps.length) * 100;
+    
+    const isDemoActive = executionState !== 'idle';
     
     const renderPromptForm = () => (
         <div className="space-y-2 overflow-y-auto pr-2">
@@ -447,7 +402,7 @@ const KICAD_UI_PANEL_TOOL: ToolCreatorPayload = {
     );
     
     const renderWorkflowTracker = () => {
-        const activeStep = workflowSteps[currentStepIndex];
+        const activeStep = workflowSteps[currentStepIndexProgress];
         const completedSubtasks = activeStep?.subtasks.filter(st => st.status === 'completed').length || 0;
         const totalSubtasks = activeStep?.subtasks.length || 0;
         const subProgress = totalSubtasks > 0 ? (completedSubtasks / totalSubtasks) * 100 : 0;
@@ -456,7 +411,6 @@ const KICAD_UI_PANEL_TOOL: ToolCreatorPayload = {
         <div className="space-y-3">
             <div className="flex justify-between items-center text-sm">
                 <span className="font-semibold text-sky-300">Overall Progress</span>
-                <span className="font-mono text-gray-300">{timeFormatted}</span>
             </div>
             <div className="w-full bg-gray-700 rounded-full h-2.5"><div className="bg-sky-500 h-2.5 rounded-full transition-all duration-500" style={{width: \`\${overallProgress}%\`}}></div></div>
             <div className="space-y-1.5 pl-1">
@@ -499,8 +453,19 @@ const KICAD_UI_PANEL_TOOL: ToolCreatorPayload = {
                 </div>
             );
         }
-        if (isDemoRunning) {
-            return <UIToolRunner tool={getTool('Demo Workflow Viewer')} props={{ workflow: demoWorkflow, kicadLog: kicadLog, elapsedTime: elapsedTime }} />;
+        if (isDemoActive) {
+            const demoProps = {
+                workflow: demoWorkflow,
+                executionState: executionState,
+                currentStepIndex: currentStepIndex,
+                demoStepStatuses: demoStepStatuses,
+                onPlayPause: onPlayPause,
+                onStop: onStopDemo,
+                onStepForward: onStepForward,
+                onStepBackward: onStepBackward,
+                onRunFromStep: onRunFromStep,
+            };
+            return <UIToolRunner tool={getTool('Interactive Demo Workflow Controller')} props={demoProps} />;
         }
         if (isGenerating) return renderExecutionView({ currentArtifact });
         return renderPromptForm();
@@ -515,21 +480,82 @@ const KICAD_UI_PANEL_TOOL: ToolCreatorPayload = {
              { !currentLayoutData &&
                 <div className="mt-4 pt-4 border-t border-sky-700/50 space-y-2">
                     <div className="grid grid-cols-2 gap-2">
-                        <button onClick={handleStartDemoClick} disabled={isGenerating} className="w-full bg-purple-600 text-white font-semibold py-2 px-3 rounded-lg hover:bg-purple-700 disabled:bg-gray-600 disabled:cursor-not-allowed">
-                           Run Local Simulation
+                        <button onClick={onStartDemo} disabled={isGenerating} className="w-full bg-purple-600 text-white font-semibold py-2 px-3 rounded-lg hover:bg-purple-700 disabled:bg-gray-600 disabled:cursor-not-allowed">
+                           Run Simulation
                         </button>
                         <button onClick={handleStartLLM} disabled={isGenerating} className="w-full bg-indigo-600 text-white font-semibold py-2 px-3 rounded-lg hover:bg-indigo-700 disabled:bg-gray-600 disabled:cursor-not-allowed">
                            Run LLM Agent
                         </button>
                     </div>
-                    <button onClick={handleResetDemoClick} disabled={isGenerating && !isDemoRunning} className="w-full bg-red-800/80 text-white font-semibold py-1.5 px-3 rounded-lg hover:bg-red-700/80 disabled:bg-gray-600/50 disabled:cursor-not-allowed text-sm">
-                        Reset Workflow
-                    </button>
+                    {isDemoActive &&
+                        <button onClick={onStopDemo} className="w-full bg-red-800/80 text-white font-semibold py-1.5 px-3 rounded-lg hover:bg-red-700/80 text-sm">
+                            Stop Simulation
+                        </button>
+                    }
                 </div>
             }
         </div>
     );
 `};
+
+const KICAD_INSTALLER_TOOL: ToolCreatorPayload = {
+    name: 'Install KiCad Engineering Suite',
+    description: 'Installs the complete KiCad suite. This one-time action creates all required client-side tools for PCB design simulation. This MUST be called before any other KiCad tool.',
+    category: 'Automation',
+    executionEnvironment: 'Client',
+    purpose: "To fully bootstrap the agent's hardware engineering capabilities by installing all necessary tool definitions for the client-side simulation.",
+    parameters: [],
+    implementationCode: `
+        // --- Step 1: Write the Python scripts to the server ---
+        const scriptsToWrite = [
+            { name: 'kicad_cli.py', content: ${JSON.stringify(KICAD_CLI_MAIN_SCRIPT)} },
+            { name: 'kicad_cli_commands.py', content: ${JSON.stringify(KICAD_CLI_COMMANDS_SCRIPT)} },
+            { name: 'kicad_dsn_utils.py', content: ${JSON.stringify(KICAD_DSN_UTILS_SCRIPT)} },
+            { name: 'kicad_ses_utils.py', content: ${JSON.stringify(KICAD_SES_UTILS_SCRIPT)} },
+        ];
+        
+        console.log(\`[INFO] Writing \${scriptsToWrite.length} KiCad Python scripts to the server...\`);
+        if (runtime.isServerConnected()) {
+            for (const script of scriptsToWrite) {
+                try {
+                    await runtime.tools.run('Server File Writer', { filePath: script.name, content: script.content });
+                } catch (e) {
+                    // If writing fails, we can't proceed with creating server tools.
+                    throw new Error(\`Failed to write script '\${script.name}' to server: \${e.message}\`);
+                }
+            }
+            console.log('[INFO] KiCad Python scripts written successfully.');
+        } else {
+             console.log('[INFO] Server not connected. Skipping Python script creation. KiCad tools will be simulated.');
+        }
+
+        // --- Step 2: Create the tool definitions ---
+        const toolPayloads = [
+            ...${JSON.stringify(KICAD_TOOL_DEFINITIONS)},
+            ${JSON.stringify(KICAD_UI_PANEL_TOOL)}
+        ];
+
+        console.log(\`[INFO] Creating \${toolPayloads.length} KiCad tools...\`);
+        for (const payload of toolPayloads) {
+            try {
+                await runtime.tools.run('Tool Creator', payload);
+            } catch (e) {
+                console.warn(\`[WARN] Tool '\${payload.name}' might already exist. Skipping. Error: \${e.message}\`);
+            }
+        }
+        
+        if (runtime.isServerConnected()) {
+            try {
+                const { count } = await runtime.forceRefreshServerTools();
+                console.log(\`[INFO] Client state synchronized with server. \${count} server tools loaded.\`);
+            } catch (e) {
+                console.error('[ERROR] Failed to force-refresh server tools after installation:', e);
+            }
+        }
+        
+        return { success: true, message: 'KiCad Engineering Suite and all associated tools installed successfully.' };
+    `
+};
 
 export const KICAD_TOOLS: ToolCreatorPayload[] = [
     KICAD_INSTALLER_TOOL,

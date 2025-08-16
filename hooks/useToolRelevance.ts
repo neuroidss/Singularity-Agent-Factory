@@ -24,7 +24,7 @@ export const useToolRelevance = ({ allTools, logEvent }: { allTools: LLMTool[], 
             }
 
             isEmbeddingTools.current = true;
-            logEvent(`[Embeddings] Creating embeddings for ${toolsToEmbed.length} new/updated tools...`);
+            logEvent(`[Embeddings] Found ${toolsToEmbed.length} new tools to process. Starting embedding...`);
             
             try {
                 // Construct the text for each tool to be sent for embedding.
@@ -35,15 +35,17 @@ export const useToolRelevance = ({ allTools, logEvent }: { allTools: LLMTool[], 
                 
                 const embeddings = await generateEmbeddings(textsToEmbed, (msg) => logEvent(`[Embeddings] ${msg}`));
                 
-                setToolEmbeddings(prevMap => {
-                    const newMap = new Map(prevMap);
-                    toolsToEmbed.forEach((tool, index) => {
-                        newMap.set(tool.id, embeddings[index]);
-                    });
-                    return newMap;
+                const newEmbeddings = new Map<string, number[]>();
+                toolsToEmbed.forEach((tool, index) => {
+                    newEmbeddings.set(tool.id, embeddings[index]);
                 });
 
-                logEvent(`[Embeddings] Cache updated with ${toolsToEmbed.length} new tools. Total: ${toolEmbeddings.size + toolsToEmbed.length}`);
+                setToolEmbeddings(prevMap => {
+                    return new Map([...prevMap, ...newEmbeddings]);
+                });
+
+                const newTotal = toolEmbeddings.size + toolsToEmbed.length;
+                logEvent(`[Embeddings] Cache updated. Total embedded: ${newTotal} of ${allTools.length} available tools.`);
 
             } catch (e) {
                 const errorMsg = e instanceof Error ? e.message : String(e);
@@ -54,7 +56,7 @@ export const useToolRelevance = ({ allTools, logEvent }: { allTools: LLMTool[], 
         };
 
         updateEmbeddings();
-    }, [allTools, logEvent]);
+    }, [allTools, logEvent, toolEmbeddings.size]);
 
 
     const findRelevantTools = useCallback(async (

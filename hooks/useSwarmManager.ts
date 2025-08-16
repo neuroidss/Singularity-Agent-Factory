@@ -1,3 +1,4 @@
+
 import React, { useState, useCallback, useRef, useEffect } from 'react';
 import { SWARM_AGENT_SYSTEM_PROMPT } from '../constants';
 import { contextualizeWithSearch } from '../services/aiService';
@@ -238,7 +239,9 @@ export const useSwarmManager = (props: UseSwarmManagerProps) => {
             }
         } finally {
             if (isRunningRef.current) {
-                setTimeout(() => runSwarmCycle(processRequest, executeActionRef, allTools), 1000);
+                // Use requestAnimationFrame to schedule the next cycle. This runs as fast as
+                // the browser can handle without blocking the UI, instead of a fixed delay.
+                requestAnimationFrame(() => runSwarmCycle(processRequest, executeActionRef, allTools));
             }
             isCycleInProgress.current = false; // Release lock
         }

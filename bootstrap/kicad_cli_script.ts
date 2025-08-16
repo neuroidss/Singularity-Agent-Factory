@@ -1,5 +1,4 @@
-
-//this is typescript file with text variable with python code
+//bootstrap/kicad_cli_script.ts is typescript file with text variable with python code
 export const KICAD_CLI_MAIN_SCRIPT = `
 import sys
 import argparse
@@ -18,6 +17,8 @@ from kicad_cli_commands import (
     add_symmetry_constraint,
     add_circular_constraint,
     add_layer_constraint,
+    add_fixed_property_constraint,
+    add_symmetrical_pair_constraint,
     define_net,
     generate_netlist,
     create_initial_pcb,
@@ -28,6 +29,8 @@ from kicad_cli_commands import (
     export_fabrication_files,
     log_error_and_exit
 )
+
+SCRIPT_VERSION = "v1.1.0"
 
 try:
     # Ensure pcbnew can be found
@@ -49,6 +52,7 @@ def str_to_bool(value):
         raise argparse.ArgumentTypeError('Boolean value expected.')
 
 def main():
+    print(f"DEBUG: KiCad CLI Script version {SCRIPT_VERSION} running.", file=sys.stderr)
     if 'pcbnew' not in sys.modules:
         log_error_and_exit("KiCad's pcbnew library not found in Python path. This script must be run in an environment where pcbnew is available (e.g., via 'kicad-cli exec-python').")
 
@@ -64,7 +68,8 @@ def main():
     p_define.add_argument('--footprintIdentifier', required=True)
     p_define.add_argument('--numberOfPins', type=int, default=0)
     p_define.add_argument('--side', type=str, default='top', choices=['top', 'bottom'])
-    p_define.set_defaults(func=define_components)
+    # The --exportSVG flag is now controlled internally by a default.
+    p_define.set_defaults(func=define_components, exportSVG=False)
 
     # --- Rule Definitions (Atomic) ---
     p_abs_pos = subparsers.add_parser('add_absolute_position_constraint')
@@ -105,11 +110,24 @@ def main():
     p_layer.add_argument('--componentsJSON', required=True, help="JSON string of components.")
     p_layer.set_defaults(func=add_layer_constraint)
 
+    p_fixed = subparsers.add_parser('add_fixed_property_constraint')
+    p_fixed.add_argument('--projectName', required=True)
+    p_fixed.add_argument('--componentReference', required=True)
+    p_fixed.add_argument('--propertiesJSON', required=True, help='JSON string of properties, e.g., \\'{"rotation": 90}\\'')
+    p_fixed.set_defaults(func=add_fixed_property_constraint)
+
+    p_sym_pair = subparsers.add_parser('add_symmetrical_pair_constraint')
+    p_sym_pair.add_argument('--projectName', required=True)
+    p_sym_pair.add_argument('--pairJSON', required=True, help='A JSON string of an array of two component references.')
+    p_sym_pair.add_argument('--axis', required=True, choices=['vertical', 'horizontal'])
+    p_sym_pair.add_argument('--separation', type=float, required=True, help='Distance between components in mm.')
+    p_sym_pair.set_defaults(func=add_symmetrical_pair_constraint)
+
     # --- Netlist and Board Creation ---
     p_define_net = subparsers.add_parser('define_net')
     p_define_net.add_argument('--projectName', required=True)
     p_define_net.add_argument('--netName', required=True)
-    p_define_net.add_argument('--pins', required=True, help="Python list of pin name strings, e.g., '[\'U1-1\', \'R1-2\']'.")
+    p_define_net.add_argument('--pins', required=True, help="Python list of pin name strings, e.g., '[\\'U1-1\\', \\'R1-2\\']'.")
     p_define_net.set_defaults(func=define_net)
 
     p_gen_netlist = subparsers.add_parser('generate_netlist')
@@ -133,7 +151,7 @@ def main():
     p_arrange.add_argument('--projectName', required=True)
     p_arrange.add_argument('--waitForUserInput', type=str_to_bool, default=True)
     p_arrange.add_argument('--layoutStrategy', type=str, default='agent', choices=['agent', 'physics'], help="Layout engine to use: 'agent' or 'physics'.")
-    p_arrange.set_defaults(func=arrange_components)
+    p_arrange.set_defaults(func=arrange_components, load3DModels=False, loadSVGs=False)
     
     p_update_pos = subparsers.add_parser('update_component_positions')
     p_update_pos.add_argument('--projectName', required=True)
@@ -142,7 +160,7 @@ def main():
 
     p_autoroute = subparsers.add_parser('autoroute_pcb')
     p_autoroute.add_argument('--projectName', required=True)
-    p_autoroute.set_defaults(func=autoroute_pcb)
+    p_autoroute.set_defaults(func=autoroute_pcb, plotSVG=False)
 
     p_export = subparsers.add_parser('export_fabrication_files')
     p_export.add_argument('--projectName', required=True)

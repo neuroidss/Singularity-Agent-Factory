@@ -1,77 +1,103 @@
 
-
 import type { ToolCreatorPayload } from '../types';
 
 export const UI_DEMO_TOOLS: ToolCreatorPayload[] = [
     {
-        name: 'Demo Workflow Viewer',
-        description: 'Displays the steps of a demo workflow and tracks their execution status based on logs.',
+        name: 'Interactive Demo Workflow Controller',
+        description: 'An interactive panel for controlling a demo workflow, similar to a Jupyter notebook, with play, pause, step, and run-from-here functionality.',
         category: 'UI Component',
         executionEnvironment: 'Client',
-        purpose: 'To provide clear, step-by-step feedback during a simulated workflow run.',
+        purpose: 'To provide detailed, interactive control and visibility over a simulated agent workflow for debugging and demonstration.',
         parameters: [
             { name: 'workflow', type: 'array', description: 'The array of AIToolCall steps in the workflow.', required: true },
-            { name: 'kicadLog', type: 'array', description: 'The log of events from the KiCad manager.', required: true },
-            { name: 'elapsedTime', type: 'number', description: 'Time elapsed since the demo started.', required: true },
+            { name: 'executionState', type: 'string', description: 'The current state of the execution engine (running, paused, idle, etc.).', required: true },
+            { name: 'currentStepIndex', type: 'number', description: 'The index of the step that will be executed next.', required: true },
+            { name: 'demoStepStatuses', type: 'array', description: 'An array tracking the status and result of each step.', required: true },
+            { name: 'onPlayPause', type: 'object', description: 'Callback to play or pause the execution.', required: true },
+            { name: 'onStop', type: 'object', description: 'Callback to stop and reset the execution.', required: true },
+            { name: 'onStepForward', type: 'object', description: 'Callback to execute the next step.', required: true },
+            { name: 'onStepBackward', type: 'object', description: 'Callback to move the execution pointer back one step.', required: true },
+            { name: 'onRunFromStep', type: 'object', description: 'Callback to start execution from a specific step.', required: true },
         ],
         implementationCode: `
-            const timeFormatted = new Date(elapsedTime * 1000).toISOString().substr(14, 5);
+            const scrollRef = React.useRef(null);
 
-            const wasCompleted = React.useCallback((step) => {
-                const lowerCaseName = step.name.toLowerCase();
-                return kicadLog.some(log => {
-                    const lowerLog = log.toLowerCase();
-                    // A log entry is considered a success if it starts with the checkmark emoji.
-                    if (!log.startsWith('✔️')) return false;
-                    
-                    // Match specific keywords for each step to avoid ambiguity.
-                    if (lowerCaseName.includes('define kicad component')) return lowerLog.includes('component') && lowerLog.includes('defined');
-                    if (lowerCaseName.includes('define kicad net')) return lowerLog.includes('net') && lowerLog.includes('defined');
-                    if (lowerCaseName.includes('define kicad layout rules')) return lowerLog.includes('layout rules for project');
-                    if (lowerCaseName.includes('generate kicad netlist')) return lowerLog.includes('netlist generated');
-                    if (lowerCaseName.includes('create initial pcb')) return lowerLog.includes('initial pcb created');
-                    if (lowerCaseName.includes('create board outline')) return lowerLog.includes('board outline created');
-                    if (lowerCaseName.includes('arrange components')) return lowerLog.includes('extracted layout data');
-                    if (lowerCaseName.includes('update kicad component positions')) return lowerLog.includes('component positions updated');
-                    if (lowerCaseName.includes('autoroute pcb')) return lowerLog.includes('autorouting complete');
-                    if (lowerCaseName.includes('export fabrication files')) return lowerLog.includes('fabrication files exported');
-                    if (lowerCaseName.includes('task complete')) return lowerLog.includes('task complete');
+            React.useEffect(() => {
+                // const currentStepElement = scrollRef.current?.children[currentStepIndex];
+                // if (currentStepElement) {
+                //     currentStepElement.scrollIntoView({ behavior: 'auto', block: 'nearest' });
+                // }
+            }, [currentStepIndex]);
 
-                    return false;
-                });
-            }, [kicadLog]);
-
-            const firstPendingIndex = React.useMemo(() => {
-                return workflow.findIndex(step => !wasCompleted(step));
-            }, [workflow, wasCompleted]);
-            
-            const getStepStatus = (index) => {
-                if (firstPendingIndex === -1 || index < firstPendingIndex) {
-                    return { icon: '✅', color: 'text-green-400' };
-                }
-                if (index === firstPendingIndex) {
-                    return { icon: '⏳', color: 'text-yellow-300 animate-pulse' };
-                }
-                return { icon: '⚪', color: 'text-gray-500' };
-            };
+            const isRunning = executionState === 'running';
+            const isPaused = executionState === 'paused';
+            const isIdle = executionState === 'idle' || executionState === 'finished' || executionState === 'error';
 
             return (
-                <div className="flex-grow flex flex-col min-h-0">
-                   <div className="flex justify-between items-center text-sm mb-2">
-                        <span className="font-semibold text-purple-300">Running Simulation...</span>
-                        <span className="font-mono text-gray-300">{timeFormatted}</span>
+                <div className="flex-grow flex flex-col min-h-0 text-sm">
+                   <div className="flex-shrink-0 flex items-center justify-between bg-gray-900/50 p-2 rounded-t-lg border-b border-gray-700">
+                        <span className="font-semibold text-purple-300 px-2">Workflow Control</span>
+                        <div className="flex items-center gap-2">
+                            <button
+                                onClick={onPlayPause}
+                                disabled={isIdle}
+                                title={isRunning ? 'Pause' : 'Play'}
+                                className="p-1.5 rounded-full bg-gray-700 text-white hover:bg-indigo-600 disabled:bg-gray-800 disabled:text-gray-500 disabled:cursor-not-allowed transition-colors"
+                            >
+                                {isRunning ? <PauseIcon className="w-5 h-5" /> : <PlayIcon className="w-5 h-5" />}
+                            </button>
+                             <button
+                                onClick={onStepForward}
+                                disabled={isRunning || isIdle}
+                                title="Step Forward"
+                                className="p-1.5 rounded-full bg-gray-700 text-white hover:bg-gray-600 disabled:bg-gray-800 disabled:text-gray-500 disabled:cursor-not-allowed transition-colors"
+                            >
+                                <StepForwardIcon className="w-5 h-5" />
+                            </button>
+                            <button
+                                onClick={onStepBackward}
+                                disabled={isRunning || isIdle}
+                                title="Step Backward"
+                                className="p-1.5 rounded-full bg-gray-700 text-white hover:bg-gray-600 disabled:bg-gray-800 disabled:text-gray-500 disabled:cursor-not-allowed transition-colors"
+                            >
+                                <StepBackwardIcon className="w-5 h-5" />
+                            </button>
+                        </div>
                     </div>
-                    <div className="flex-grow bg-black/20 rounded p-2 min-h-[50px] overflow-y-auto space-y-2">
+                    <div ref={scrollRef} className="flex-grow bg-black/20 rounded-b-lg p-2 min-h-[50px] overflow-y-auto space-y-2">
                         {workflow.map((step, index) => {
-                             const status = getStepStatus(index);
+                             const statusInfo = demoStepStatuses[index] || { status: 'pending' };
+                             const isCurrent = index === currentStepIndex && (isRunning || isPaused);
+                             
+                             let statusIcon = '⚪'; let borderColor = 'border-gray-700';
+                             if (statusInfo.status === 'completed') { statusIcon = '✅'; borderColor = 'border-green-600'; }
+                             if (statusInfo.status === 'error') { statusIcon = '❌'; borderColor = 'border-red-600'; }
+                             if (isCurrent) { statusIcon = '▶️'; borderColor = 'border-indigo-500'; }
+
                              return (
-                                <div key={index} className={\`p-2 rounded-lg bg-gray-900/50 border-l-4 \${status.color.includes('yellow') ? 'border-yellow-400' : status.color.includes('green') ? 'border-green-500' : 'border-gray-600'}\`}>
-                                     <div className="flex items-center justify-between text-sm">
-                                         <span className={\`font-semibold \${status.color}\`}>{status.icon} {step.name}</span>
-                                     </div>
-                                      <p className="text-xs text-gray-400 pl-6 truncate">
-                                        {Object.entries(step.arguments).map(([k, v]) => \`\${k}='\${JSON.stringify(v)}'\`).join(', ')}
-                                      </p>
+                                <div
+                                    key={index}
+                                    className={\`p-2 rounded-lg bg-gray-900/50 border-l-4 \${borderColor} \${isCurrent ? 'ring-2 ring-indigo-500/80' : ''} flex items-start gap-2 group\`}
+                                >
+                                     <button
+                                        onClick={() => onRunFromStep(index)}
+                                        title="Run from this step"
+                                        className="p-1 rounded-full text-gray-400 opacity-0 group-hover:opacity-100 transition-opacity hover:bg-indigo-600 hover:text-white"
+                                     >
+                                         <PlayIcon className="w-4 h-4"/>
+                                     </button>
+                                     <div className="flex-grow">
+                                        <div className="flex items-center justify-between text-sm">
+                                            <span className="font-semibold text-gray-200 flex items-center gap-2">
+                                                <span>{statusIcon}</span>
+                                                <span>{step.name}</span>
+                                            </span>
+                                        </div>
+                                        <p className="text-xs text-gray-400 mt-1 pl-1 font-mono break-all">
+                                            {JSON.stringify(step.arguments)}
+                                        </p>
+                                        {statusInfo.error && <p className="text-xs text-red-400 mt-1 pl-1">Error: {statusInfo.error}</p>}
+                                    </div>
                                  </div>
                              )
                         })}

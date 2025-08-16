@@ -1,11 +1,12 @@
 
+
 import { useState, useCallback } from 'react';
 import { AI_MODELS } from '../constants';
 import type { AIModel, APIConfig, MainView } from '../types';
 
 export const useAppStateManager = () => {
     const [userInput, setUserInput] = useState<string>('');
-    const [eventLog, setEventLog] = useState<string[]>(['[INFO] System Initialized. Target: Achieve Singularity.']);
+    const [eventLog, setEventLog] = useState<string[]>([]);
     const [mainView, setMainView] = useState<MainView>('KICAD');
     const [apiCallCount, setApiCallCount] = useState<number>(0);
 

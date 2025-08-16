@@ -80,8 +80,9 @@ export const useToolManager = ({ logEvent }: { logEvent: (message: string) => vo
                 setServerTools(fetchedTools);
                 if (!isServerConnectedRef.current) {
                     setIsServerConnected(true);
-                    logEvent('[INFO] ✅ Server connection re-established.');
+                    logEvent(`[INFO] ✅ Server connection re-established.`);
                 }
+                logEvent(`[SYSTEM] Server tool cache synchronized. Loaded ${fetchedTools.length} server tools.`);
                 return { success: true, count: fetchedTools.length };
             } else {
                  throw new Error(`Server responded with status: ${response.status}`);
@@ -119,7 +120,16 @@ export const useToolManager = ({ logEvent }: { logEvent: (message: string) => vo
 
                 if (response.ok) {
                     const fetchedTools: LLMTool[] = await response.json();
-                    setServerTools(fetchedTools);
+                    setServerTools(currentServerTools => {
+                        // Avoid unnecessary state updates and log spam if the tools haven't changed.
+                        if (JSON.stringify(currentServerTools) !== JSON.stringify(fetchedTools)) {
+                            if (isServerConnectedRef.current) { // Only log updates if already connected
+                                logEvent(`[SYSTEM] Server tools updated via polling. Found ${fetchedTools.length} tools.`);
+                            }
+                            return fetchedTools;
+                        }
+                        return currentServerTools;
+                    });
                     if (!isServerConnectedRef.current) {
                         setIsServerConnected(true);
                         logEvent('[INFO] ✅ Server connection established.');

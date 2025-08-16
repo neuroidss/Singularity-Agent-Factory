@@ -1,4 +1,4 @@
-
+//bootstrap/simagent_simulation.ts is typescript file with text variable with python code
 export const AgentSimulationClassString = `
 class AgentSimulation {
     constructor(graphData, scale, THREE) {
@@ -94,8 +94,11 @@ class AgentSimulation {
         const currentNode = this.nodeMap.get(agentId);
         if (!currentAgent || !currentNode) return;
 
-        const current_w2 = (currentNode.width / 2) * this.SCALE;
-        const current_h2 = (currentNode.height / 2) * this.SCALE;
+        const current_w = (currentNode.CrtYdDimensions?.width || currentNode.width) * this.SCALE;
+        const current_h = (currentNode.CrtYdDimensions?.height || currentNode.height) * this.SCALE;
+        const current_w2 = current_w / 2;
+        const current_h2 = current_h / 2;
+
         const current_x_min = currentAgent.pos.x - current_w2;
         const current_x_max = currentAgent.pos.x + current_w2;
         const current_z_min = currentAgent.pos.z - current_h2;
@@ -106,8 +109,11 @@ class AgentSimulation {
             const otherNode = this.nodeMap.get(otherId);
             if (!otherNode || currentNode.side !== otherNode.side) return;
             
-            const other_w2 = (otherNode.width / 2) * this.SCALE;
-            const other_h2 = (otherNode.height / 2) * this.SCALE;
+            const other_w = (otherNode.CrtYdDimensions?.width || otherNode.width) * this.SCALE;
+            const other_h = (otherNode.CrtYdDimensions?.height || otherNode.height) * this.SCALE;
+            const other_w2 = other_w / 2;
+            const other_h2 = other_h / 2;
+
             const other_x_min = otherAgent.pos.x - other_w2;
             const other_x_max = otherAgent.pos.x + other_w2;
             const other_z_min = otherAgent.pos.z - other_h2;
@@ -168,8 +174,10 @@ class AgentSimulation {
         if (!agent || !node || !this.graph.board_outline) return;
 
         const { x, y, width, height, shape } = this.graph.board_outline;
-        const node_w2 = (node.width / 2) * this.SCALE;
-        const node_h2 = (node.height / 2) * this.SCALE;
+        const node_w = (node.CrtYdDimensions?.width || node.width) * this.SCALE;
+        const node_h = (node.CrtYdDimensions?.height || node.height) * this.SCALE;
+        const node_w2 = node_w / 2;
+        const node_h2 = node_h / 2;
 
         if (shape === 'circle') {
             const centerX = (x + width / 2) * this.SCALE;

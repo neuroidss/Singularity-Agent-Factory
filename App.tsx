@@ -16,6 +16,8 @@ import { useAppRuntime } from './hooks/useAppRuntime';
 import { useToolRelevance } from './hooks/useToolRelevance';
 import { useKnowledgeGraphManager } from './hooks/useKnowledgeGraphManager';
 
+const APP_VERSION = "v1.1.0";
+
 const App: React.FC = () => {
     // --- STATE MANAGEMENT VIA HOOKS ---
 
@@ -25,6 +27,10 @@ const App: React.FC = () => {
         setters: appSetters,
         logEvent
     } = useAppStateManager();
+    
+    useEffect(() => {
+        logEvent(`[SYSTEM] Singularity Agent Factory ${APP_VERSION} initialized.`);
+    }, [logEvent]);
 
     // Manages client and server tools, and server connection status
     const toolManager = useToolManager({ logEvent });
@@ -131,53 +137,35 @@ const App: React.FC = () => {
 
 
     // --- Automatic Tool Suite Installation ---
-    const installerRunRef = useRef({kicad: false, strategy: false});
+    const installerRunRef = useRef(false);
     useEffect(() => {
         const installSuitesIfNeeded = async () => {
-            // Give a moment for state to initialize
+            if (installerRunRef.current) return;
+            installerRunRef.current = true; // Attempt install only once per session
+            
             await new Promise(resolve => setTimeout(resolve, 100));
 
-            // Install KiCad Suite
-            if (!installerRunRef.current.kicad) {
-                const installerExists = allTools.some(t => t.name === 'Install KiCad Engineering Suite');
-                const coreKicadToolExists = allTools.some(t => t.name === 'Define KiCad Component');
-                if (installerExists && !coreKicadToolExists) {
-                    installerRunRef.current.kicad = true;
-                    logEvent('[SYSTEM] KiCad tools not found. Attempting automatic installation...');
+            const installers = [
+                { name: 'Install KiCad Engineering Suite', coreTool: 'Define KiCad Component' },
+                { name: 'Install Strategic Cognition Suite', coreTool: 'Read Strategic Memory' }
+            ];
+
+            for (const installer of installers) {
+                const installerExists = allTools.some(t => t.name === installer.name);
+                const coreToolExists = allTools.some(t => t.name === installer.coreTool);
+                
+                if (installerExists && !coreToolExists) {
+                    logEvent(`[SYSTEM] Core tool '${installer.coreTool}' not found. Running installer '${installer.name}'...`);
                     try {
-                        const result = await executeActionRef.current({ name: 'Install KiCad Engineering Suite', arguments: {} }, 'system-installer');
+                        const result = await executeActionRef.current({ name: installer.name, arguments: {} }, 'system-installer');
                         if (result.executionError) throw new Error(result.executionError);
-                        logEvent(`[SUCCESS] KiCad Engineering Suite auto-installed successfully.`);
+                        logEvent(`[SUCCESS] ${installer.name} ran successfully.`);
                     } catch (e) {
-                        installerRunRef.current.kicad = false; // Allow retry
-                        logEvent(`[ERROR] KiCad tool installation failed: ${e instanceof Error ? e.message : String(e)}`);
+                        logEvent(`[ERROR] ${installer.name} failed: ${e instanceof Error ? e.message : String(e)}`);
                     }
-                } else if (coreKicadToolExists) {
-                    installerRunRef.current.kicad = true;
-                }
-            }
-            
-            // Install Strategic Cognition Suite
-            if (!installerRunRef.current.strategy) {
-                 const installerExists = allTools.some(t => t.name === 'Install Strategic Cognition Suite');
-                const coreStrategyToolExists = allTools.some(t => t.name === 'Read Strategic Memory');
-                 if (installerExists && !coreStrategyToolExists) {
-                    installerRunRef.current.strategy = true;
-                    logEvent('[SYSTEM] Strategic Cognition Suite not found. Attempting auto-installation...');
-                    try {
-                        const result = await executeActionRef.current({ name: 'Install Strategic Cognition Suite', arguments: {} }, 'system-installer');
-                        if (result.executionError) throw new Error(result.executionError);
-                        logEvent('[SUCCESS] Strategic Cognition Suite auto-installed successfully.');
-                    } catch (e) {
-                        installerRunRef.current.strategy = false; // Allow retry
-                        logEvent(`[ERROR] Strategic Cognition Suite installation failed: ${e instanceof Error ? e.message : String(e)}`);
-                    }
-                } else if (coreStrategyToolExists) {
-                    installerRunRef.current.strategy = true;
                 }
             }
         };
-
         installSuitesIfNeeded();
     }, [allTools, executeActionRef, logEvent]);
     
@@ -243,12 +231,12 @@ const App: React.FC = () => {
             logEvent('[WARN] Could not confirm server tool state after reset. Proceeding with client reset.');
         }
 
-        // 4. Reset client-side state. This change will reliably trigger the installer useEffect.
+        // 4. Reset client-side state.
         localStorage.removeItem('singularity-agent-factory-state');
-        const { initializeTools } = await import('./hooks/useToolManager'); // Re-import to get fresh state
+        const { initializeTools } = await import('./hooks/useToolManager');
         setTools(initializeTools());
         appSetters.setApiCallCount(0);
-        installerRunRef.current = { kicad: false, strategy: false };
+        installerRunRef.current = false; // Allow installer to run again after reset
         logEvent('[SUCCESS] Full system reset complete. Reinstalling default tool suites...');
     
     }, [logEvent, setTools, appSetters, isServerConnected, executeActionRef, toolManager, swarmState.isSwarmRunning, swarmHandlers]);
@@ -288,26 +276,10 @@ const App: React.FC = () => {
 
             logKicadEvent(`✔️ ${layoutUpdateResult.executionResult?.message || "Layout positions updated."}`);
             
-            // --- NEW LOGIC: Check if we are resuming a demo or an LLM task ---
-            if (kicadState.isDemoRunning) {
+            // Check if we are resuming a demo or an LLM task
+            if (kicadState.executionState !== 'idle') {
                 logKicadEvent('[SIM] ▶️ Resuming automated workflow...');
-                
-                const arrangeStepIndex = DEMO_WORKFLOW.findIndex(step => step.name === 'Arrange Components');
-                if (arrangeStepIndex === -1) {
-                    throw new Error("Could not find 'Arrange Components' step in demo workflow to resume from.");
-                }
-                
-                const remainingWorkflow = DEMO_WORKFLOW.slice(arrangeStepIndex + 1);
-
-                // Inject the current project name into the remaining workflow steps
-                const remainingWorkflowWithProject = remainingWorkflow.map(step => ({
-                    ...step,
-                    arguments: { ...step.arguments, projectName }
-                }));
-                
-                // We need to run the rest of the workflow.
-                await kicadHandlers.runDemoWorkflow(remainingWorkflowWithProject, executeActionRef.current);
-                
+                kicadHandlers.handlePlayPause(executeActionRef.current);
             } else {
                 // Original logic for resuming an LLM-driven task
                 const resumeTask = {
@@ -330,7 +302,7 @@ const App: React.FC = () => {
              const errorMessage = e instanceof Error ? e.message : String(e);
             logKicadEvent(`❌ EXECUTION HALTED while updating positions: ${errorMessage}`);
         }
-    }, [logKicadEvent, executeActionRef, swarmHandlers, kicadSetters, currentProjectNameRef, getKicadSystemPrompt, swarmState.currentUserTask, allTools, kicadState.isDemoRunning, kicadHandlers]);
+    }, [logKicadEvent, executeActionRef, swarmHandlers, kicadSetters, currentProjectNameRef, getKicadSystemPrompt, swarmState.currentUserTask, allTools, kicadState.executionState, kicadHandlers]);
     
     const handleStartDemo = useCallback(() => {
         if (executeActionRef.current) {
@@ -340,8 +312,8 @@ const App: React.FC = () => {
         }
     }, [kicadHandlers, executeActionRef, logEvent]);
 
-    const handleResetDemo = useCallback(() => {
-        kicadHandlers.handleResetDemo();
+    const handleStopDemo = useCallback(() => {
+        kicadHandlers.handleStopDemo();
     }, [kicadHandlers]);
 
 
@@ -358,13 +330,21 @@ const App: React.FC = () => {
     const kicadPanelProps = { 
         onStartTask: kicadHandlers.handleStartKicadTask, 
         onStartDemo: handleStartDemo,
-        onResetDemo: handleResetDemo,
+        onStopDemo: handleStopDemo,
         kicadLog: kicadState.kicadLog, 
-        isGenerating: swarmState.isSwarmRunning || kicadState.isDemoRunning || !!kicadState.currentLayoutData,
+        isGenerating: swarmState.isSwarmRunning || kicadState.executionState !== 'idle' || !!kicadState.currentLayoutData,
         currentArtifact: kicadState.currentKicadArtifact, 
         workflowSteps: kicadState.workflowSteps,
         demoWorkflow: DEMO_WORKFLOW,
-        // New props for integrated layout view
+        // New interactive demo props
+        executionState: kicadState.executionState,
+        currentStepIndex: kicadState.currentStepIndex,
+        demoStepStatuses: kicadState.demoStepStatuses,
+        onPlayPause: () => kicadHandlers.handlePlayPause(executeActionRef.current),
+        onStepForward: () => kicadHandlers.handleStepForward(executeActionRef.current),
+        onStepBackward: kicadHandlers.handleStepBackward,
+        onRunFromStep: (index: number) => kicadHandlers.handleRunFromStep(index, executeActionRef.current),
+        // Layout view props
         currentLayoutData: kicadState.currentLayoutData,
         isLayoutInteractive: kicadState.isLayoutInteractive,
         onCommitLayout: handleCommitLayoutAndContinue,

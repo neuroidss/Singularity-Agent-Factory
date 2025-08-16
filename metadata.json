@@ -1,5 +1,5 @@
 {
-  "name": "Singularity Agent Factory mcp kicad multiagent replay",
+  "name": "Singularity Agent Factory mcp kicad multiagent replay repeat",
   "description": "A self-improving AI swarm operating on a purpose-driven architecture. It resolves user requests by identifying and processing 'deltas' (gaps between reality and potential), dynamically evolving its own capabilities by creating new tools and workflows.",
   "requestFramePermissions": [
     "microphone"

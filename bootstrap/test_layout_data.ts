@@ -38,18 +38,18 @@ const NETS = {
   "AIN6P": ["J7-1", "U1-9"],
   "AIN7P": ["J8-1", "U1-12"],
   "AINREF": ["J9-1", "U1-2", "U1-3", "U1-6", "U1-7", "U1-10", "U1-11", "U1-30", "U1-31"],
-  "GND": ["J10-1", "U1-13", "U1-25", "U1-28", "C1-1", "C2-1", "C3-2", "C4-2", "U2-2", "C5-2", "C6-1", "U3-2", "C7-1", "C8-2", "J_XIAO_2-1", "X1-2"],
+  "GND": ["J10-1", "U1-13", "U1-25", "U1-28", "C1-1", "C2-1", "C3-2", "C4-2", "U2-2", "C5-2", "C6-1", "C7-1", "C8-2", "J_XIAO_2-2", "X1-2"],
   "CAP": ["C1-2", "U1-24"],
   "REFIN": ["C2-2", "U1-14"],
-  "AVDD": ["C3-1", "U2-5", "C5-1", "U1-15"],
-  "DVDD": ["C4-1", "U3-5", "C7-2", "X1-4", "U1-26"],
-  "5V": ["C6-2", "C8-1", "J_XIAO_2-2"],
+  "AVDD": ["U2-5", "U1-15", "C3-1", "C5-1"],
+  "DVDD": ["U3-5", "U1-26", "X1-4", "C4-1", "C7-2"],
+  "5V": ["C6-2", "C8-1", "J_XIAO_2-1", "U2-1", "U3-1", "U2-3", "U3-3"],
   "SYNC/RESET": ["U1-16", "J_XIAO_1-1"],
   "CS": ["U1-17", "J_XIAO_1-3"],
   "DRDY": ["U1-18", "J_XIAO_1-2"],
-  "SCLK": ["U1-19", "J_XIAO_1-5"],
-  "DOUT": ["U1-20", "J_XIAO_1-6"],
-  "DIN": ["U1-21", "J_XIAO_1-7"],
+  "SCLK": ["U1-19", "J_XIAO_2-6"],
+  "DOUT": ["U1-20", "J_XIAO_2-5"],
+  "DIN": ["U1-21", "J_XIAO_2-4"],
   "XTAL2": ["U1-22"], // Unconnected
   "XTAL1/CLKIN": ["U1-23", "X1-1"],
   "ADC_NC": ["U1-27"], // Unconnected
@@ -77,16 +77,16 @@ const footprintToSvgMap: Record<string, string> = {
     'freeeeg8-alpha:pogo_pin_d5x10mm_smd_bottom': 'assets/test_footprints/pogo_pin_d5x10mm_smd_bottom.svg',
 };
 
-const getFootprintDimensions = (footprint: string): { width: number; height: number; courtyardWidth: number; courtyardHeight: number; } => {
+const getFootprintDimensions = (footprint: string): { width: number; height: number; courtyardWidth: number; courtyardHeight: number; shape: 'rectangle' | 'circle' } => {
     // Courtyard is typically ~0.25mm to 0.5mm larger than the component body on each side.
-    if (footprint.includes('pogo_pin')) return { width: 5, height: 5, courtyardWidth: 5.5, courtyardHeight: 5.5 };
-    if (footprint.includes('LQFP-32_5x5mm')) return { width: 7, height: 7, courtyardWidth: 7.5, courtyardHeight: 7.5 }; // Includes leads
-    if (footprint.includes('C_0402')) return { width: 1.0, height: 0.5, courtyardWidth: 1.2, courtyardHeight: 0.7 };
-    if (footprint.includes('SOT-23-5')) return { width: 2.9, height: 1.6, courtyardWidth: 3.2, courtyardHeight: 1.9 };
-    if (footprint.includes('C_0603')) return { width: 1.6, height: 0.8, courtyardWidth: 1.8, courtyardHeight: 1.0 };
-    if (footprint.includes('Oscillator') && footprint.includes('3.2x2.5mm')) return { width: 3.2, height: 2.5, courtyardWidth: 3.5, courtyardHeight: 2.8 };
-    if (footprint.includes('PinHeader_1x07')) return { width: 2.54 * 7, height: 2.54, courtyardWidth: (2.54*7) + 0.5, courtyardHeight: 2.54 + 0.5 };
-    return { width: 2, height: 2, courtyardWidth: 2.5, courtyardHeight: 2.5 };
+    if (footprint.includes('pogo_pin')) return { width: 5, height: 5, courtyardWidth: 5.5, courtyardHeight: 5.5, shape: 'circle' };
+    if (footprint.includes('LQFP-32_5x5mm')) return { width: 7, height: 7, courtyardWidth: 7.5, courtyardHeight: 7.5, shape: 'rectangle' }; // Includes leads
+    if (footprint.includes('C_0402')) return { width: 1.0, height: 0.5, courtyardWidth: 1.2, courtyardHeight: 0.7, shape: 'rectangle' };
+    if (footprint.includes('SOT-23-5')) return { width: 2.9, height: 1.6, courtyardWidth: 3.2, courtyardHeight: 1.9, shape: 'rectangle' };
+    if (footprint.includes('C_0603')) return { width: 1.6, height: 0.8, courtyardWidth: 1.8, courtyardHeight: 1.0, shape: 'rectangle' };
+    if (footprint.includes('Oscillator') && footprint.includes('3.2x2.5mm')) return { width: 3.2, height: 2.5, courtyardWidth: 3.5, courtyardHeight: 2.8, shape: 'rectangle' };
+    if (footprint.includes('PinHeader_1x07')) return { width: 2.54 * 7, height: 2.54, courtyardWidth: (2.54*7) + 0.5, courtyardHeight: 2.54 + 0.5, shape: 'rectangle' };
+    return { width: 2, height: 2, courtyardWidth: 2.5, courtyardHeight: 2.5, shape: 'rectangle' };
 };
 
 const getPinPositions = (ref: string, footprint: string): { name: string, x: number, y: number }[] => {
@@ -142,6 +142,7 @@ const buildGraph = (): KnowledgeGraph => {
             label: comp.ref,
             width: dims.width,
             height: dims.height,
+            shape: dims.shape,
             courtyardDimensions: { width: dims.courtyardWidth, height: dims.courtyardHeight },
             footprint: comp.footprint,
             side: pogoPinsRefs.includes(comp.ref) ? 'bottom' : 'top',

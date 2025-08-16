@@ -1,4 +1,3 @@
-
 import type { AIToolCall } from '../types';
 
 export const DEMO_WORKFLOW: AIToolCall[] = [
@@ -90,12 +89,25 @@ export const DEMO_WORKFLOW: AIToolCall[] = [
     { name: 'Define KiCad Net', arguments: { netName: 'XTAL1/CLKIN', pins: ["U1-23", "X1-1"] } },
 
     // Part 3: Define Layout Rules atomically
-    { name: 'Add Absolute Position Constraint', arguments: { componentReference: 'U1', x: 0, y: 0 } },
+    { name: 'Add Absolute Position Constraint', arguments: { componentReference: 'U1', x: 0, y: 3 } },
     { name: 'Add Layer Constraint', arguments: { layer: 'bottom', componentsJSON: JSON.stringify(["J1", "J2", "J3", "J4", "J5", "J6", "J7", "J8", "J9", "J10"]) } },
-    { name: 'Add Circular Constraint', arguments: { componentsJSON: JSON.stringify(["J1", "J2", "J3", "J4", "J5", "J6", "J7", "J8", "J9", "J10"]), radius: (30 / 2) * 0.85, centerX: 0, centerY: 0 } },
-    { name: 'Add Alignment Constraint', arguments: { axis: 'vertical', componentsJSON: JSON.stringify(["X1", "J_XIAO_1", "J_XIAO_2"]) } },
-    { name: 'Add Symmetry Constraint', arguments: { axis: 'vertical', pairsJSON: JSON.stringify([["U2", "U3"], ["C5", "C7"], ["C6", "C8"], ["C1", "C2"], ["C3", "C4"]]) } },
-    { name: 'Add Proximity Constraint', arguments: { groupsJSON: JSON.stringify([ ["U1", "C1"], ["U1", "C2"], ["U1", "C3"], ["U1", "C4"], ["U1", "J_XIAO_1"], ["U1", "J_XIAO_2"], ["U2", "C5"], ["U2", "C6"], ["U3", "C7"], ["U3", "C8"] ]) } },
+    { name: 'Add Circular Constraint', arguments: { componentsJSON: JSON.stringify(["J1", "J2", "J3", "J4", "J5", "J6", "J7", "J8", "J9", "J10"]), radius: 12.5, centerX: 0, centerY: 0 } },
+    { name: 'Add Alignment Constraint', arguments: { axis: 'vertical', componentsJSON: JSON.stringify(["U1", "X1"]) } },
+    { name: 'Add Symmetrical Pair Constraint', arguments: { pairJSON: JSON.stringify(["J_XIAO_1", "J_XIAO_2"]), axis: 'vertical', separation: 7.62 } },
+    { name: 'Add Fixed Property Constraint', arguments: { componentReference: 'J_XIAO_1', propertiesJSON: JSON.stringify({ "rotation": 90 }) } },
+    { name: 'Add Alignment Constraint', arguments: { axis: 'horizontal', componentsJSON: JSON.stringify(["J_XIAO_1", "U1", "J_XIAO_2"]) } },
+    { 
+        name: 'Add Proximity Constraint', 
+        arguments: { 
+            groupsJSON: JSON.stringify([ 
+                ["U1", "C1"], ["U1", "C2"], ["U1", "C3"], ["U1", "C4"], // Decoupling caps for ADC
+                ["U2", "C5"], ["U2", "C6"], // Decoupling caps for AVDD LDO
+                ["U3", "C7"], ["U3", "C8"], // Decoupling caps for DVDD LDO
+            ]) 
+        } 
+    },
+    { name: 'Add Symmetry Constraint', arguments: { axis: 'vertical', pairsJSON: JSON.stringify([["U2", "U3"], ["C5", "C7"], ["C6", "C8"], ["C3", "C4"]]) } },
+
 
     // --- Phase 2: Board Setup ---
     { name: 'Generate KiCad Netlist', arguments: { } },
@@ -103,7 +115,7 @@ export const DEMO_WORKFLOW: AIToolCall[] = [
 
     // --- Phase 3: Physical Layout ---
     { name: 'Create Board Outline', arguments: { shape: 'circle', diameterMillimeters: 35 } },
-    { name: 'Arrange Components', arguments: { waitForUserInput: true, layoutStrategy: 'agent' } },
+    { name: 'Arrange Components', arguments: { waitForUserInput: false, layoutStrategy: 'agent' } },
     // The workflow simulation pauses after 'Arrange Components'.
     // The following steps are for the UI to display and for the LLM agent to execute after layout is committed.
     { name: 'Autoroute PCB', arguments: { } },

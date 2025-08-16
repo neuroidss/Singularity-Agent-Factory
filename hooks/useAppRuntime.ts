@@ -76,12 +76,9 @@ export const useAppRuntime = (props: UseAppRuntimeProps) => {
                 return result.executionResult;
             },
             add: (newToolPayload: NewToolPayload): LLMTool => {
-                // This function is for adding client-side tools.
-                // It now supports updating a tool if it already exists, making it idempotent.
                 const allCurrentTools = allToolsRef.current;
                 const existingTool = allCurrentTools.find(t => t.name === newToolPayload.name);
 
-                // If a tool with the same name exists on the client, update it.
                 if (existingTool && existingTool.category !== 'Server') {
                     const updatedTool = {
                         ...existingTool,
@@ -94,12 +91,10 @@ export const useAppRuntime = (props: UseAppRuntimeProps) => {
                     return updatedTool;
                 }
                 
-                // If a tool with the same name exists but it's a server tool, we can't create a client tool.
                 if (existingTool && existingTool.category === 'Server') {
                      throw new Error(`Cannot create client tool '${newToolPayload.name}' because a server tool with the same name already exists.`);
                 }
 
-                // If the tool does not exist, create a new one.
                 const newId = generateMachineReadableId(newToolPayload.name, allCurrentTools);
                 const now = new Date().toISOString();
                 const newTool: LLMTool = {

@@ -1,6 +1,8 @@
+
 import React, { useState, useCallback, useRef, useEffect, useMemo } from 'react';
 import type { WorkflowStep, AIToolCall, EnrichedAIResponse, LLMTool, KnowledgeGraphNode, KnowledgeGraphEdge, MainView, KnowledgeGraph, ExecuteActionFunction } from '../types';
 import { TEST_LAYOUT_DATA, COMPONENTS as DEMO_COMPONENTS } from '../bootstrap/test_layout_data';
+import { DEMO_WORKFLOW } from '../bootstrap/demo_workflow';
 
 type UseKicadManagerProps = {
     logEvent: (message: string) => void;
@@ -17,6 +19,8 @@ type WorkflowStepState = {
     status: 'pending' | 'in-progress' | 'completed';
     subtasks: Subtask[];
 };
+type DemoStepStatus = { status: 'pending' | 'completed' | 'error', result?: string, error?: string };
+type ExecutionState = 'idle' | 'running' | 'paused' | 'finished' | 'error';
 
 type KicadProjectState = {
     [projectName: string]: {
@@ -34,7 +38,7 @@ const INITIAL_WORKFLOW_STEPS: WorkflowStepState[] = [
     { name: "Generate Netlist", keywords: ["generate kicad netlist", "netlist generated successfully"], status: 'pending', subtasks: [] },
     { name: "Create & Arrange PCB", keywords: ["create initial pcb", "arrange components", "update kicad component positions"], status: 'pending', subtasks: [] },
     { name: "Autoroute PCB", keywords: ["autoroute pcb", "autorouting complete"], status: 'pending', subtasks: [] },
-    { name: "Export Fabrication Files", keywords: ["export fabrication files", "fabrication files exported"], status: 'pending', subtasks: [] },
+    { name: "Export Fabrication Files", keywords: ["export fabrication files", "fabrication successful"], status: 'pending', subtasks: [] },
     { name: "Task Complete", keywords: ["task completed", "fabrication successful"], status: 'pending', subtasks: [] }
 ];
 
@@ -83,12 +87,23 @@ export const useKicadManager = (props: UseKicadManagerProps) => {
     const [currentLayoutData, setCurrentLayoutData] = useState<KnowledgeGraph | null>(null);
     const [kicadProjectState, setKicadProjectState] = useState<KicadProjectState>({});
     const [workflowSteps, setWorkflowSteps] = useState<WorkflowStepState[]>(INITIAL_WORKFLOW_STEPS);
-    const [isDemoRunning, setIsDemoRunning] = useState(false);
+    
+    // --- New state for interactive demo ---
+    const [executionState, setExecutionState] = useState<ExecutionState>('idle');
+    const [currentStepIndex, setCurrentStepIndex] = useState(0);
+    const [demoStepStatuses, setDemoStepStatuses] = useState<DemoStepStatus[]>(() => DEMO_WORKFLOW.map(() => ({ status: 'pending' })));
     
     const currentProjectNameRef = useRef<string | null>(null);
+    const executeActionRef = useRef<ExecuteActionFunction | null>(null);
+    const lastTimestamp = useRef(performance.now());
+
 
     const logKicadEvent = useCallback((message: string) => {
-        setKicadLog(prev => [...prev.slice(-99), message]);
+        const now = performance.now();
+        const delta = now - lastTimestamp.current;
+        lastTimestamp.current = now;
+        const formattedMessage = `[+${delta.toFixed(0)}ms] ${message}`;
+        setKicadLog(prev => [...prev.slice(-99), formattedMessage]);
     }, []);
 
     const setCurrentProjectName = useCallback((name: string) => {
@@ -113,15 +128,12 @@ export const useKicadManager = (props: UseKicadManagerProps) => {
                 const step = newSteps[i];
                 if (step.status === 'completed') continue;
 
-                // Mark step as completed if any of its keywords match
                 if (step.keywords.some(kw => lowerLog.includes(kw))) {
                     step.status = 'completed';
                     hasChanged = true;
-                    // Mark all subtasks as completed when the parent step is done
                     step.subtasks.forEach(st => { if(st.status !== 'completed') st.status = 'completed'; });
                 }
 
-                // Update subtask status
                 if (step.status === 'in-progress') {
                     step.subtasks.forEach(st => {
                         if (st.status === 'pending' && lowerLog.includes(st.name.toLowerCase())) {
@@ -132,7 +144,6 @@ export const useKicadManager = (props: UseKicadManagerProps) => {
                 }
             }
 
-            // Set the next pending step to 'in-progress' if no other step is running
             if (!currentStepInProgress) {
                 const nextPendingStep = newSteps.find(step => step.status === 'pending');
                 if (nextPendingStep) {
@@ -170,7 +181,7 @@ export const useKicadManager = (props: UseKicadManagerProps) => {
         const projectName = `proj_${Date.now()}`;
         setCurrentProjectName(projectName);
         setKicadLog([`[INFO] Starting new KiCad project: ${projectName}`]);
-        setWorkflowSteps(INITIAL_WORKFLOW_STEPS.map(s => ({...s, subtasks: []}))); // Reset with empty subtasks
+        setWorkflowSteps(INITIAL_WORKFLOW_STEPS.map(s => ({...s, subtasks: []})));
         clearSwarmHistory();
         
         let userRequestText = `Project Name: ${projectName}\n\nUser Prompt: ${prompt}`;
@@ -191,118 +202,222 @@ export const useKicadManager = (props: UseKicadManagerProps) => {
             allTools: allTools,
         });
     }, [logEvent, startSwarmTask, allTools, setCurrentProjectName, clearSwarmHistory]);
-    
-    const runDemoWorkflow = useCallback(async (workflow: AIToolCall[], executeAction: ExecuteActionFunction) => {
-        for (const step of workflow) {
-            // Update the UI to show the current step is in progress
-            const stepName = step.name;
-            const stepArgs = JSON.stringify(step.arguments);
-            logKicadEvent(`[SIM] ⏳ Executing: ${stepName} with args ${stepArgs}`);
 
-            // Simulate a short delay for each step
-            await new Promise(resolve => setTimeout(resolve, 300));
+    // --- Interactive Demo Handlers ---
 
-            const result = await executeAction(step, 'kicad-demo-agent');
-            
-            appendToSwarmHistory(result);
-
-            if (result.executionError) {
-                logKicadEvent(`[SIM] ❌ ERROR: ${result.executionError}`);
-                break; // Stop the demo on error
-            }
-
-            // Handle the pause signal for interactive layout
-            if (result.toolCall?.name === 'Arrange Components' && result.executionResult?.stdout) {
-                 try {
-                    const parsedStdout = JSON.parse(result.executionResult.stdout);
-                    if (parsedStdout.layout_data) {
-                        logKicadEvent("[SIM] ⏸️ Pausing for interactive layout. Commit the layout to continue.");
-                        setCurrentLayoutData(parsedStdout.layout_data);
-                        setIsLayoutInteractive(parsedStdout.waitForUserInput === true);
-                        return; // Stop execution here, will be resumed by onCommitLayout
-                    }
-                } catch (e) { /* Not a pause signal, continue */ }
-            }
+    const executeDemoStep = useCallback(async (index: number) => {
+        const actionExecutor = executeActionRef.current;
+        if (index >= DEMO_WORKFLOW.length || !actionExecutor) {
+            setExecutionState('finished');
+            logKicadEvent("[SIM] ✅ Workflow finished.");
+            return;
         }
-    }, [logKicadEvent, appendToSwarmHistory]);
 
-    const handleStartDemo = useCallback(async (workflow: AIToolCall[], executeAction: ExecuteActionFunction) => {
-        setIsDemoRunning(true);
+        const step = DEMO_WORKFLOW[index];
+        const projectName = currentProjectNameRef.current;
+        const stepWithProject = { ...step, arguments: { ...step.arguments, projectName } };
+
+        logKicadEvent(`[SIM] ⏳ Executing: ${step.name}`);
+        const result = await actionExecutor(stepWithProject, 'kicad-demo-agent');
+        appendToSwarmHistory(result);
+
+        setDemoStepStatuses(prev => {
+            const newStatuses = [...prev];
+            newStatuses[index] = {
+                status: result.executionError ? 'error' : 'completed',
+                error: result.executionError,
+                result: result.executionResult?.message,
+            };
+            return newStatuses;
+        });
+
+        if (result.executionError) {
+            logKicadEvent(`[SIM] ❌ ERROR: ${result.executionError}`);
+            setExecutionState('error');
+            return; // Stop on error
+        }
+
+        if (result.toolCall?.name === 'Arrange Components' && result.executionResult?.stdout) {
+             try {
+                const parsedStdout = JSON.parse(result.executionResult.stdout);
+                if (parsedStdout.layout_data) {
+                    logKicadEvent("[SIM] ⏸️ Pausing for interactive layout. Commit the layout or press play to continue.");
+                    setCurrentLayoutData(parsedStdout.layout_data);
+                    setIsLayoutInteractive(parsedStdout.waitForUserInput === true);
+                    setExecutionState('paused'); // Pause execution
+                    setCurrentStepIndex(index + 1); // Move pointer to next step
+                    return; // Stop this cycle, wait for user action
+                }
+            } catch (e) { /* Not a pause signal, continue */ }
+        }
+
+        // If not paused or finished, automatically move to the next step
+        setCurrentStepIndex(index + 1);
+
+    }, [logKicadEvent, appendToSwarmHistory]);
+    
+    useEffect(() => {
+        if (executionState === 'running') {
+            // Using requestAnimationFrame ensures the next step is queued without a fixed delay,
+            // making the execution as fast as the browser can render updates.
+            requestAnimationFrame(() => executeDemoStep(currentStepIndex));
+        }
+    }, [executionState, currentStepIndex, executeDemoStep]);
+
+    const handleStartDemo = useCallback((workflow: AIToolCall[], actionExecutor: ExecuteActionFunction) => {
+        executeActionRef.current = actionExecutor;
         const projectName = `demo_project_${Date.now()}`;
         setCurrentProjectName(projectName);
-        setKicadLog([`[SIM] Starting new KiCad project: ${projectName}`]);
+        lastTimestamp.current = performance.now();
+        setKicadLog([`[+0ms] [SIM] Starting new KiCad project: ${projectName}`]);
         setWorkflowSteps(INITIAL_WORKFLOW_STEPS.map(s => ({...s, subtasks: []})));
         clearSwarmHistory();
-        
-        const demoWorkflowWithProject = workflow.map(step => ({
-            ...step,
-            arguments: { ...step.arguments, projectName }
-        }));
-        
-        await runDemoWorkflow(demoWorkflowWithProject, executeAction);
-
-    }, [logEvent, clearSwarmHistory, runDemoWorkflow, setCurrentProjectName]);
+        setDemoStepStatuses(DEMO_WORKFLOW.map(() => ({ status: 'pending' })));
+        setCurrentStepIndex(0);
+        setExecutionState('running');
+    }, [logEvent, clearSwarmHistory, setCurrentProjectName]);
     
-    const handleResetDemo = useCallback(() => {
-        setIsDemoRunning(false);
+    const handleStopDemo = useCallback(() => {
+        setExecutionState('idle');
+        setCurrentStepIndex(0);
         setKicadLog(['Ready for KiCad task.']);
         setWorkflowSteps(INITIAL_WORKFLOW_STEPS.map(s => ({...s, subtasks: []})));
+        setDemoStepStatuses(DEMO_WORKFLOW.map(() => ({ status: 'pending' })));
         setCurrentLayoutData(null);
         setPcbArtifacts(null);
         setCurrentKicadArtifact(null);
+        executeActionRef.current = null;
     }, []);
 
-    const kicadSimulators = useMemo(() => ({
-        define_kicad_component: async (args: any) => {
-            const { projectName, componentReference, side } = args;
+    const handlePlayPause = useCallback((actionExecutor: ExecuteActionFunction | null) => {
+        if (actionExecutor) executeActionRef.current = actionExecutor;
+        setExecutionState(prev => prev === 'running' ? 'paused' : 'running');
+    }, []);
+
+    const handleStepForward = useCallback((actionExecutor: ExecuteActionFunction | null) => {
+        if (executionState !== 'paused') return;
+        if (actionExecutor) executeActionRef.current = actionExecutor;
+        executeDemoStep(currentStepIndex);
+    }, [executionState, currentStepIndex, executeDemoStep]);
+
+    const handleStepBackward = useCallback(() => {
+        if (executionState !== 'paused' || currentStepIndex === 0) return;
+        setDemoStepStatuses(prev => {
+            const newStatuses = [...prev];
+            newStatuses[currentStepIndex - 1] = { status: 'pending' };
+            return newStatuses;
+        });
+        setCurrentStepIndex(prev => prev - 1);
+    }, [executionState, currentStepIndex]);
+    
+    const handleRunFromStep = useCallback((index: number, actionExecutor: ExecuteActionFunction | null) => {
+        if (actionExecutor) executeActionRef.current = actionExecutor;
+        logKicadEvent(`[SIM] Resetting workflow to step ${index + 1}...`);
+        setDemoStepStatuses(prev => {
+            const newStatuses = [...prev];
+            for (let i = index; i < newStatuses.length; i++) {
+                newStatuses[i] = { status: 'pending' };
+            }
+            return newStatuses;
+        });
+        setCurrentStepIndex(index);
+        setExecutionState('running');
+    }, [logKicadEvent]);
+
+
+    const kicadSimulators = useMemo(() => {
+        const simulators: any = {};
+    
+        // Generic state-updating functions
+        const defineComponentSim = (args: any) => {
+            const { projectName, componentReference, ...rest } = args;
             setKicadProjectState(prev => {
                 const project = { ...(prev[projectName] || { components: [], nets: [], rules: [], board_outline: null }) };
                 const existingIndex = project.components.findIndex(c => c.ref === componentReference);
-                const newComponent = { ref: componentReference, side: side || 'top', ...args };
-                if (existingIndex > -1) {
-                    project.components[existingIndex] = newComponent;
+                const newComp = { ref: componentReference, ...rest };
+                if (existingIndex !== -1) {
+                    project.components[existingIndex] = { ...project.components[existingIndex], ...newComp };
                 } else {
-                    project.components.push(newComponent);
+                    project.components.push(newComp);
                 }
                 return { ...prev, [projectName]: project };
             });
-             return { success: true, stdout: JSON.stringify({ message: `Component '${componentReference}' defined (simulated).` }) };
-        },
-        define_kicad_net: async (args: any) => {
-             const { projectName, netName } = args;
-             setKicadProjectState(prev => {
-                const project = { ...(prev[projectName] || { components: [], nets: [], rules: [], board_outline: null }) };
-                const existingIndex = project.nets.findIndex(n => n.name === netName);
-                 if (existingIndex > -1) {
-                    project.nets[existingIndex] = { name: netName, pins: args.pins };
-                } else {
-                    project.nets.push({ name: netName, pins: args.pins });
-                }
-                return { ...prev, [projectName]: project };
-            });
-            return { success: true, stdout: JSON.stringify({ message: `Net '${netName}' defined (simulated).` }) };
-        },
-        add_layout_rules: async (args: any) => {
-            const { projectName, rulesJSON } = args;
+            return { success: true, stdout: JSON.stringify({ message: `Component '${componentReference}' defined.` }) };
+        };
+    
+        const defineNetSim = (args: any) => {
+            const { projectName, netName, pins } = args;
+            const pinsArray = typeof pins === 'string' ? JSON.parse(pins) : pins;
             setKicadProjectState(prev => {
                 const project = { ...(prev[projectName] || { components: [], nets: [], rules: [], board_outline: null }) };
-                project.rules = JSON.parse(rulesJSON);
+                project.nets.push({ name: netName, pins: pinsArray });
                 return { ...prev, [projectName]: project };
             });
-            return { success: true, stdout: JSON.stringify({ message: `Layout rules for project '${projectName}' saved (simulated).` }) };
-        },
-        generate_kicad_netlist: async (args: any) => ({ success: true, stdout: JSON.stringify({ message: `Netlist generated for '${args.projectName}' (simulated).` }) }),
-        create_initial_pcb: async (args: any) => ({ success: true, stdout: JSON.stringify({ message: `Initial PCB created for '${args.projectName}' (simulated).` }) }),
-        create_board_outline: async (args: any) => ({ success: true, stdout: JSON.stringify({ message: `Board outline created for '${args.projectName}' (simulated).` }) }),
-        arrange_components: async (args: any) => {
-            // Use the pre-canned test layout data for the simulation
-            const layout_data = TEST_LAYOUT_DATA;
-            // The simulation now uses the real layout component. This tool's only job is to provide the data.
-            return { success: true, stdout: JSON.stringify({ message: `Extracted layout data. The client UI will now handle component arrangement.`, layout_data: layout_data, waitForUserInput: args.waitForUserInput === true }) };
-        },
-        update_kicad_component_positions: async (args: any) => ({ success: true, stdout: JSON.stringify({ message: `Component positions updated for '${args.projectName}' (simulated).` }) }),
-        autoroute_pcb: async (args: any) => ({ success: true, stdout: JSON.stringify({ message: `Autorouting complete for '${args.projectName}' (simulated).` }) }),
-        export_fabrication_files: async (args: any) => {
+            return { success: true, stdout: JSON.stringify({ message: `Net '${netName}' defined.` }) };
+        };
+    
+        const addRuleSim = (args: any, ruleType: string) => {
+            const { projectName, ...ruleDetails } = args;
+            const rule = { type: ruleType, ...ruleDetails };
+            setKicadProjectState(prev => {
+               const project = { ...(prev[projectName] || { components: [], nets: [], rules: [], board_outline: null }) };
+               project.rules.push(rule);
+               return { ...prev, [projectName]: project };
+           });
+            return { success: true, stdout: JSON.stringify({ message: `Rule '${ruleType}' added.` }) };
+        };
+    
+        // Assign simulators
+        simulators.define_kicad_component = defineComponentSim;
+        simulators.define_net = defineNetSim;
+        simulators.add_absolute_position_constraint = (args: any) => addRuleSim(args, 'AbsolutePositionConstraint');
+        simulators.add_proximity_constraint = (args: any) => addRuleSim(args, 'ProximityConstraint');
+        simulators.add_alignment_constraint = (args: any) => addRuleSim(args, 'AlignmentConstraint');
+        simulators.add_symmetry_constraint = (args: any) => addRuleSim(args, 'SymmetryConstraint');
+        simulators.add_circular_constraint = (args: any) => addRuleSim(args, 'CircularConstraint');
+        simulators.add_layer_constraint = (args: any) => addRuleSim(args, 'LayerConstraint');
+        simulators.add_fixed_property_constraint = (args: any) => addRuleSim(args, 'FixedPropertyConstraint');
+        simulators.add_symmetrical_pair_constraint = (args: any) => addRuleSim(args, 'SymmetricalPairConstraint');
+    
+        simulators.generate_netlist = (args: any) => ({ success: true, stdout: JSON.stringify({ message: 'Netlist generated (simulated).' }) });
+        simulators.create_initial_pcb = (args: any) => ({ success: true, stdout: JSON.stringify({ message: 'Initial PCB created (simulated).' }) });
+        
+        simulators.create_board_outline = (args: any) => {
+            const { projectName, ...outline } = args;
+            setKicadProjectState(prev => {
+                const project = { ...(prev[projectName] || { components: [], nets: [], rules: [], board_outline: null }) };
+                project.board_outline = outline;
+                return { ...prev, [projectName]: project };
+            });
+            return { success: true, stdout: JSON.stringify({ message: 'Board outline created (simulated).' }) };
+        };
+    
+        simulators.arrange_components = (args: any) => {
+            const { projectName, waitForUserInput, layoutStrategy } = args;
+            const projectState = kicadProjectState[projectName];
+            if (!projectState) return { success: false, error: "Project not found for arrangement." };
+            const nodes = projectState.components.map(c => ({ id: c.ref, label: c.ref, ...c }));
+            const edges = [];
+            projectState.nets.forEach(net => {
+                for (let i = 0; i < net.pins.length; i++) {
+                    for (let j = i + 1; j < net.pins.length; j++) {
+                        edges.push({ source: net.pins[i], target: net.pins[j], label: net.name });
+                    }
+                }
+            });
+            const layout_data = { nodes, edges, rules: projectState.rules, board_outline: projectState.board_outline, layoutStrategy: layoutStrategy || 'agent' };
+            return { success: true, stdout: JSON.stringify({ message: 'Component layout data extracted.', layout_data, waitForUserInput }) };
+        };
+    
+        simulators.update_component_positions = (args: any) => ({ success: true, stdout: JSON.stringify({ message: 'Component positions updated (simulated).' }) });
+        
+        simulators.autoroute_pcb = (args: any) => {
+             const svgPath = 'assets/demo_routed.svg';
+             setCurrentKicadArtifact({ title: 'Autorouted PCB (Simulated)', path: svgPath, svgPath });
+             return { success: true, stdout: JSON.stringify({ message: 'Autorouting complete (simulated).', current_artifact: {title: "Routed PCB", path: svgPath} }) };
+        };
+
+        simulators.export_fabrication_files = (args: any) => {
             const { projectName } = args;
             const artifacts = {
                 boardName: projectName,
@@ -310,34 +425,26 @@ export const useKicadManager = (props: UseKicadManagerProps) => {
                 fabZipPath: `assets/demo_fab.zip`,
             };
             return { success: true, stdout: JSON.stringify({ message: "Fabrication files exported (simulated).", artifacts }) };
-        },
-    }), [setKicadProjectState]);
+        };
+        
+        return simulators;
+    }, [kicadProjectState, setKicadProjectState, setCurrentKicadArtifact]);
 
 
     return {
         state: {
-            pcbArtifacts,
-            kicadLog,
-            currentKicadArtifact,
-            isLayoutInteractive,
-            currentLayoutData,
-            kicadProjectState,
-            workflowSteps,
-            isDemoRunning,
+            pcbArtifacts, kicadLog, currentKicadArtifact,
+            isLayoutInteractive, currentLayoutData, kicadProjectState, workflowSteps,
+            executionState, currentStepIndex, demoStepStatuses,
         },
         setters: {
-            setPcbArtifacts,
-            setCurrentKicadArtifact,
-            setIsLayoutInteractive,
-            setCurrentLayoutData,
+            setPcbArtifacts, setCurrentKicadArtifact,
+            setIsLayoutInteractive, setCurrentLayoutData,
         },
         handlers: {
-            handleStartKicadTask,
-            setCurrentProjectName,
-            updateWorkflowChecklist,
-            handleStartDemo,
-            handleResetDemo,
-            runDemoWorkflow,
+            handleStartKicadTask, setCurrentProjectName, updateWorkflowChecklist,
+            handleStartDemo, handleStopDemo, handlePlayPause,
+            handleStepForward, handleStepBackward, handleRunFromStep,
         },
         logKicadEvent,
         currentProjectNameRef,
