@@ -7,13 +7,13 @@ const initialEnvironmentState: EnvironmentObject[] = [
     ...Array.from({length: 25}, (_, i) => ({ x: i - 12, y: -12, type: 'wall' as const })),
     ...Array.from({length: 23}, (_, i) => ({ x: -12, y: i - 11, type: 'wall' as const })),
     ...Array.from({length: 23}, (_, i) => ({ x: 12, y: i - 11, type: 'wall' as const })),
-    // Foliage (trees)
-    { x: -5, y: -5, type: 'tree' }, { x: -6, y: -4, type: 'tree' }, { x: -4, y: -6, type: 'tree' },
-    { x: 5, y: 5, type: 'tree' }, { x: 6, y: 4, type: 'tree' }, { x: 4, y: 6, type: 'tree' },
-    { x: -5, y: 5, type: 'tree' }, { x: -4, y: 4, type: 'tree' },
-    { x: 5, y: -5, type: 'tree' }, { x: 4, y: -4, type: 'tree' },
-    // Target ("red car")
-    { x: 9, y: -9, type: 'target', id: 'red_car' },
+    // Foliage (trees) with GLB assets
+    { x: -5, y: -5, type: 'tree', asset_glb: 'assets/tree.glb' }, { x: -6, y: -4, type: 'tree', asset_glb: 'assets/tree.glb' }, { x: -4, y: -6, type: 'tree', asset_glb: 'assets/tree.glb' },
+    { x: 5, y: 5, type: 'tree', asset_glb: 'assets/tree.glb' }, { x: 6, y: 4, type: 'tree', asset_glb: 'assets/tree.glb' }, { x: 4, y: 6, type: 'tree', asset_glb: 'assets/tree.glb' },
+    { x: -5, y: 5, type: 'tree', asset_glb: 'assets/tree.glb' }, { x: -4, y: 4, type: 'tree', asset_glb: 'assets/tree.glb' },
+    { x: 5, y: -5, type: 'tree', asset_glb: 'assets/tree.glb' }, { x: 4, y: -4, type: 'tree', asset_glb: 'assets/tree.glb' },
+    // Target ("red car") with a GLB asset
+    { x: 9, y: -9, type: 'target', id: 'red_car', asset_glb: 'assets/car.glb' },
     // Resource and collection point (for other behaviors)
     { x: 9, y: 2, type: 'resource' },
     { x: -9, y: 9, type: 'collection_point' },

@@ -16,6 +16,7 @@ export interface AgentPersonality {
   startY: number;
   behaviorType: 'resource_collector' | 'patroller' | 'seek_target';
   targetId?: string;
+  asset_glb?: string;
 }
 
 export interface ToolParameter {
@@ -111,6 +112,7 @@ export interface EnvironmentObject {
   y: number;
   type: 'wall' | 'resource' | 'collection_point' | 'tree' | 'target';
   id?: string;
+  asset_glb?: string;
 }
 
 export interface AssetTransform {

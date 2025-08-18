@@ -1,5 +1,5 @@
 {
-  "name": "singularity-agent-factory-mcp-kicad-multiagent-replay-repeat",
+  "name": "singularity-agent-factory-mcp-kicad-autoroute",
   "private": true,
   "version": "0.0.0",
   "type": "module",
@@ -22,7 +22,8 @@
     "multer": "^2.0.2",
     "three": "^0.166.1",
     "@dimforge/rapier3d-compat": "latest",
-    "lil-gui": "^0.19.1"
+    "lil-gui": "^0.19.1",
+    "idb": "^8"
   },
   "devDependencies": {
     "@types/node": "^22.14.0",

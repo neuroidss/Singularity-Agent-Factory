@@ -1,11 +1,10 @@
-
 export const AgentDebugPanelString = `
-const AgentDebugPanel = ({ agents, debugInfo, selectedId, onSelect, onHover }) => {
+const AgentDebugPanel = ({ agents, debugInfo, selectedId, selectedNode, onSelect, onHover }) => {
     const [filter, setFilter] = React.useState('');
     const filteredAgents = agents.filter(agent => agent.id.toLowerCase().includes(filter.toLowerCase()));
 
     const ForceBar = ({ value, max }) => {
-        const percentage = Math.min(100, (Math.abs(value) / max) * 100);
+        const percentage = max > 0 ? Math.min(100, (Math.abs(value) / max) * 100) : 0;
         return (
             <div className="w-full bg-gray-600 rounded-full h-1.5">
                 <div className="bg-cyan-400 h-1.5 rounded-full" style={{ width: \`\${percentage}%\` }}></div>
@@ -15,12 +14,12 @@ const AgentDebugPanel = ({ agents, debugInfo, selectedId, onSelect, onHover }) =
 
     return (
         <div className="bg-gray-800/70 backdrop-blur-sm border border-gray-700 rounded-xl p-2 flex flex-col h-full text-white">
-            <h3 className="text-lg font-bold text-cyan-300 mb-2 text-center">Agent Monitor</h3>
+            <h3 className="text-lg font-bold text-cyan-300 mb-2 text-center">Inspector</h3>
             <input
                 id="agent-filter"
                 name="agent-filter"
                 type="text"
-                placeholder="Filter agents..."
+                placeholder="Filter items..."
                 value={filter}
                 onChange={e => setFilter(e.target.value)}
                 className="w-full bg-gray-900 border border-gray-600 rounded-md p-1.5 text-sm mb-2"
@@ -61,7 +60,17 @@ const AgentDebugPanel = ({ agents, debugInfo, selectedId, onSelect, onHover }) =
                             </button>
                             {isSelected && (
                                 <div className="p-2 border-t border-indigo-500 text-xs space-y-2">
-                                    {Object.entries(info.forces || {}).map(([name, value]) => (
+                                    {selectedNode && (
+                                        <div className="space-y-1 pb-2 mb-2 border-b border-indigo-600/50">
+                                            <h5 className="font-bold text-indigo-200">Properties</h5>
+                                            <div><span className="text-gray-400">Type:</span> {selectedNode.type || 'N/A'}</div>
+                                            {selectedNode.footprint && <div className="truncate"><span className="text-gray-400">Footprint:</span> {selectedNode.footprint}</div>}
+                                            {selectedNode.side && <div><span className="text-gray-400">Side:</span> {selectedNode.side}</div>}
+                                            {selectedNode.asset_glb && <div className="truncate"><span className="text-gray-400">Asset:</span> {selectedNode.asset_glb}</div>}
+                                        </div>
+                                    )}
+                                    <h5 className="font-bold text-indigo-200">Live Forces</h5>
+                                    {Object.entries(info.forces || {}).sort(([, a], [, b]) => Number(b) - Number(a)).map(([name, value]) => (
                                         <div key={name}>
                                             <div className="flex justify-between">
                                                 <span>{name}</span>
@@ -70,6 +79,7 @@ const AgentDebugPanel = ({ agents, debugInfo, selectedId, onSelect, onHover }) =
                                             <ForceBar value={Number(value)} max={maxForce} />
                                         </div>
                                     ))}
+                                    {Object.keys(info.forces || {}).length === 0 && <p className="text-gray-500">No forces acting.</p>}
                                 </div>
                             )}
                         </div>
@@ -79,4 +89,4 @@ const AgentDebugPanel = ({ agents, debugInfo, selectedId, onSelect, onHover }) =
         </div>
     );
 };
-`;
+`

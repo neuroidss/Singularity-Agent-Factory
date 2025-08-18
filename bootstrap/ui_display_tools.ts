@@ -1,5 +1,3 @@
-
-
 import type { ToolCreatorPayload } from '../types';
 
 export const UI_DISPLAY_TOOLS: ToolCreatorPayload[] = [
@@ -17,7 +15,7 @@ export const UI_DISPLAY_TOOLS: ToolCreatorPayload[] = [
         ],
         implementationCode: `
           const Spinner = () => (
-            <svg className="animate-spin -ml-1 mr-3 h-5 w-5 text-white" xmlns="http://www.w.org/2000/svg" fill="none" viewBox="0 0 24 24">
+            <svg className="animate-spin -ml-1 mr-3 h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
                 <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
                 <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
             </svg>
@@ -73,85 +71,6 @@ export const UI_DISPLAY_TOOLS: ToolCreatorPayload[] = [
         implementationCode: `// This component is implemented natively in DebugLogView.tsx`,
     },
     {
-        name: 'Tool List Display',
-        description: 'Renders the grid of all available tools, highlighting those selected for the current task.',
-        category: 'UI Component',
-        executionEnvironment: 'Client',
-        purpose: 'To give the user a complete and real-time overview of all capabilities available to the agent swarm, on both client and server.',
-        parameters: [
-          { name: 'tools', type: 'array', description: 'Array of all available tools (client and server)', required: true },
-          { name: 'isServerConnected', type: 'boolean', description: 'Whether the backend server is connected', required: true },
-        ],
-        implementationCode: `
-          const [showDetailsId, setShowDetailsId] = React.useState(null);
-    
-          const sortedTools = React.useMemo(() => {
-            return [...tools].sort((a, b) => {
-              const aIsServer = a.category === 'Server';
-              const bIsServer = b.category === 'Server';
-              if (aIsServer && !bIsServer) return -1;
-              if (!aIsServer && bIsServer) return 1;
-              return a.name.localeCompare(b.name);
-            });
-          }, [tools]);
-    
-          const ServerStatus = () => {
-              const statusStyle = isServerConnected
-                ? "bg-green-900/50 text-green-300"
-                : "bg-yellow-900/50 text-yellow-300";
-              const dotStyle = isServerConnected ? "bg-green-500" : "bg-yellow-500";
-              const text = isServerConnected ? "Server Connected" : "Server Offline";
-              return (
-                 <div className={\`flex-shrink-0 flex items-center gap-2 px-2.5 py-1 rounded-full text-xs font-semibold \${statusStyle}\`}>
-                    <div className={\`w-2 h-2 rounded-full \${dotStyle} \${isServerConnected ? 'animate-pulse' : ''}\`}></div>
-                    {text}
-                </div>
-              );
-          }
-    
-          return (
-            <div className="bg-gray-800/60 border border-gray-700 rounded-xl p-4 h-full">
-                <div className="flex justify-between items-center mb-4">
-                  <h3 className="text-lg font-bold text-indigo-300">Tool Library ({tools.length})</h3>
-                  <ServerStatus />
-                </div>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-3 max-h-[calc(100vh-250px)] overflow-y-auto pr-2">
-                    {sortedTools.map(tool => {
-                        const isServerTool = tool.category === 'Server';
-                        return (
-                          <div key={tool.id + '-' + tool.version} className="bg-gray-900/70 border border-gray-700 rounded-lg p-3 flex flex-col text-sm h-full">
-                              <div className="flex justify-between items-start gap-2">
-                                  <h4 className="font-bold text-white truncate pr-2 flex-grow">{tool.name}</h4>
-                                  <span className={\`flex-shrink-0 text-xs font-semibold px-2 py-0.5 rounded-full \${isServerTool ? 'bg-sky-800 text-sky-300' : 'bg-gray-700 text-gray-300'}\`}>
-                                      {isServerTool ? 'Server' : 'Client'}
-                                  </span>
-                              </div>
-                              <p className="text-xs text-indigo-400 mt-1">{tool.category}</p>
-                              <p className="text-gray-300 text-xs flex-grow my-2">{tool.description}</p>
-                              {tool.purpose && <p className="text-xs text-yellow-300 bg-yellow-900/30 p-1 rounded italic">Purpose: {tool.purpose}</p>}
-                              
-                              <div className="mt-2 pt-2 border-t border-gray-700/50">
-                                  <button
-                                      onClick={() => setShowDetailsId(showDetailsId === tool.id ? null : tool.id)}
-                                      className="text-left text-xs font-semibold text-cyan-300 hover:text-cyan-200"
-                                  >
-                                      {showDetailsId === tool.id ? '[-] Hide Details' : '[+] Show Details'}
-                                  </button>
-                                  {showDetailsId === tool.id && (
-                                      <pre className="mt-2 text-xs text-cyan-200 bg-black p-2 rounded-md font-mono whitespace-pre-wrap max-h-48 overflow-auto">
-                                          {isServerTool ? '# Server-side command:\\n' + tool.implementationCode : tool.implementationCode}
-                                      </pre>
-                                  )}
-                              </div>
-                          </div>
-                        )
-                    })}
-                </div>
-            </div>
-          );
-        `
-    },
-    {
         name: 'KiCad PCB Viewer',
         description: 'Displays an interactive 3D model of the generated PCB and provides a download link for the fabrication files.',
         category: 'UI Component',
@@ -172,8 +91,8 @@ export const UI_DISPLAY_TOOLS: ToolCreatorPayload[] = [
 
                 let isMounted = true;
                 let THREE, OrbitControls, GLTFLoader;
-
-                const init = async () => {
+                
+                const init3D = async () => {
                     try {
                         THREE = await import('three');
                         const { OrbitControls: OC } = await import('three/addons/controls/OrbitControls.js');
@@ -183,71 +102,85 @@ export const UI_DISPLAY_TOOLS: ToolCreatorPayload[] = [
                     } catch (e) {
                          console.error("Failed to load Three.js libraries:", e);
                          if(mountRef.current) mountRef.current.innerHTML = '<p class="text-red-400">Error loading 3D libraries. Check console.</p>';
-                         return;
+                         return null;
                     }
                     
-                    if (!isMounted || !mountRef.current) return;
-
-                    const scene = new THREE.Scene();
-                    scene.background = new THREE.Color(0x111827); // bg-gray-900
+                    if (!isMounted || !mountRef.current) return null;
 
                     const mount = mountRef.current;
+                    const scene = new THREE.Scene();
+                    scene.background = new THREE.Color(0x111827);
                     const camera = new THREE.PerspectiveCamera(75, mount.clientWidth / mount.clientHeight, 0.1, 1000);
                     camera.position.z = 50;
-
                     const renderer = new THREE.WebGLRenderer({ antialias: true });
                     renderer.setSize(mount.clientWidth, mount.clientHeight);
                     renderer.setPixelRatio(window.devicePixelRatio);
                     mount.innerHTML = '';
                     mount.appendChild(renderer.domElement);
-
                     const controls = new OrbitControls(camera, renderer.domElement);
                     controls.enableDamping = true;
-
-                    const ambientLight = new THREE.AmbientLight(0xffffff, 2.0);
-                    scene.add(ambientLight);
+                    scene.add(new THREE.AmbientLight(0xffffff, 2.0));
                     const directionalLight = new THREE.DirectionalLight(0xffffff, 3.5);
                     directionalLight.position.set(50, 100, 75);
                     scene.add(directionalLight);
-
                     const loader = new GLTFLoader();
+
                     const fullGlbUrl = serverUrl + '/' + glbPath.replace(/\\\\/g, '/');
                     
-                    loader.load(fullGlbUrl, (gltf) => {
-                        if (!isMounted) return;
-                        const model = gltf.scene;
+                    const loadGltfFromBlob = (blob) => {
+                        const url = URL.createObjectURL(blob);
+                        loader.load(url, (gltf) => {
+                            if (!isMounted) return;
+                            const model = gltf.scene;
+                            model.scale.set(1000, 1000, 1000); // KiCad exports in meters, Three.js scene is in mm
+                            model.rotation.x = -Math.PI / 2;
+                            model.updateMatrixWorld(true);
+                            const box = new THREE.Box3().setFromObject(model);
+                            const center = box.getCenter(new THREE.Vector3());
+                            const size = box.getSize(new THREE.Vector3());
 
-                        // Correct the orientation from KiCad's Z-up to Three.js's Y-up
-                        model.rotation.x = -Math.PI / 2;
-                        model.updateMatrixWorld(true);
+                            // Center the model on X/Z and place its bottom at Y=0
+                            model.position.x -= center.x;
+                            model.position.y -= box.min.y;
+                            model.position.z -= center.z;
 
-                        const box = new THREE.Box3().setFromObject(model);
-                        const center = box.getCenter(new THREE.Vector3());
+                            const maxDim = Math.max(size.x, size.y, size.z);
+                            const fov = camera.fov * (Math.PI / 180);
+                            let cameraZ = Math.abs(maxDim / 2 / Math.tan(fov / 2));
+                            cameraZ *= 1.5; // Zoom out a bit for padding
+                            camera.position.z = cameraZ;
+                            camera.position.y = cameraZ * 0.75; // Angled view from above
+                            camera.far = cameraZ * 3;
+                            camera.updateProjectionMatrix();
 
-                        // Center the model and place its bottom on the Y=0 plane
-                        model.position.sub(center);
-                        model.position.y -= box.min.y;
-                        
-                        const size = box.getSize(new THREE.Vector3());
-                        const maxDim = Math.max(size.x, size.y, size.z);
-                        const fov = camera.fov * (Math.PI / 180);
-                        let cameraZ = Math.abs(maxDim / 2 / Math.tan(fov / 2));
-                        cameraZ *= 1.5;
-                        camera.position.z = cameraZ;
-                        camera.position.y = cameraZ * 0.75;
-                        
-                        const minZ_rotated = box.min.z;
-                        const cameraToFarEdge = (minZ_rotated < 0) ? -minZ_rotated + cameraZ : cameraZ - minZ_rotated;
-                        camera.far = cameraToFarEdge * 3;
-                        camera.updateProjectionMatrix();
-
-                        controls.target.copy(model.position);
-                        controls.update();
-                        scene.add(model);
-                    }, undefined, (error) => {
-                        console.error('Error loading GLB model:', error);
-                    });
+                            // Look at the vertical center of the model
+                            controls.target.set(0, size.y / 2, 0);
+                            controls.update();
+                            scene.add(model);
+                            URL.revokeObjectURL(url);
+                        }, undefined, (error) => console.error('Error loading GLB from blob:', error));
+                    };
                     
+                    if (window.cacheService) {
+                        window.cacheService.getAssetBlob(fullGlbUrl).then(async (blob) => {
+                            if (blob && isMounted) {
+                                loadGltfFromBlob(blob);
+                            } else if (isMounted) {
+                                fetch(fullGlbUrl)
+                                    .then(res => res.ok ? res.blob() : Promise.reject(new Error(\`HTTP \${res.status}\`)))
+                                    .then(blob => {
+                                        if (isMounted) {
+                                            window.cacheService.setAssetBlob(fullGlbUrl, blob);
+                                            loadGltfFromBlob(blob);
+                                        }
+                                    })
+                                    .catch(err => console.error('Failed to fetch and cache GLB:', err));
+                            }
+                        });
+                    } else {
+                         loader.load(fullGlbUrl, (gltf) => { /* original logic */ }, undefined, (error) => console.error('Error loading GLB:', error));
+                    }
+
                     let animationFrameId;
                     const animate = () => {
                         if (!isMounted) return;
@@ -262,8 +195,7 @@ export const UI_DISPLAY_TOOLS: ToolCreatorPayload[] = [
                         camera.aspect = mount.clientWidth / mount.clientHeight;
                         camera.updateProjectionMatrix();
                         renderer.setSize(mount.clientWidth, mount.clientHeight);
-                    }
-                    
+                    };
                     window.addEventListener('resize', handleResize);
 
                     return () => {
@@ -277,10 +209,9 @@ export const UI_DISPLAY_TOOLS: ToolCreatorPayload[] = [
                     };
                 };
 
-                const cleanup = init();
-
+                const cleanupPromise = init3D();
                 return () => {
-                    cleanup.then(cleanupFn => cleanupFn && cleanupFn());
+                    cleanupPromise.then(cleanupFn => cleanupFn && cleanupFn());
                 };
             }, [glbPath, serverUrl]);
 

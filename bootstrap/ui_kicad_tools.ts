@@ -1,34 +1,14 @@
 
-
 // bootstrap/kicad_tools.ts
 
 import type { ToolCreatorPayload } from '../types';
-import { KICAD_SERVICE_SCRIPT } from './kicad_service';
-import { KICAD_SERVICE_COMMANDS_SCRIPT } from './kicad_service_commands';
+import { KICAD_CLI_MAIN_SCRIPT } from './kicad_cli_script';
+import { KICAD_CLI_SCHEMATIC_COMMANDS_SCRIPT } from './kicad_cli_schematic_commands';
+import { KICAD_CLI_LAYOUT_COMMANDS_SCRIPT } from './kicad_cli_layout_commands';
 import { KICAD_DSN_UTILS_SCRIPT } from './kicad_dsn_utils';
 import { KICAD_SES_UTILS_SCRIPT } from './kicad_ses_utils';
 
 const KICAD_TOOL_DEFINITIONS: ToolCreatorPayload[] = [
-    // --- Service Management ---
-    {
-        name: 'Start KiCad Service',
-        description: 'Starts the long-running Python service for KiCad automation. This MUST be called before any other KiCad command to ensure high performance by avoiding repeated library loading.',
-        category: 'Server',
-        executionEnvironment: 'Server',
-        purpose: "To initialize the high-performance KiCad automation engine, which is a prerequisite for all subsequent hardware design tasks.",
-        parameters: [],
-        implementationCode: '# This is a special server-side command handled by the Node.js backend to spawn the Python service.'
-    },
-    {
-        name: 'Stop KiCad Service',
-        description: 'Stops the long-running Python service for KiCad automation, freeing up system resources.',
-        category: 'Server',
-        executionEnvironment: 'Server',
-        purpose: "To cleanly shut down the KiCad automation engine when it's no longer needed.",
-        parameters: [],
-        implementationCode: '# This is a special server-side command handled by the Node.js backend to terminate the Python service.'
-    },
-    // --- Original Tool Definitions (now use an explicit proxy signal) ---
     {
         name: 'Add Absolute Position Constraint',
         description: 'Fixes an electronic component to an absolute X, Y coordinate on the PCB. Essential for connectors, mounting holes, or parts with fixed mechanical constraints in the final device assembly.',
@@ -41,7 +21,7 @@ const KICAD_TOOL_DEFINITIONS: ToolCreatorPayload[] = [
             { name: 'x', type: 'number', description: 'The X coordinate in millimeters.', required: true },
             { name: 'y', type: 'number', description: 'The Y coordinate in millimeters.', required: true },
         ],
-        implementationCode: 'kicad_service_proxy::add_absolute_position_constraint'
+        implementationCode: 'python scripts/kicad_cli.py add_absolute_position_constraint'
     },
     {
         name: 'Add Proximity Constraint',
@@ -53,7 +33,7 @@ const KICAD_TOOL_DEFINITIONS: ToolCreatorPayload[] = [
             { name: 'projectName', type: 'string', description: 'The unique name for this hardware project.', required: true },
             { name: 'groupsJSON', type: 'string', description: 'A JSON string of an array of arrays, where each inner array is a group of component references that should be close. E.g., \'[["U1", "C1"], ["U1", "C2"]]\'.', required: true },
         ],
-        implementationCode: 'kicad_service_proxy::add_proximity_constraint'
+        implementationCode: 'python scripts/kicad_cli.py add_proximity_constraint'
     },
     {
         name: 'Add Alignment Constraint',
@@ -66,7 +46,7 @@ const KICAD_TOOL_DEFINITIONS: ToolCreatorPayload[] = [
             { name: 'axis', type: 'string', description: 'The axis for alignment: "vertical" or "horizontal".', required: true },
             { name: 'componentsJSON', type: 'string', description: 'A JSON string of an array of component references to align. E.g., \'["J1", "J2", "J3"]\'.', required: true },
         ],
-        implementationCode: 'kicad_service_proxy::add_alignment_constraint'
+        implementationCode: 'python scripts/kicad_cli.py add_alignment_constraint'
     },
      {
         name: 'Add Symmetry Constraint',
@@ -79,7 +59,7 @@ const KICAD_TOOL_DEFINITIONS: ToolCreatorPayload[] = [
             { name: 'axis', type: 'string', description: 'The axis of symmetry: "vertical" or "horizontal".', required: true },
             { name: 'pairsJSON', type: 'string', description: 'A JSON string of an array of pairs. Each pair is an array of two component references. E.g., \'[["C1", "C2"], ["R1", "R2"]]\'.', required: true },
         ],
-        implementationCode: 'kicad_service_proxy::add_symmetry_constraint'
+        implementationCode: 'python scripts/kicad_cli.py add_symmetry_constraint'
     },
     {
         name: 'Add Circular Constraint',
@@ -94,7 +74,7 @@ const KICAD_TOOL_DEFINITIONS: ToolCreatorPayload[] = [
             { name: 'centerX', type: 'number', description: 'The X coordinate of the circle\'s center in millimeters.', required: true },
             { name: 'centerY', type: 'number', description: 'The Y coordinate of the circle\'s center in millimeters.', required: true },
         ],
-        implementationCode: 'kicad_service_proxy::add_circular_constraint'
+        implementationCode: 'python scripts/kicad_cli.py add_circular_constraint'
     },
      {
         name: 'Add Layer Constraint',
@@ -107,7 +87,7 @@ const KICAD_TOOL_DEFINITIONS: ToolCreatorPayload[] = [
             { name: 'layer', type: 'string', description: 'The target layer: "top" or "bottom".', required: true },
             { name: 'componentsJSON', type: 'string', description: 'A JSON string of an array of component references to place on the specified layer.', required: true },
         ],
-        implementationCode: 'kicad_service_proxy::add_layer_constraint'
+        implementationCode: 'python scripts/kicad_cli.py add_layer_constraint'
     },
     {
         name: 'Add Fixed Property Constraint',
@@ -120,7 +100,7 @@ const KICAD_TOOL_DEFINITIONS: ToolCreatorPayload[] = [
             { name: 'componentReference', type: 'string', description: 'The reference designator of the component (e.g., "U1").', required: true },
             { name: 'propertiesJSON', type: 'string', description: 'A JSON string of an object with properties to fix. E.g., \'{"rotation": 90}\'.', required: true },
         ],
-        implementationCode: 'kicad_service_proxy::add_fixed_property_constraint'
+        implementationCode: 'python scripts/kicad_cli.py add_fixed_property_constraint'
     },
     {
         name: 'Add Symmetrical Pair Constraint',
@@ -134,7 +114,7 @@ const KICAD_TOOL_DEFINITIONS: ToolCreatorPayload[] = [
             { name: 'axis', type: 'string', description: 'The axis of symmetry: "vertical" or "horizontal".', required: true },
             { name: 'separation', type: 'number', description: 'The required distance between the two components in millimeters.', required: true },
         ],
-        implementationCode: 'kicad_service_proxy::add_symmetrical_pair_constraint'
+        implementationCode: 'python scripts/kicad_cli.py add_symmetrical_pair_constraint'
     },
     {
         name: 'Define KiCad Component',
@@ -150,10 +130,8 @@ const KICAD_TOOL_DEFINITIONS: ToolCreatorPayload[] = [
             { name: 'footprintIdentifier', type: 'string', description: `The KiCad footprint identifier for the component's physical package (e.g., "Resistor_SMD:R_0805_2012Metric").`, required: true },
             { name: 'numberOfPins', type: 'number', description: 'The total number of pins for this component. Used for creating generic parts. Set to 0 if this is a pre-defined library part specified in componentValue.', required: true },
             { name: 'side', type: 'string', description: "The initial side of the board for the component ('top' or 'bottom'). Defaults to 'top'.", required: false },
-            { name: 'exportSVG', type: 'boolean', description: "Generate an SVG footprint of the component. (Used for demo visualization)", required: false },
-            { name: 'exportGLB', type: 'boolean', description: "Generate a 3D GLB model of the component. (Used for demo visualization)", required: false }
         ],
-        implementationCode: 'kicad_service_proxy::define_component'
+        implementationCode: 'python scripts/kicad_cli.py define_component'
     },
     {
         name: 'Define KiCad Net',
@@ -166,7 +144,7 @@ const KICAD_TOOL_DEFINITIONS: ToolCreatorPayload[] = [
             { name: 'netName', type: 'string', description: "The name of the net (e.g., 'GND', 'VCC', 'DATA0').", required: true },
             { name: 'pins', type: 'array', description: 'An array of component pin strings to connect to this net (e.g., ["U1-1", "R1-2"]).', required: true },
         ],
-        implementationCode: 'kicad_service_proxy::define_net'
+        implementationCode: 'python scripts/kicad_cli.py define_net'
     },
     {
         name: 'Generate KiCad Netlist',
@@ -177,7 +155,7 @@ const KICAD_TOOL_DEFINITIONS: ToolCreatorPayload[] = [
         parameters: [
             { name: 'projectName', type: 'string', description: 'The unique name for this hardware project.', required: true },
         ],
-        implementationCode: 'kicad_service_proxy::generate_netlist'
+        implementationCode: 'python scripts/kicad_cli.py generate_netlist'
     },
     {
         name: 'Create Initial PCB',
@@ -186,7 +164,7 @@ const KICAD_TOOL_DEFINITIONS: ToolCreatorPayload[] = [
         executionEnvironment: 'Server',
         purpose: 'To create the physical board file and load all the component footprints into it, officially starting the physical design phase of the hardware project.',
         parameters: [{ name: 'projectName', type: 'string', description: 'The unique name for this hardware project.', required: true }],
-        implementationCode: 'kicad_service_proxy::create_initial_pcb'
+        implementationCode: 'python scripts/kicad_cli.py create_initial_pcb'
     },
     {
         name: 'Create Board Outline',
@@ -201,7 +179,7 @@ const KICAD_TOOL_DEFINITIONS: ToolCreatorPayload[] = [
             { name: 'boardHeightMillimeters', type: 'number', description: "For 'rectangle' shape, the desired height in mm. Omit or set to 0 for auto-sizing.", required: false },
             { name: 'diameterMillimeters', type: 'number', description: "For 'circle' shape, the desired diameter in mm. If omitted, it will auto-size to fit components.", required: false },
         ],
-        implementationCode: 'kicad_service_proxy::create_board_outline'
+        implementationCode: 'python scripts/kicad_cli.py create_board_outline'
     },
     {
         name: 'Arrange Components',
@@ -214,7 +192,7 @@ const KICAD_TOOL_DEFINITIONS: ToolCreatorPayload[] = [
             { name: 'waitForUserInput', type: 'boolean', description: "Set to 'true' to pause the workflow for interactive manual layout on the client. Set to 'false' to perform an autonomous layout on the client and continue the workflow automatically.", required: true },
             { name: 'layoutStrategy', type: 'string', description: "The layout engine to use: 'agent' for rule-based, 'physics' for Rapier.js simulation. Defaults to 'agent'.", required: false },
         ],
-        implementationCode: 'kicad_service_proxy::arrange_components'
+        implementationCode: 'python scripts/kicad_cli.py arrange_components'
     },
     {
         name: 'Update KiCad Component Positions',
@@ -226,7 +204,7 @@ const KICAD_TOOL_DEFINITIONS: ToolCreatorPayload[] = [
             { name: 'projectName', type: 'string', description: 'The unique name for this hardware project.', required: true },
             { name: 'componentPositionsJSON', type: 'string', description: `A JSON string of an object mapping component references to their new {x, y, rotation, side} coordinates. Example: '{"U1": {"x": 10, "y": 15, "rotation": 90, "side": "top"}, "R1": {"x": 25, "y": 15, "rotation": 0, "side": "bottom"}}'.`, required: true },
         ],
-        implementationCode: 'kicad_service_proxy::update_component_positions'
+        implementationCode: 'python scripts/kicad_cli.py update_component_positions'
     },
     {
         name: 'Autoroute PCB',
@@ -237,7 +215,7 @@ const KICAD_TOOL_DEFINITIONS: ToolCreatorPayload[] = [
         parameters: [
             { name: 'projectName', type: 'string', description: 'The unique name for this hardware project.', required: true },
         ],
-        implementationCode: 'kicad_service_proxy::autoroute_pcb'
+        implementationCode: 'python scripts/kicad_cli.py autoroute_pcb'
     },
     {
         name: 'Export Fabrication Files',
@@ -246,7 +224,7 @@ const KICAD_TOOL_DEFINITIONS: ToolCreatorPayload[] = [
         executionEnvironment: 'Server',
         purpose: 'To produce the final, complete manufacturing dataset required by a factory to produce the physical electronic device, marking the successful culmination of the hardware design process.',
         parameters: [{ name: 'projectName', type: 'string', description: 'The unique name for this hardware project.', required: true }],
-        implementationCode: 'kicad_service_proxy::export_fabrication_files'
+        implementationCode: 'python scripts/kicad_cli.py export_fabrication_files'
     },
     {
         name: 'Update Workflow Checklist',
@@ -267,12 +245,13 @@ const KICAD_TOOL_DEFINITIONS: ToolCreatorPayload[] = [
     }
 ];
 
+const KICAD_CLI_COMMANDS_SCRIPT = KICAD_CLI_SCHEMATIC_COMMANDS_SCRIPT + KICAD_CLI_LAYOUT_COMMANDS_SCRIPT;
+
 const KICAD_DESIGN_PROMPT_TEXT = `I need a PCB design for a FreeEEG8-alpha inspired mezzanine board.
 
 Here is the plan:
 
-1.  **Start the KiCad Service:** The first step is to start the high-performance KiCad service.
-2.  **Component Definition:**
+1.  **Component Definition:**
     *   ADC 'U1': 'ADS131M08', footprint: 'Package_QFP:LQFP-32_5x5mm_P0.5mm', 32 pins.
     *   AVDD LDO 'U2': 'LP5907QMFX-3.3Q1', footprint: 'Package_TO_SOT_SMD:SOT-23-5', 5 pins.
     *   DVDD LDO 'U3': 'LP5907QMFX-3.3Q1', footprint: 'Package_TO_SOT_SMD:SOT-23-5', 5 pins.
@@ -282,7 +261,7 @@ Here is the plan:
     *   XIAO Headers 'J_XIAO_1', 'J_XIAO_2', footprint: 'Connector_PinHeader_2.54mm:PinHeader_1x07_P2.54mm_Vertical', 7 pins each.
     *   Pogo Pins 'J1'-'J10', footprint: 'freeeeg8-alpha:pogo_pin_d5x10mm_smd', 1 pin each, side: bottom.
 
-3.  **Net Definition:**
+2.  **Net Definition:**
     *   A net named 'GND' connecting pins: ["U1-13", "U1-25", "U1-28", "J10-1", "C1-1", "C2-1", "C3-2", "C4-2", "U2-2", "C5-2", "C6-1", "C7-1", "C8-2", "J_XIAO_2-6", "X1-2"]
     *   A net named 'AVDD' connecting pins: ["U1-15", "C3-1", "U2-5", "C5-1"]
     *   A net named 'DVDD' connecting pins: ["U1-26", "C4-1", "U3-5", "C7-2", "X1-4"]
@@ -306,7 +285,7 @@ Here is the plan:
     *   A net named 'AIN7P' connecting pins: ["J8-1", "U1-12"]
     *   A net named 'AINREF' connecting pins: ["J9-1", "U1-2", "U1-3", "U1-6", "U1-7", "U1-10", "U1-11", "U1-30", "U1-31"]
 
-4.  **Layout Rules:**
+3.  **Layout Rules:**
     *   The pogo pins (J1 to J10) should be on the 'bottom' layer, arranged in a circle with a radius of 12.5mm.
     *   All other than pogo pins components should be on the 'top' layer.
     *   The core components 'U1' and 'X1' must be aligned to the central vertical axis.
@@ -314,13 +293,13 @@ Here is the plan:
     *   To ensure good power integrity, the decoupling capacitors must be kept close to the ADC. Define proximity groups for [U1, C1], [U1, C2], [U1, C3], and [U1, C4].
     *   Create proximity rules to place decoupling capacitors C1-C4 near ADC U1, C5-C6 near LDO U2, and C7-C8 near LDO U3.
 
-5.  **Board Generation:**
+4.  **Board Generation:**
     *   Generate netlist, create initial PCB, create a circular 35mm diameter outline.
 
-6.  Arrange the components using the 'agent' arrangement strategy, which respects the defined layout rules, and wait for user input for final adjustments.
-7.  Autoroute the PCB.
-8.  Export the final fabrication files.
-9.  Stop the KiCad service.
+5.  Arrange the components using the 'agent' arrangement strategy, which respects the defined layout rules, and wait for user input for final adjustments.
+6.  Autoroute the PCB.
+7.  Export the final fabrication files.
+
     `;
 
 const KICAD_UI_PANEL_TOOL: ToolCreatorPayload = {
@@ -354,10 +333,8 @@ const KICAD_UI_PANEL_TOOL: ToolCreatorPayload = {
         { name: 'onRunFromStep', type: 'object', description: 'Handler to run from a specific step.', required: true },
         // Layout View Props
         { name: 'currentLayoutData', type: 'object', description: 'Graph data for the interactive layout tool.', required: false },
-        { name: 'layoutHeuristics', type: 'object', description: 'Current heuristics for the layout simulation.', required: false },
         { name: 'isLayoutInteractive', type: 'boolean', description: 'Flag to determine if the commit button should be active.', required: true },
         { name: 'onCommitLayout', type: 'object', description: 'Callback function to commit the final layout.', required: true },
-        { name: 'onUpdateLayout', type: 'object', description: 'Callback function to update the layout data (e.g., rules).', required: true },
     ],
     implementationCode: `
     const [prompt, setPrompt] = React.useState(\`${KICAD_DESIGN_PROMPT_TEXT.replace(/`/g, '\\`')}\`);
@@ -465,44 +442,15 @@ const KICAD_UI_PANEL_TOOL: ToolCreatorPayload = {
     )};
     
     const renderContent = () => {
-        const layoutProps = {
-            graph: currentLayoutData,
-            layoutStrategy: currentLayoutData?.layoutStrategy || 'agent',
-            mode: 'pcb',
-            isLayoutInteractive: isLayoutInteractive,
-            onCommit: onCommitLayout,
-            onUpdateLayout: onUpdateLayout,
-            getTool: getTool,
-            heuristics: layoutHeuristics,
-        };
-        const demoProps = {
-            workflow: demoWorkflow,
-            executionState: executionState,
-            currentStepIndex: currentStepIndex,
-            demoStepStatuses: demoStepStatuses,
-            onPlayPause: onPlayPause,
-            onStop: onStopDemo,
-            onStepForward: onStepForward,
-            onStepBackward: onStepBackward,
-            onRunFromStep: onRunFromStep,
-        };
-
-        if (isDemoActive) {
-            return (
-                <div className="flex-grow flex flex-col min-h-0 gap-4">
-                    <UIToolRunner tool={getTool('Interactive Demo Workflow Controller')} props={demoProps} />
-                    {currentLayoutData ? (
-                        <div className="flex-grow mt-2 relative min-h-[400px]">
-                            <UIToolRunner tool={getTool('Interactive PCB Layout Tool')} props={layoutProps} />
-                        </div>
-                    ) : (
-                        renderExecutionView({ currentArtifact })
-                    )}
-                </div>
-            );
-        }
-
         if (currentLayoutData) {
+            const layoutProps = {
+                graph: currentLayoutData,
+                layoutStrategy: currentLayoutData.layoutStrategy || 'agent',
+                mode: 'pcb',
+                isLayoutInteractive: isLayoutInteractive,
+                onCommit: onCommitLayout,
+                getTool: getTool,
+            };
             return (
                 <div className="flex-grow flex flex-col min-h-0">
                    {renderWorkflowTracker()}
@@ -512,12 +460,23 @@ const KICAD_UI_PANEL_TOOL: ToolCreatorPayload = {
                 </div>
             );
         }
-
+        if (isDemoActive) {
+            const demoProps = {
+                workflow: demoWorkflow,
+                executionState: executionState,
+                currentStepIndex: currentStepIndex,
+                demoStepStatuses: demoStepStatuses,
+                onPlayPause: onPlayPause,
+                onStop: onStopDemo,
+                onStepForward: onStepForward,
+                onStepBackward: onStepBackward,
+                onRunFromStep: onRunFromStep,
+            };
+            return <UIToolRunner tool={getTool('Interactive Demo Workflow Controller')} props={demoProps} />;
+        }
         if (isGenerating) return renderExecutionView({ currentArtifact });
-        
         return renderPromptForm();
     };
-
 
     return (
         <div className="bg-gray-800/80 border-2 border-sky-500/60 rounded-xl p-4 shadow-lg flex flex-col h-full">
@@ -564,24 +523,25 @@ const KICAD_INSTALLER_TOOL: ToolCreatorPayload = {
     purpose: "To fully bootstrap the agent's hardware engineering capabilities by installing all necessary tool definitions for the client-side simulation.",
     parameters: [],
     implementationCode: `
-        // --- Step 1: Write the new Python service scripts to the server ---
+        // --- Step 1: Write the Python scripts to the server ---
         const scriptsToWrite = [
-            { name: 'kicad_service.py', content: ${JSON.stringify(KICAD_SERVICE_SCRIPT)} },
-            { name: 'kicad_service_commands.py', content: ${JSON.stringify(KICAD_SERVICE_COMMANDS_SCRIPT)} },
+            { name: 'kicad_cli.py', content: ${JSON.stringify(KICAD_CLI_MAIN_SCRIPT)} },
+            { name: 'kicad_cli_commands.py', content: ${JSON.stringify(KICAD_CLI_COMMANDS_SCRIPT)} },
             { name: 'kicad_dsn_utils.py', content: ${JSON.stringify(KICAD_DSN_UTILS_SCRIPT)} },
             { name: 'kicad_ses_utils.py', content: ${JSON.stringify(KICAD_SES_UTILS_SCRIPT)} },
         ];
         
-        console.log(\`[INFO] Writing \${scriptsToWrite.length} KiCad Python service scripts to the server...\`);
+        console.log(\`[INFO] Writing \${scriptsToWrite.length} KiCad Python scripts to the server...\`);
         if (runtime.isServerConnected()) {
             for (const script of scriptsToWrite) {
                 try {
                     await runtime.tools.run('Server File Writer', { filePath: script.name, content: script.content });
                 } catch (e) {
+                    // If writing fails, we can't proceed with creating server tools.
                     throw new Error(\`Failed to write script '\${script.name}' to server: \${e.message}\`);
                 }
             }
-            console.log('[INFO] KiCad Python service scripts written successfully.');
+            console.log('[INFO] KiCad Python scripts written successfully.');
         } else {
              console.log('[INFO] Server not connected. Skipping Python script creation. KiCad tools will be simulated.');
         }

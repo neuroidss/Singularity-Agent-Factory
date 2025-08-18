@@ -1,7 +1,7 @@
 
-
 import React, { useCallback, useRef, useEffect, useMemo } from 'react';
 import * as aiService from '../services/aiService';
+import { getMcpCache, setMcpCache } from '../services/cacheService';
 import type {
     LLMTool, EnrichedAIResponse, NewToolPayload, AIToolCall,
     RobotState, EnvironmentObject, AIModel, APIConfig, ExecuteActionFunction,
@@ -23,6 +23,8 @@ type UseAppRuntimeProps = {
     setCurrentKicadArtifact: (artifact: any) => void;
     updateWorkflowChecklist: (stepName: string, items: string[]) => void;
     kicadSimulators: any;
+    setLayoutHeuristics: React.Dispatch<React.SetStateAction<any>>;
+    addLayoutRule: (rule: any) => void;
     // Robot props
     getRobotStateForRuntime: (agentId: string) => { robot: RobotState; environment: EnvironmentObject[], personalities: AgentPersonality[] };
     setRobotStates: React.Dispatch<React.SetStateAction<RobotState[]>>;
@@ -41,6 +43,7 @@ export const useAppRuntime = (props: UseAppRuntimeProps) => {
         // Kicad
         setPcbArtifacts, kicadLogEvent, setCurrentKicadArtifact,
         updateWorkflowChecklist, kicadSimulators,
+        setLayoutHeuristics, addLayoutRule,
         // Robot
         getRobotStateForRuntime, setRobotStates, setObservationHistory, setAgentPersonalities,
         // Knowledge Graph
@@ -135,6 +138,29 @@ export const useAppRuntime = (props: UseAppRuntimeProps) => {
         
         enrichedResult.tool = toolToExecute;
         const runtime = getRuntimeApiForAgent(agentId);
+
+        // --- SPECIAL DEMO-MODE CLIENT TOOLS ---
+        if (toolToExecute.name.startsWith('Demo: ')) {
+            if (toolToExecute.name.startsWith('Demo: Add')) {
+                 const ruleType = toolToExecute.name.replace('Demo: Add ', '');
+                 const rule: any = { type: ruleType, ...toolCall.arguments, enabled: true };
+                 
+                 // The python script expects 'componentReference' but the simulation uses 'component'.
+                 if(rule.componentReference) {
+                    rule.component = rule.componentReference;
+                    delete rule.componentReference;
+                 }
+                
+                 addLayoutRule(rule);
+                 enrichedResult.executionResult = { success: true, message: `Rule '${rule.type}' added to simulation.`, rule: rule };
+                 return enrichedResult;
+            }
+            if (toolToExecute.name === 'Demo: Set Simulation Heuristics') {
+                setLayoutHeuristics(prev => ({ ...prev, ...toolCall.arguments }));
+                enrichedResult.executionResult = { success: true, message: 'Simulation heuristics updated.' };
+                return enrichedResult;
+            }
+        }
         
         // --- ROBOTICS PRIMITIVE ACTIONS ---
         if (toolToExecute.category === 'Functional' && (toolToExecute.name.startsWith('Move') || toolToExecute.name.startsWith('Turn'))) {
@@ -204,6 +230,18 @@ export const useAppRuntime = (props: UseAppRuntimeProps) => {
              enrichedResult.executionResult = { success: true, message: `Defined personality for agent ${newPersonality.id}` };
              return enrichedResult;
         }
+
+        // --- KICAD SIMULATION HEURISTICS ---
+        if (toolToExecute.name === 'Set Simulation Heuristics') {
+            try {
+                setLayoutHeuristics(prev => ({ ...prev, ...toolCall.arguments }));
+                enrichedResult.executionResult = { success: true, message: 'Simulation heuristics updated.', heuristics: toolCall.arguments };
+                return enrichedResult;
+            } catch (e) {
+                enrichedResult.executionError = e instanceof Error ? e.message : String(e);
+                return enrichedResult;
+            }
+        }
         
         // --- KICAD WORKFLOW CHECKLIST ---
         if (toolToExecute.name === 'Update Workflow Checklist') {
@@ -229,61 +267,97 @@ export const useAppRuntime = (props: UseAppRuntimeProps) => {
         
         // --- SERVER TOOL EXECUTION (REAL & SIMULATED) ---
         if (toolToExecute.category === 'Server') {
+            const sortedArgs = Object.keys(toolCall.arguments).sort().reduce((obj: Record<string, any>, key: string) => {
+                obj[key] = toolCall.arguments[key];
+                return obj;
+            }, {});
+            
+            // Caching strategy: By default, cache keys include all arguments.
+            // For project-specific KiCad tools, this is correct as 'projectName' is part of the arguments.
+            // For project-agnostic tools (like component asset generation), we must explicitly
+            // remove 'projectName' from the arguments before creating the cache key.
+            const projectAgnosticKicadTools = new Set([
+                'Define KiCad Component'
+            ]);
+            
+            let cacheKey: string;
+
+            if (projectAgnosticKicadTools.has(toolCall.name)) {
+                // For these tools, the cache key should NOT include the project name.
+                const { projectName, ...argsForCache } = sortedArgs;
+                cacheKey = `${toolCall.name}::${JSON.stringify(argsForCache)}`;
+            } else {
+                // For all other tools, the cache key is based on the full arguments.
+                // If 'projectName' is present, it will be included, ensuring project-specific caching.
+                cacheKey = `${toolCall.name}::${JSON.stringify(sortedArgs)}`;
+            }
+
+            const cachedResult = await getMcpCache(cacheKey);
+
             if (isServerConnectedRef.current) { // REAL SERVER
-                try {
-                    const response = await fetch('http://localhost:3001/api/execute', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify(toolCall)
-                    });
-                    const result = await response.json();
-                    if (!response.ok) {
-                        throw new Error(result.error || `Server responded with status ${response.status}`);
+                if (cachedResult) {
+                    logEvent(`[CACHE HIT] ✅ [SERVER] Using cached result for '${toolToExecute.name}'.`);
+                    enrichedResult.executionResult = cachedResult;
+                } else {
+                    try {
+                        const response = await fetch('http://localhost:3001/api/execute', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ name: toolCall.name, arguments: sortedArgs })
+                        });
+                        const result = await response.json();
+                        if (!response.ok) {
+                            throw new Error(result.error || `Server responded with status ${response.status}`);
+                        }
+                        enrichedResult.executionResult = result;
+                        await setMcpCache(cacheKey, result);
+                        logEvent(`[INFO] ✅ [SERVER] ${result.message || `Tool '${toolToExecute.name}' executed.`}`);
+                    } catch (execError) {
+                        enrichedResult.executionError = execError instanceof Error ? execError.message : String(execError);
+                        logEvent(`[ERROR] ❌ [SERVER] ${enrichedResult.executionError}`);
                     }
-                    enrichedResult.executionResult = result;
-                    logEvent(`[INFO] ✅ [SERVER] ${result.message || `Tool '${toolToExecute.name}' executed.`}`);
-                } catch (execError) {
-                    enrichedResult.executionError = execError instanceof Error ? execError.message : String(execError);
-                    logEvent(`[ERROR] ❌ [SERVER] ${enrichedResult.executionError}`);
                 }
             } else { // SIMULATION FALLBACK
                 try {
-                    let result;
-                    // Determine which simulator to use based on the tool's name
-                    const lowerCaseName = toolToExecute.name.toLowerCase();
-
-                    if (lowerCaseName.includes('kicad')) {
-                        const simKey = toolToExecute.name.replace(/KiCad /g, '').replace(/\\s/g, '_').toLowerCase();
-                        if (kicadSimulators[simKey]) {
-                            result = await kicadSimulators[simKey](toolCall.arguments);
-                        } else {
-                            throw new Error(`KiCad simulator for '${toolToExecute.name}' not implemented.`);
-                        }
-                    } else if (lowerCaseName.includes('strategic') || lowerCaseName.includes('directive')) {
+                    // Always run the simulator to update ephemeral React state (like kicadProjectState).
+                    // This is crucial for workflows to function correctly across page reloads when using the cache.
+                    let simResult;
+                    const simKey = toolToExecute.name.replace(/KiCad /g, '').replace(/\\s/g, '_').toLowerCase();
+                    if (toolToExecute.name.toLowerCase().includes('kicad') && kicadSimulators[simKey]) {
+                         // Pass the full sorted arguments to the simulator.
+                         simResult = await kicadSimulators[simKey](sortedArgs);
+                    } else if (toolToExecute.name.toLowerCase().includes('strategic')) {
                         if (toolToExecute.name === 'Read Strategic Memory') {
                             const graph = getKnowledgeGraphState() || { nodes: [], edges: [] };
-                            result = { success: true, message: "Read memory graph.", stdout: JSON.stringify(graph) };
+                            simResult = { success: true, message: "Read memory graph.", stdout: JSON.stringify(graph) };
                         } else if (toolToExecute.name === 'Define Strategic Directive') {
                             const graph = getKnowledgeGraphState() || { nodes: [], edges: [] };
                             const newGraph = JSON.parse(JSON.stringify(graph));
-                            const { id, label, parent } = toolCall.arguments;
+                            const { id, label, parent } = sortedArgs; // Use sorted args
                             if (newGraph.nodes.some(n => n.id === id)) throw new Error(`Directive '${id}' already exists.`);
                             newGraph.nodes.push({ id, label, type: 'directive' });
                             if (parent) newGraph.edges.push({ source: parent, target: id });
                             setKnowledgeGraphState(newGraph);
-                            result = { success: true, message: `Directive '${label}' defined.`};
+                            simResult = { success: true, message: `Directive '${label}' defined.`};
                         } else if (toolToExecute.name === 'Update Strategic Memory') {
-                             result = { success: true, message: "Strategic memory updated via simulation." };
+                             simResult = { success: true, message: "Strategic memory updated via simulation." };
                         } else {
                             throw new Error(`Strategy simulator for '${toolToExecute.name}' not implemented.`);
                         }
                     } else {
                          throw new Error(`Server tool '${toolToExecute.name}' cannot be simulated. Please start the server.`);
                     }
-                    
-                    enrichedResult.executionResult = result;
-                    const logMsg = result.stdout ? (JSON.parse(result.stdout).message || `Simulated '${toolToExecute.name}' executed.`) : (result.message || `Simulated '${toolToExecute.name}' executed.`);
-                    logEvent(`[INFO] ✅ [SIM] ${logMsg}`);
+
+                    if (cachedResult) {
+                        logEvent(`[CACHE HIT] ✅ [SIM] Using cached result for '${toolToExecute.name}'.`);
+                        enrichedResult.executionResult = cachedResult;
+                    } else {
+                        // First run: use the simulator's result and cache it.
+                        enrichedResult.executionResult = simResult;
+                        await setMcpCache(cacheKey, simResult);
+                        const logMsg = simResult.stdout ? (JSON.parse(simResult.stdout).message || `Simulated '${toolToExecute.name}' executed.`) : (simResult.message || `Simulated '${toolToExecute.name}' executed.`);
+                        logEvent(`[INFO] ✅ [SIM] ${logMsg}`);
+                    }
                 } catch (execError) {
                      enrichedResult.executionError = execError instanceof Error ? execError.message : String(execError);
                      logEvent(`[ERROR] ❌ [SIM] ${enrichedResult.executionError}`);
@@ -316,31 +390,48 @@ export const useAppRuntime = (props: UseAppRuntimeProps) => {
         // --- KICAD POST-PROCESSING ---
         if (enrichedResult.toolCall?.name?.toLowerCase().includes('kicad')) {
             const kicadResult = enrichedResult.executionResult;
-            if (kicadResult) {
-                let parsedResult = kicadResult;
-                if (typeof kicadResult.stdout === 'string') {
-                    try { parsedResult = JSON.parse(kicadResult.stdout); } catch (e) {}
-                }
+            console.log('[DEBUG] KICAD POST-PROCESSING: Raw result from tool execution:', JSON.stringify(kicadResult, null, 2));
 
-                if (parsedResult.message) kicadLogEvent(`✔️ ${parsedResult.message}`);
+            if (kicadResult && typeof kicadResult.stdout === 'string') {
+                console.log('[DEBUG] KICAD POST-PROCESSING: Found stdout string. Attempting to parse.');
+                try {
+                    const parsedStdout = JSON.parse(kicadResult.stdout);
+                    console.log('[DEBUG] KICAD POST-PROCESSING: Parsed stdout:', JSON.stringify(parsedStdout, null, 2));
+                    enrichedResult.executionResult = { ...kicadResult, ...parsedStdout };
+                } catch (e) {
+                    console.log('[DEBUG] KICAD POST-PROCESSING: Failed to parse stdout as JSON.', e);
+                }
+            }
+            
+            const finalKicadResult = enrichedResult.executionResult;
+            console.log('[DEBUG] KICAD POST-PROCESSING: Final result object:', JSON.stringify(finalKicadResult, null, 2));
+
+            if (finalKicadResult) {
+                if (finalKicadResult.message) kicadLogEvent(`✔️ ${finalKicadResult.message}`);
                 
-                if (parsedResult.artifacts) {
-                    if (parsedResult.artifacts.fabZipPath && parsedResult.artifacts.glbPath) {
+                if (finalKicadResult.rule) {
+                    console.log('[DEBUG] KICAD POST-PROCESSING: Found "rule" property. Calling addLayoutRule.');
+                    logEvent(`[RUNTIME] Propagating rule from server to client state: ${finalKicadResult.rule.type}`);
+                    addLayoutRule(finalKicadResult.rule);
+                } else {
+                     console.log('[DEBUG] KICAD POST-PROCESSING: "rule" property NOT found in final result.');
+                }
+                
+                if (finalKicadResult.artifacts) {
+                    if (finalKicadResult.artifacts.fabZipPath && finalKicadResult.artifacts.glbPath) {
                         kicadLogEvent("🎉 Fabrication successful! Displaying final 3D model.");
                          setPcbArtifacts({ 
-                            boardName: String(parsedResult.artifacts.boardName), 
-                            glbPath: String(parsedResult.artifacts.glbPath), 
-                            fabZipPath: String(parsedResult.artifacts.fabZipPath),
+                            boardName: String(finalKicadResult.artifacts.boardName), 
+                            glbPath: String(finalKicadResult.artifacts.glbPath), 
+                            fabZipPath: String(finalKicadResult.artifacts.fabZipPath),
                             serverUrl: 'http://localhost:3001'
                          });
                         setCurrentKicadArtifact(null);
                     }
                 }
                 
-                if (parsedResult.layout_data) {
-                     if (enrichedResult.executionResult) {
-                        enrichedResult.executionResult.stdout = `(Layout data received, see UI)`;
-                     }
+                if (finalKicadResult.layout_data && enrichedResult.executionResult) {
+                     enrichedResult.executionResult.stdout = `(Layout data received, see UI)`;
                 }
             }
              if(enrichedResult.toolCall?.name) { kicadLogEvent(`⚙️ Agent ${agentId} called: ${enrichedResult.toolCall.name}`); }
@@ -348,7 +439,7 @@ export const useAppRuntime = (props: UseAppRuntimeProps) => {
         }
 
         return enrichedResult;
-    }, [getRuntimeApiForAgent, runToolImplementation, logEvent, kicadLogEvent, setPcbArtifacts, setCurrentKicadArtifact, updateWorkflowChecklist, getRobotStateForRuntime, setRobotStates, setAgentPersonalities, kicadSimulators, getKnowledgeGraphState, setKnowledgeGraphState, isServerConnected]);
+    }, [getRuntimeApiForAgent, runToolImplementation, logEvent, kicadLogEvent, setPcbArtifacts, setCurrentKicadArtifact, updateWorkflowChecklist, getRobotStateForRuntime, setRobotStates, setAgentPersonalities, kicadSimulators, getKnowledgeGraphState, setKnowledgeGraphState, isServerConnected, setLayoutHeuristics, addLayoutRule]);
     
     const runtimeApi = useMemo(() => {
         const api: ExecuteActionFunction = async (...args) => executeAction(...args);
@@ -370,7 +461,7 @@ export const useAppRuntime = (props: UseAppRuntimeProps) => {
         try {
             const aiResponse = await aiService.generateResponse(prompt, systemInstruction, selectedModelRef.current, apiConfigRef.current, (progress) => logEvent(`[AI-PROGRESS] ${progress}`), relevantTools);
             if (aiResponse.toolCalls && aiResponse.toolCalls.length > 0) return aiResponse.toolCalls;
-            logEvent(`[WARN] Agent ${agentId} did not return any tool calls.`);
+            logEvent(`[WARN] Agent ${agentId} did not choose any tool calls.`);
             return null;
         } catch (error) {
             const errorMessage = error instanceof Error ? error.message : String(error);
@@ -379,5 +470,5 @@ export const useAppRuntime = (props: UseAppRuntimeProps) => {
         }
     }, [logEvent]);
 
-    return { executeAction, executeActionRef, processRequest };
+    return { executeActionRef, processRequest };
 };

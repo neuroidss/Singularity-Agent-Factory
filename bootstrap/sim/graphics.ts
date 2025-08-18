@@ -1,4 +1,5 @@
-//bootstrap/graphics.ts is typescript file with text variable with python code
+// bootstrap/sim/graphics.ts
+
 export const GraphicsClassString = `
 class Graphics {
     constructor(mountNode, THREE, OrbitControls, GLTFLoader, SVGLoader, boardOutline, scale) {
@@ -14,7 +15,6 @@ class Graphics {
         this.camera.position.set(0, 100, 150);
         this.renderer = new this.THREE.WebGLRenderer({ antialias: true });
         this.renderer.setSize(mountNode.clientWidth, mountNode.clientHeight);
-        mountNode.innerHTML = '';
         mountNode.appendChild(this.renderer.domElement);
         this.controls = new OrbitControls(this.camera, this.renderer.domElement);
         this.controls.enableDamping = true;
@@ -35,6 +35,7 @@ class Graphics {
         this.meshes = new Map();
         this.simulation = null;
         this.boardY = 0;
+        this.visibility = { placeholders: true, svg: true, glb: true };
         
         if (boardOutline) this.addBoardMesh(boardOutline, scale);
         
@@ -55,6 +56,10 @@ class Graphics {
         this.boundDoubleClick = this.handleDoubleClick.bind(this);
         this.renderer.domElement.addEventListener('dblclick', this.boundDoubleClick);
         window.addEventListener('resize', this.onWindowResize.bind(this));
+    }
+
+    updateVisibility(newVisibility) {
+        this.visibility = newVisibility;
     }
 
     updateMouse(event) {
@@ -171,8 +176,9 @@ class Graphics {
     createPlaceholderMesh(node, mode, scale) {
         let geom, mat, geomHeight;
          if (mode === 'pcb') {
-            const width = node.width * scale;
-            const depth = node.height * scale;
+            const dims = node.CrtYdDimensions || node.dimensions || { width: node.width, height: node.height };
+            const width = dims.width * scale;
+            const depth = dims.height * scale;
             const shape = node.shape || 'rectangle'; // default to rectangle if shape is missing
             const footprint = node.footprint || '';
 
@@ -227,13 +233,11 @@ class Graphics {
         const meshEntry = { placeholder: placeholder, glb: null, footprint: null };
         this.meshes.set(id, meshEntry);
 
-        // Default to showing the placeholder. It will be hidden if an SVG loads.
-        placeholder.visible = true;
-
         if (mode === 'pcb' && node.svgPath) {
-            placeholder.visible = false; // Optimistically hide placeholder while SVG loads
             const fullSvgUrl = node.svgPath.startsWith('http') ? node.svgPath : 'http://localhost:3001/' + node.svgPath;
-            this.svgLoader.load(fullSvgUrl, (data) => {
+
+            const loadSvgFromText = (svgText) => {
+                const data = this.svgLoader.parse(svgText);
                 const group = new this.THREE.Group();
                 group.userData.agentId = id;
 
@@ -249,22 +253,125 @@ class Graphics {
                 const box = new this.THREE.Box3().setFromObject(group);
                 const center = new this.THREE.Vector3();
                 box.getCenter(center);
-                group.position.sub(center); // Center the SVG geometry at its origin
-                group.scale.multiplyScalar(scale);
+                group.position.sub(center);
+                group.scale.multiplyScalar(scale * 1.05); // slightly bigger to avoid z-fighting with board
 
                 meshEntry.footprint = group;
                 this.scene.add(group);
-            },
-            undefined, // onProgress
-            (error) => { // onError
-                console.error(\`[SVG] ❌ FAILED TO LOAD SVG FOR '\${id}'. Showing placeholder.\`);
-                // If SVG fails to load, show placeholder as fallback.
-                if(meshEntry.placeholder) meshEntry.placeholder.visible = true;
-            });
-        }
+            };
 
-        if (mode === 'pcb' && node.glbPath) {
-            // ... (GLB loading remains the same, placeholder is already hidden)
+            if (window.cacheService) {
+                window.cacheService.getAssetBlob(fullSvgUrl).then(async (blob) => {
+                    if (blob) {
+                        const svgText = await blob.text();
+                        loadSvgFromText(svgText);
+                    } else {
+                        fetch(fullSvgUrl)
+                            .then(res => res.ok ? res.text() : Promise.reject(new Error(\`HTTP \${res.status}\`)))
+                            .then(svgText => {
+                                window.cacheService.setAssetBlob(fullSvgUrl, new Blob([svgText], {type: 'image/svg+xml'}));
+                                loadSvgFromText(svgText);
+                            })
+                            .catch(err => { console.error(\`[SVG] Failed to load '\${fullSvgUrl}':\`, err); });
+                    }
+                });
+            } else {
+                 this.svgLoader.load(fullSvgUrl, (data) => { /* original logic */ }, undefined, () => {});
+            }
+        }
+        
+        const assetPath = (mode === 'pcb' && node.glbPath) ? node.glbPath :
+                          (mode === 'robotics' && node.asset_glb) ? node.asset_glb : null;
+
+        if (assetPath) {
+            const fullGlbUrl = assetPath.startsWith('http') ? assetPath : 'http://localhost:3001/' + assetPath;
+            
+            const loadGltfFromBlob = (blob) => {
+                const url = URL.createObjectURL(blob);
+                this.loader.load(url, (gltf) => {
+                    const model = gltf.scene;
+                    const group = new this.THREE.Group(); 
+                    group.userData.agentId = id;
+                    group.add(model); 
+                    
+                    if (mode === 'pcb') {
+                        // Calculate bounding box of the raw model to find its bottom.
+                        const box = new this.THREE.Box3().setFromObject(model);
+                        const modelBottomY = box.min.y;
+
+                        const transforms = node.assetTransforms?.glb || {};
+                        
+                        // Apply transforms from node data if they exist.
+                        const scaleFactor = transforms.scale || 1;
+                        if (Array.isArray(scaleFactor)) {
+                            model.scale.set(scaleFactor[0], scaleFactor[1], scaleFactor[2]);
+                        } else {
+                            model.scale.set(scaleFactor, scaleFactor, scaleFactor);
+                        }
+
+                        if (transforms.rotation) {
+                            const rot = transforms.rotation; // degrees
+                            model.rotation.set(
+                                rot[0] * this.THREE.MathUtils.DEG2RAD,
+                                rot[1] * this.THREE.MathUtils.DEG2RAD,
+                                rot[2] * this.THREE.MathUtils.DEG2RAD
+                            );
+                        }
+
+                        const customOffset = transforms.offset || [0, 0, 0];
+                        // Apply custom offset, the substrate thickness correction (1.6mm in meters), and the original model bottom offset.
+                        model.position.set(
+                            customOffset[0],
+                            customOffset[1] - modelBottomY - 0.0016, 
+                            customOffset[2]
+                        );
+
+                        // Apply the global scale for KiCad units (meters) to scene units (mm-ish)
+                        // to the parent group. This will correctly scale the model and its local position.
+                        const glbScale = 1000 * scale;
+                        group.scale.set(glbScale, glbScale, glbScale);
+
+                    } else { // robotics
+                        const box = new this.THREE.Box3().setFromObject(model);
+                        const size = box.getSize(new this.THREE.Vector3());
+                        const maxDim = Math.max(size.x, size.y, size.z);
+                        const desiredSize = scale * (node.type === 'robot' ? 1.5 : 1.0);
+                        const scaleFactor = maxDim > 0 ? desiredSize / maxDim : 1.0;
+                        model.scale.set(scaleFactor, scaleFactor, scaleFactor);
+                        
+                        // Center the model and place its bottom at y=0
+                        const newBox = new this.THREE.Box3().setFromObject(model);
+                        const center = newBox.getCenter(new this.THREE.Vector3());
+                        model.position.sub(center).sub(new this.THREE.Vector3(0, newBox.min.y, 0));
+                    }
+
+
+                    if (meshEntry.placeholder) {
+                        meshEntry.placeholder.visible = false;
+                    }
+                    
+                    meshEntry.glb = group;
+                    this.scene.add(group);
+                    
+                    URL.revokeObjectURL(url);
+                }, undefined, (error) => console.error(\`[GLB] Error loading model from blob for \${id}:\`, error));
+            };
+
+            if (window.cacheService) {
+                window.cacheService.getAssetBlob(fullGlbUrl).then(async (blob) => {
+                    if (blob) {
+                        loadGltfFromBlob(blob);
+                    } else {
+                        fetch(fullGlbUrl)
+                            .then(res => res.ok ? res.blob() : Promise.reject(new Error(\`HTTP \${res.status}\`)))
+                            .then(blob => {
+                                window.cacheService.setAssetBlob(fullGlbUrl, blob);
+                                loadGltfFromBlob(blob);
+                            })
+                            .catch(err => console.error(\`[GLB] Failed to fetch and cache '\${fullGlbUrl}':\`, err));
+                    }
+                });
+            }
         }
     }
 
@@ -332,8 +439,6 @@ class Graphics {
     render() {
         if (!this.simulation) return;
         
-        const initialFootprintRot = new this.THREE.Quaternion().setFromEuler(new this.THREE.Euler(-Math.PI / 2, 0, 0));
-
         this.meshes.forEach((meshEntry, id) => {
             const pos = this.simulation.getPosition(id);
             const simRot = this.simulation.getRotation(id);
@@ -342,17 +447,20 @@ class Graphics {
             if (meshEntry.placeholder) {
                 meshEntry.placeholder.position.set(pos.x, pos.y, pos.z);
                 meshEntry.placeholder.quaternion.copy(simRot);
+                meshEntry.placeholder.visible = this.visibility.placeholders && (!meshEntry.glb || !this.visibility.glb);
             }
             if (meshEntry.glb) {
                 meshEntry.glb.position.set(pos.x, pos.y, pos.z);
                 meshEntry.glb.quaternion.copy(simRot);
+                meshEntry.glb.visible = this.visibility.glb;
             }
+            
             if (meshEntry.footprint) {
+                const zUpToYUpQuaternion = new this.THREE.Quaternion().setFromEuler(new this.THREE.Euler(-Math.PI / 2, 0, 0));
                 meshEntry.footprint.position.set(pos.x, this.boardY + 0.1, pos.z);
-                
-                // Combine the simulation's rotation (simRot) with the initial "lay-flat" rotation
-                const finalRot = new this.THREE.Quaternion().multiplyQuaternions(simRot, initialFootprintRot);
-                meshEntry.footprint.quaternion.copy(finalRot);
+                const finalFootprintRot = new this.THREE.Quaternion().multiplyQuaternions(simRot, zUpToYUpQuaternion);
+                meshEntry.footprint.quaternion.copy(finalFootprintRot);
+                meshEntry.footprint.visible = this.visibility.svg;
             }
         });
         
@@ -366,6 +474,9 @@ class Graphics {
         this.renderer.domElement.removeEventListener('pointerdown', this.boundPointerDown);
         this.renderer.domElement.removeEventListener('pointermove', this.boundPointerMove);
         this.renderer.domElement.removeEventListener('pointerup', this.boundPointerUp);
+        if (this.renderer.domElement.parentElement) {
+            this.renderer.domElement.parentElement.removeChild(this.renderer.domElement);
+        }
         if (this.renderer) this.renderer.dispose();
     }
 }

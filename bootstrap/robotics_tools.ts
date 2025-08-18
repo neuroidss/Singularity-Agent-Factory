@@ -1,4 +1,3 @@
-
 import type { ToolCreatorPayload } from '../types';
 
 export const ROBOTICS_TOOLS: ToolCreatorPayload[] = [
@@ -14,6 +13,7 @@ export const ROBOTICS_TOOLS: ToolCreatorPayload[] = [
           { name: 'startY', type: 'number', description: 'The starting Y coordinate for the agent.', required: true },
           { name: 'behaviorType', type: 'string', description: "The agent's behavior: 'patroller', 'resource_collector', or 'seek_target'.", required: true },
           { name: 'targetId', type: 'string', description: "The ID of the target object for 'seek_target' behavior (e.g., 'red_car').", required: false },
+          { name: 'asset_glb', type: 'string', description: "Optional path to a GLB model for the agent's visual representation (e.g., 'assets/robot.glb').", required: false },
         ],
         implementationCode: `
             // This is a client-side tool whose logic is handled inside useAppRuntime

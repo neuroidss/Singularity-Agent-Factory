@@ -1,4 +1,3 @@
-
 // server/server.ts
 import express from 'express';
 import cors from 'cors';
@@ -20,6 +19,9 @@ const ASSETS_DIR = path.join(__dirname, 'assets');
 // --- In-memory state ---
 let serverToolsCache: LLMTool[] = [];
 let gemmaProcess: ChildProcess | null = null;
+let kicadServiceProcess: ChildProcess | null = null;
+const KICAD_SERVICE_PORT = 8000;
+const KICAD_SERVICE_TIMEOUT = 600000; // 10 minutes for long-running tasks like autorouting
 let gemmaLogs: string[] = [];
 const MAX_LOGS = 100;
 
@@ -66,6 +68,93 @@ const addLog = (log: string) => {
     gemmaLogs.push(log);
     if (gemmaLogs.length > MAX_LOGS) {
         gemmaLogs.shift();
+    }
+};
+
+const isKicadServiceHealthy = async (): Promise<boolean> => {
+    try {
+        // Use native fetch's AbortSignal for timeouts
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 1000); // 1-second timeout
+        const response = await fetch(`http://127.0.0.1:${KICAD_SERVICE_PORT}/health`, {
+            method: 'GET',
+            signal: controller.signal,
+        });
+        clearTimeout(timeoutId);
+        return response.ok;
+    } catch (error) {
+        return false;
+    }
+};
+
+const startKicadService = async (): Promise<{ success: boolean; message: string; error?: string }> => {
+    // 1. Check if service is already running and healthy
+    if (await isKicadServiceHealthy()) {
+        if (!kicadServiceProcess) {
+            console.log('[INFO] KiCad Service is responsive but not managed by this server process (likely an orphan). Continuing without a process handle.');
+        }
+        return { success: true, message: 'KiCad Service is already running and responsive.' };
+    }
+    
+    // 2. If not healthy, and we think we have a process handle, it might be stuck.
+    if (kicadServiceProcess) {
+        console.warn('[WARN] KiCad Service process handle exists but service is unresponsive. Killing old process...');
+        kicadServiceProcess.kill('SIGKILL'); // Use SIGKILL for unresponsive processes
+        kicadServiceProcess = null;
+        await new Promise(resolve => setTimeout(resolve, 500)); // Give OS time to release port
+    }
+
+    try {
+        // 3. Spawn a new process
+        console.log('[INFO] Spawning new KiCad Service process...');
+        const pythonExecutable = path.join(__dirname, '..', 'venv', 'bin', 'python');
+        const scriptPath = path.join(SCRIPTS_DIR, 'kicad_service.py');
+        
+        const newProcess = spawn(pythonExecutable, [scriptPath], {
+            env: { ...process.env, KICAD_SERVICE_PORT: KICAD_SERVICE_PORT.toString() }
+        });
+        kicadServiceProcess = newProcess; // Assign immediately
+        
+        newProcess.stdout?.on('data', (data) => console.log(`[KiCad Service]: ${data.toString().trim()}`));
+        newProcess.stderr?.on('data', (data) => console.error(`[KiCad Service ERR]: ${data.toString().trim()}`));
+        
+        newProcess.on('close', (code) => {
+            console.log(`KiCad Service process exited with code ${code}`);
+            // Check if the current process is the one that closed
+            if (kicadServiceProcess === newProcess) {
+                kicadServiceProcess = null;
+            }
+        });
+        newProcess.on('error', (err) => {
+            console.error(`[FATAL] Failed to start KiCad Service process: ${err.message}`);
+            if (kicadServiceProcess === newProcess) {
+                kicadServiceProcess = null;
+            }
+        });
+
+        // 4. Poll for healthiness
+        const startTime = Date.now();
+        const timeout = 15000; // 15 seconds
+        while (Date.now() - startTime < timeout) {
+            if (await isKicadServiceHealthy()) {
+                console.log('[INFO] New KiCad Service is now healthy.');
+                return { success: true, message: 'KiCad Service started successfully.' };
+            }
+            if (!kicadServiceProcess) { // Process crashed during startup
+                 throw new Error("KiCad Service process exited prematurely during startup. Check service logs for errors.");
+            }
+            await new Promise(resolve => setTimeout(resolve, 500));
+        }
+
+        throw new Error(`KiCad Service failed to become healthy within ${timeout / 1000} seconds.`);
+
+    } catch (e) {
+        const err = e as Error;
+        if (kicadServiceProcess) {
+            kicadServiceProcess.kill('SIGKILL');
+            kicadServiceProcess = null;
+        }
+        return { success: false, message: `Failed to start KiCad Service: ${err.message}`, error: err.message };
     }
 };
 
@@ -193,9 +282,14 @@ app.post('/api/execute', async (req: express.Request, res: express.Response) => 
     if (name === 'System_Reset_Server_Tools') {
         console.log('[COMMAND] Received System_Reset_Server_Tools command. Deleting all custom tools...');
         try {
+            if (kicadServiceProcess) {
+                console.log('[COMMAND] Stopping KiCad service as part of reset...');
+                kicadServiceProcess.kill('SIGTERM');
+                kicadServiceProcess = null;
+            }
             await writeTools([]); // Write an empty array to the file
             serverToolsCache = []; // Clear the in-memory cache
-            return res.json({ success: true, message: 'Successfully deleted all custom server-side tools.' });
+            return res.json({ success: true, message: 'Successfully deleted all custom server-side tools and stopped services.' });
         } catch (error) {
             const err = error as Error;
             console.error('Error resetting server tools:', err.message);
@@ -203,9 +297,80 @@ app.post('/api/execute', async (req: express.Request, res: express.Response) => 
         }
     }
     
+    // --- KiCad Service Management ---
+    if (name === 'Start KiCad Service') {
+        const result = await startKicadService();
+        if (!result.success) {
+            return res.status(500).json({ error: result.error });
+        }
+        return res.json({ success: true, message: result.message });
+    }
+    if (name === 'Stop KiCad Service') {
+        if (!kicadServiceProcess) {
+             // Check if it's running but unmanaged
+            if (await isKicadServiceHealthy()) {
+                return res.status(400).json({ error: 'KiCad Service is running but not managed by this server process. It cannot be stopped from here.' });
+            }
+            return res.status(400).json({ error: 'KiCad Service is not running.' });
+        }
+        kicadServiceProcess.kill('SIGTERM');
+        kicadServiceProcess = null;
+        return res.json({ success: true, message: 'KiCad Service stopped.' });
+    }
+
     const toolToExecute = serverToolsCache.find(t => t.name === name);
     if (!toolToExecute) return res.status(404).json({ error: `Server-side tool '${name}' not found in the live registry.` });
     
+    // --- KiCad Command Proxying ---
+    const PROXY_PREFIX = 'kicad_service_proxy::';
+    if (toolToExecute.implementationCode && String(toolToExecute.implementationCode).trim().startsWith(PROXY_PREFIX)) {
+        if (!(await isKicadServiceHealthy())) {
+            console.log('[INFO] KiCad service not responsive. Attempting to start it automatically...');
+            const startResult = await startKicadService();
+            if (!startResult.success) {
+                console.error(`[ERROR] Failed to auto-start KiCad service: ${startResult.error}`);
+                return res.status(500).json({ error: `Failed to automatically start the required KiCad Service: ${startResult.error}` });
+            }
+            console.log('[SUCCESS] KiCad service auto-started successfully.');
+        }
+        
+        const commandName = toolToExecute.implementationCode.trim().substring(PROXY_PREFIX.length);
+        if (!commandName) {
+            return res.status(500).json({ error: `Could not parse command name from tool '${name}'.` });
+        }
+
+        try {
+            const serviceResponse = await fetch(`http://127.0.0.1:${KICAD_SERVICE_PORT}/command/${commandName}`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+                body: JSON.stringify(args),
+                signal: AbortSignal.timeout(KICAD_SERVICE_TIMEOUT)
+            });
+
+            const result = await serviceResponse.json();
+
+            if (!serviceResponse.ok) {
+                const detail = result.detail || { error: 'Unknown error from KiCad service' };
+                const errorMessage = typeof detail === 'string' ? detail : (detail.error || JSON.stringify(detail));
+                return res.status(serviceResponse.status).json({ error: errorMessage });
+            }
+            
+            // The result from the Python service is the definitive result.
+            // We merge it with our standard success flag. The python result may already have a message.
+            const responseToClient = { success: true, ...result };
+            
+            // Add a detailed log to show exactly what is being sent back to the client.
+            console.log(`[PROXY SUCCESS] Sending response to client for '${commandName}':`, JSON.stringify(responseToClient));
+            
+            return res.json(responseToClient);
+
+        } catch (fetchError) {
+            const err = fetchError as Error;
+            console.error(`Error proxying to KiCad Service:`, err);
+            return res.status(502).json({ error: `Could not connect to the KiCad Service. Is it running? Details: ${err.message}` });
+        }
+    }
+
     // Handle built-in server functions identified by special implementation code
     try {
         switch (toolToExecute.implementationCode) {

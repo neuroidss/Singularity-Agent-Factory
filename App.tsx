@@ -5,6 +5,7 @@ import { CORE_TOOLS, AI_MODELS } from './constants';
 import { UIToolRunner } from './components/UIToolRunner';
 import { loadStateFromStorage, saveStateToStorage } from './versioning';
 import { DEMO_WORKFLOW } from './bootstrap/demo_workflow';
+import { clearAllCaches, getAssetBlob, setAssetBlob } from './services/cacheService';
 
 import type { LLMTool, EnrichedAIResponse, AIToolCall, MainView } from './types';
 import { useAppStateManager } from './hooks/useAppStateManager';
@@ -16,10 +17,17 @@ import { useAppRuntime } from './hooks/useAppRuntime';
 import { useToolRelevance } from './hooks/useToolRelevance';
 import { useKnowledgeGraphManager } from './hooks/useKnowledgeGraphManager';
 
+// Expose cache functions globally for UI tools compiled from strings.
+// This is done at the module level to prevent race conditions where a UI tool
+// might render before the App component's useEffect hook runs.
+(window as any).cacheService = { getAssetBlob, setAssetBlob, clearAllCaches };
+
 const APP_VERSION = "v1.1.0";
 
 const App: React.FC = () => {
     // --- STATE MANAGEMENT VIA HOOKS ---
+    const [generateSvg, setGenerateSvg] = useState(true);
+    const [generateGlb, setGenerateGlb] = useState(true);
 
     // Handles general app state like user input, logs, views, and API configs
     const {
@@ -30,16 +38,16 @@ const App: React.FC = () => {
     
     useEffect(() => {
         logEvent(`[SYSTEM] Singularity Agent Factory ${APP_VERSION} initialized.`);
+        logEvent('[SYSTEM] Asset cache service initialized and available globally.');
     }, [logEvent]);
 
     // Manages client and server tools, and server connection status
-    const toolManager = useToolManager({ logEvent });
     const {
         tools, setTools, allTools, allToolsRef,
         isServerConnected,
         generateMachineReadableId,
         forceRefreshServerTools,
-    } = toolManager;
+    } = useToolManager({ logEvent });
     
     // Hook for determining tool relevance using embeddings
     const { findRelevantTools } = useToolRelevance({ allTools, logEvent });
@@ -89,7 +97,6 @@ const App: React.FC = () => {
 
     // The core execution engine. It depends on state from other managers.
     const {
-        executeAction,
         executeActionRef,
         processRequest,
     } = useAppRuntime({
@@ -105,6 +112,8 @@ const App: React.FC = () => {
         setCurrentKicadArtifact: kicadSetters.setCurrentKicadArtifact,
         updateWorkflowChecklist: kicadHandlers.updateWorkflowChecklist,
         kicadSimulators: kicadSimulators,
+        setLayoutHeuristics: kicadSetters.setLayoutHeuristics,
+        addLayoutRule: kicadHandlers.addLayoutRule,
         // Robot setters
         getRobotStateForRuntime,
         setRobotStates: robotSetters.setRobotStates,
@@ -140,7 +149,7 @@ const App: React.FC = () => {
     const installerRunRef = useRef(false);
     useEffect(() => {
         const installSuitesIfNeeded = async () => {
-            if (installerRunRef.current) return;
+            if (installerRunRef.current || !executeActionRef.current) return;
             installerRunRef.current = true; // Attempt install only once per session
             
             await new Promise(resolve => setTimeout(resolve, 100));
@@ -198,17 +207,15 @@ const App: React.FC = () => {
     }, [appState.userInput, swarmHandlers.startSwarmTask, logEvent, allTools]);
 
     const handleResetTools = useCallback(async () => {
-        if (!window.confirm('This will perform a full factory reset, deleting ALL custom tools and restoring the original toolset. This cannot be undone. Are you absolutely sure?')) {
+        if (!window.confirm('This will perform a full factory reset, deleting ALL custom tools, clearing all caches, and restoring the original toolset. This cannot be undone. Are you absolutely sure?')) {
             return;
         }
 
-        // 1. Stop any running tasks to prevent interference.
         if (swarmState.isSwarmRunning) {
             swarmHandlers.handleStopSwarm('System reset initiated.');
         }
         logEvent('[SYSTEM] Starting full system reset...');
 
-        // 2. Reset server tools first, if connected.
         if (isServerConnected) {
             logEvent('[SYSTEM] Sending reset command to server...');
             try {
@@ -222,16 +229,17 @@ const App: React.FC = () => {
             }
         }
 
-        // 3. Immediately force a refresh of the server tools state on the client.
-        // This is crucial to avoid a race condition with the installer.
         try {
-            await toolManager.forceRefreshServerTools();
+            await forceRefreshServerTools();
             logEvent('[SYSTEM] Client state synchronized with empty server.');
         } catch (e) {
             logEvent('[WARN] Could not confirm server tool state after reset. Proceeding with client reset.');
         }
 
-        // 4. Reset client-side state.
+        // Clear IndexedDB caches
+        await clearAllCaches();
+        logEvent('[SYSTEM] All browser caches have been cleared.');
+
         localStorage.removeItem('singularity-agent-factory-state');
         const { initializeTools } = await import('./hooks/useToolManager');
         setTools(initializeTools());
@@ -239,7 +247,7 @@ const App: React.FC = () => {
         installerRunRef.current = false; // Allow installer to run again after reset
         logEvent('[SUCCESS] Full system reset complete. Reinstalling default tool suites...');
     
-    }, [logEvent, setTools, appSetters, isServerConnected, executeActionRef, toolManager, swarmState.isSwarmRunning, swarmHandlers]);
+    }, [logEvent, setTools, appSetters, isServerConnected, executeActionRef, forceRefreshServerTools, swarmState.isSwarmRunning, swarmHandlers]);
 
     const getTool = (name: string): LLMTool => {
         const tool = allToolsRef.current.find(t => t.name === name);
@@ -306,11 +314,11 @@ const App: React.FC = () => {
     
     const handleStartDemo = useCallback(() => {
         if (executeActionRef.current) {
-            kicadHandlers.handleStartDemo(DEMO_WORKFLOW, executeActionRef.current);
+            kicadHandlers.handleStartDemo(executeActionRef.current, { generateSvg, generateGlb });
         } else {
             logEvent("[ERROR] Cannot start demo: execution context not ready.");
         }
-    }, [kicadHandlers, executeActionRef, logEvent]);
+    }, [kicadHandlers, executeActionRef, logEvent, generateSvg, generateGlb]);
 
     const handleStopDemo = useCallback(() => {
         kicadHandlers.handleStopDemo();
@@ -336,6 +344,11 @@ const App: React.FC = () => {
         currentArtifact: kicadState.currentKicadArtifact, 
         workflowSteps: kicadState.workflowSteps,
         demoWorkflow: DEMO_WORKFLOW,
+        // Asset Generation Props
+        generateSvg: generateSvg,
+        setGenerateSvg: setGenerateSvg,
+        generateGlb: generateGlb,
+        setGenerateGlb: setGenerateGlb,
         // New interactive demo props
         executionState: kicadState.executionState,
         currentStepIndex: kicadState.currentStepIndex,
@@ -346,8 +359,10 @@ const App: React.FC = () => {
         onRunFromStep: (index: number) => kicadHandlers.handleRunFromStep(index, executeActionRef.current),
         // Layout view props
         currentLayoutData: kicadState.currentLayoutData,
+        layoutHeuristics: kicadState.layoutHeuristics,
         isLayoutInteractive: kicadState.isLayoutInteractive,
         onCommitLayout: handleCommitLayoutAndContinue,
+        onUpdateLayout: kicadHandlers.handleUpdateLayout,
         getTool: getTool,
     };
     const agentControlProps = {
@@ -388,6 +403,7 @@ const App: React.FC = () => {
                     mode: 'robotics',
                     isLayoutInteractive: false,
                     onCommit: () => {},
+                    getTool: getTool,
                 };
                  return <UIToolRunner tool={getTool('Interactive PCB Layout Tool')} props={layoutProps} />;
             }
@@ -425,7 +441,7 @@ const App: React.FC = () => {
                     </div>
                 </main>
             ) : (
-                <main className="flex-grow grid grid-cols-1 lg:grid-cols-5 gap-6 mt-4">
+                <main className="flex-grow grid grid-cols-1 lg:grid-cols-3 gap-6 mt-4">
                     {/* Left Column */}
                     <div className="lg:col-span-2 space-y-6">
                         <UIToolRunner tool={getTool('Main View Selector')} props={{ mainView: appState.mainView, setMainView: appSetters.setMainView, isPcbResultVisible: !!kicadState.pcbArtifacts }} />
@@ -440,7 +456,7 @@ const App: React.FC = () => {
                     </div>
 
                     {/* Right Column */}
-                    <div className="lg:col-span-3 space-y-6">
+                    <div className="lg:col-span-1 space-y-6">
                          <UIToolRunner tool={getTool('Agent Status Display')} props={{ agentSwarm: swarmState.agentSwarm, isSwarmRunning: swarmState.isSwarmRunning, handleStopSwarm: swarmHandlers.handleStopSwarm, currentUserTask: swarmState.currentUserTask }} />
                          {swarmState.isSwarmRunning && <UIToolRunner tool={getTool('Active Tool Context')} props={activeToolsProps} />}
                         <UIToolRunner tool={getTool('Tool List Display')} props={{ tools: allTools, isServerConnected: isServerConnected }} />

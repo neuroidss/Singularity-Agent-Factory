@@ -6,57 +6,50 @@ import type { LLMTool, ScoredTool } from '../types';
 export const useToolRelevance = ({ allTools, logEvent }: { allTools: LLMTool[], logEvent: (msg: string) => void }) => {
     const [toolEmbeddings, setToolEmbeddings] = useState<Map<string, number[]>>(new Map());
     const isEmbeddingTools = useRef(false);
+    
+    // Using a ref to track initialization status to avoid re-runs and state dependency issues.
+    const embeddingsInitialized = useRef(false);
 
-    // This effect is responsible for embedding any tools that haven't been processed yet.
-    // It runs when the list of available tools changes.
-    useEffect(() => {
-        const updateEmbeddings = async () => {
-            // Prevent concurrent runs to avoid race conditions and unnecessary API calls.
-            if (isEmbeddingTools.current) {
-                return;
-            }
-
-            // Find tools that are present in the main list but not in our embedding cache.
-            const toolsToEmbed = allTools.filter(tool => !toolEmbeddings.has(tool.id));
+    // This function ensures all tools are embedded before use. It's now called lazily.
+    const ensureToolEmbeddings = useCallback(async () => {
+        // Exit if already initialized, or if another process is already running.
+        if (embeddingsInitialized.current || isEmbeddingTools.current) {
+            return;
+        }
+        
+        // Prevent concurrent runs.
+        isEmbeddingTools.current = true;
+        
+        // Inform the user about the one-time setup cost.
+        logEvent(`[Embeddings] First-time setup: processing ${allTools.length} tools. This may take a moment...`);
+        
+        try {
+            const textsToEmbed = allTools.map(tool => {
+                const parametersJson = JSON.stringify(tool.parameters.map(p => ({ name: p.name, type: p.type, description: p.description })));
+                return `Tool: ${tool.name}. Purpose: ${tool.purpose || 'Not specified'}. Description: ${tool.description}. Parameters: ${parametersJson}`;
+            });
             
-            if (toolsToEmbed.length === 0) {
-                return; // All tools are already embedded.
-            }
-
-            isEmbeddingTools.current = true;
-            logEvent(`[Embeddings] Found ${toolsToEmbed.length} new tools to process. Starting embedding...`);
+            // This will trigger the model load and show progress via onProgress.
+            const embeddings = await generateEmbeddings(textsToEmbed, (msg) => logEvent(`[Embeddings] ${msg}`));
             
-            try {
-                // Construct the text for each tool to be sent for embedding.
-                const textsToEmbed = toolsToEmbed.map(tool => {
-                    const parametersJson = JSON.stringify(tool.parameters.map(p => ({ name: p.name, type: p.type, description: p.description })));
-                    return `Tool: ${tool.name}. Purpose: ${tool.purpose || 'Not specified'}. Description: ${tool.description}. Parameters: ${parametersJson}`;
-                });
-                
-                const embeddings = await generateEmbeddings(textsToEmbed, (msg) => logEvent(`[Embeddings] ${msg}`));
-                
-                const newEmbeddings = new Map<string, number[]>();
-                toolsToEmbed.forEach((tool, index) => {
-                    newEmbeddings.set(tool.id, embeddings[index]);
-                });
+            const newEmbeddings = new Map<string, number[]>();
+            allTools.forEach((tool, index) => {
+                newEmbeddings.set(tool.id, embeddings[index]);
+            });
 
-                setToolEmbeddings(prevMap => {
-                    return new Map([...prevMap, ...newEmbeddings]);
-                });
+            setToolEmbeddings(newEmbeddings);
+            embeddingsInitialized.current = true; // Mark as initialized
+            logEvent(`[Embeddings] Cache created successfully. Total embedded: ${allTools.length} tools.`);
 
-                const newTotal = toolEmbeddings.size + toolsToEmbed.length;
-                logEvent(`[Embeddings] Cache updated. Total embedded: ${newTotal} of ${allTools.length} available tools.`);
-
-            } catch (e) {
-                const errorMsg = e instanceof Error ? e.message : String(e);
-                logEvent(`[ERROR] Failed to generate tool embeddings: ${errorMsg}`);
-            } finally {
-                isEmbeddingTools.current = false;
-            }
-        };
-
-        updateEmbeddings();
-    }, [allTools, logEvent, toolEmbeddings.size]);
+        } catch (e) {
+            const errorMsg = e instanceof Error ? e.message : String(e);
+            logEvent(`[ERROR] Failed to generate tool embeddings: ${errorMsg}`);
+            embeddingsInitialized.current = false; // Allow retry on next call
+            throw e; // Re-throw to fail the parent function
+        } finally {
+            isEmbeddingTools.current = false; // Release the lock
+        }
+    }, [allTools, logEvent]);
 
 
     const findRelevantTools = useCallback(async (
@@ -67,6 +60,9 @@ export const useToolRelevance = ({ allTools, logEvent }: { allTools: LLMTool[], 
         systemPromptForContext: string | null = null
     ): Promise<ScoredTool[]> => {
         try {
+            // Lazily compute tool embeddings on the first call.
+            await ensureToolEmbeddings();
+
             let contextForEmbedding = "";
             if (systemPromptForContext) {
                 contextForEmbedding += `System Goal: ${systemPromptForContext}\n\n`;
@@ -78,10 +74,13 @@ export const useToolRelevance = ({ allTools, logEvent }: { allTools: LLMTool[], 
                 return availableTools.map(tool => ({ tool, score: 0 }));
             }
 
+            // The model is now loaded, so this call should be fast.
             const [contextEmbedding] = await generateEmbeddings([contextForEmbedding], (msg) => logEvent(`[Embeddings] ${msg}`));
             
+            // Score all available tools against the context.
             const scoredTools = availableTools.map(tool => {
                 const toolEmbedding = toolEmbeddings.get(tool.id);
+                // If a tool somehow wasn't embedded (e.g., added dynamically after init), score it as 0.
                 if (!toolEmbedding) return { tool, score: 0 };
                 const score = cosineSimilarity(contextEmbedding, toolEmbedding);
                 return { tool, score };
@@ -93,6 +92,7 @@ export const useToolRelevance = ({ allTools, logEvent }: { allTools: LLMTool[], 
 
             const relevantToolIds = new Set(relevantScoredTools.map(item => item.tool.id));
             
+            // Always ensure CORE_TOOLS are available, regardless of score.
             for (const coreTool of CORE_TOOLS) {
                 if (!relevantToolIds.has(coreTool.id)) {
                     const coreToolScoreItem = scoredTools.find(st => st.tool.id === coreTool.id);
@@ -109,7 +109,7 @@ export const useToolRelevance = ({ allTools, logEvent }: { allTools: LLMTool[], 
             logEvent(`[WARN] Tool relevance search failed: ${errorMsg}. Providing all available tools as a fallback.`);
             return availableTools.map(tool => ({ tool, score: 0 }));
         }
-    }, [toolEmbeddings, logEvent]);
+    }, [toolEmbeddings, logEvent, ensureToolEmbeddings]);
 
     return { findRelevantTools };
 };
