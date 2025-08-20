@@ -1,4 +1,3 @@
-
 // bootstrap/ui_layout_heuristics_tools.ts
 import type { ToolCreatorPayload } from '../types';
 
@@ -26,9 +25,9 @@ export const LAYOUT_HEURISTICS_TUNER_TOOL_PAYLOAD: ToolCreatorPayload = {
             updateAgent(selectedAgent.id, name, parseFloat(value));
         };
         
-        const ParameterSlider = ({ name, label, min, max, step, value, onChange, unit, description }) => (
+        const ParameterSlider = ({ name, label, min, max, step, value, onChange, unit, description, displayTransform }) => (
             <div>
-                <label htmlFor={name} className="block text-sm font-medium text-gray-300">{label}: <span className="font-bold text-white">{(typeof value === 'number') ? value.toFixed(name === 'netLengthWeight' ? 3 : 2) : 'N/A'}</span> {unit}</label>
+                <label htmlFor={name} className="block text-sm font-medium text-gray-300">{label}: <span className="font-bold text-white">{displayTransform ? displayTransform(value) : ((typeof value === 'number') ? value.toFixed(name === 'netLengthWeight' ? 3 : 2) : 'N/A')}</span> {unit}</label>
                 <input
                     id={name}
                     name={name}
@@ -69,6 +68,15 @@ export const LAYOUT_HEURISTICS_TUNER_TOOL_PAYLOAD: ToolCreatorPayload = {
                     <div className="pt-3 border-t border-gray-600 space-y-4">
                         <h4 className="font-semibold text-cyan-400 -mb-2">Simulation Physics</h4>
                         <ParameterSlider name="settlingSpeed" label="Settling Speed (Damping)" min="0.8" max="0.99" step="0.01" value={params.settlingSpeed} onChange={handleParamChange} description="How quickly the simulation stabilizes. Higher is slower." />
+                        <ParameterSlider 
+                            name="repulsionRampUpTime" 
+                            label="Repulsion Ramp-Up Time" 
+                            min="60" max="600" step="10" 
+                            value={params.repulsionRampUpTime} 
+                            onChange={handleParamChange} 
+                            description="Time for repulsion force to reach full strength."
+                            displayTransform={(v) => \`\${(v/60).toFixed(1)}s\`} 
+                        />
                         {selectedAgent && (
                              <div>
                                 <h4 className="font-semibold text-indigo-300 mt-4 mb-2">Selected: {selectedAgent.id}</h4>

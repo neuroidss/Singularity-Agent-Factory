@@ -1,7 +1,12 @@
 export const AgentDebugPanelString = `
-const AgentDebugPanel = ({ agents, debugInfo, selectedId, selectedNode, onSelect, onHover }) => {
-    const [filter, setFilter] = React.useState('');
-    const filteredAgents = agents.filter(agent => agent.id.toLowerCase().includes(filter.toLowerCase()));
+const AgentDebugPanel = ({ agents, debugInfo, selectedId, selectedNode, onSelect, onHover, filter, onFilterChange }) => {
+    // The filter state is now managed by the parent component.
+    // This component simply receives the current filter value and the function to change it.
+
+    const filteredAgents = React.useMemo(() => 
+        (agents || []).filter(agent => agent.id.toLowerCase().includes((filter || '').toLowerCase())),
+        [agents, filter]
+    );
 
     const ForceBar = ({ value, max }) => {
         const percentage = max > 0 ? Math.min(100, (Math.abs(value) / max) * 100) : 0;
@@ -21,7 +26,7 @@ const AgentDebugPanel = ({ agents, debugInfo, selectedId, selectedNode, onSelect
                 type="text"
                 placeholder="Filter items..."
                 value={filter}
-                onChange={e => setFilter(e.target.value)}
+                onChange={e => onFilterChange(e.target.value)}
                 className="w-full bg-gray-900 border border-gray-600 rounded-md p-1.5 text-sm mb-2"
             />
             <div className="flex-grow overflow-y-auto pr-1">
@@ -49,7 +54,7 @@ const AgentDebugPanel = ({ agents, debugInfo, selectedId, selectedNode, onSelect
                             onMouseLeave={() => onHover(agent.id, false)}
                             className={\`mb-1 rounded-lg transition-all duration-200 \${isSelected ? 'bg-indigo-700' : 'bg-gray-700/50'}\`}
                         >
-                            <button onClick={() => onSelect(agent.id === selectedId ? null : agent.id)} className="w-full text-left p-2">
+                            <button onClick={() => onSelect(agent.id)} className="w-full text-left p-2">
                                 <div className="flex justify-between items-center">
                                     <div className="flex items-center gap-2">
                                         <span className={drcColor} title={\`DRC Status: \${drcStatus}\`}>{drcIcon}</span>

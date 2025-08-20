@@ -97,6 +97,64 @@ def add_rule_to_state(project_name, rule_object):
              fcntl.flock(lock_file, fcntl.LOCK_UN)
 
 # --- Service Command Implementations ---
+
+def get_layer_geometry_info(footprint, layer_id):
+    """
+    Calculates the bounding box and shape type for graphical items on a specific layer, EXCLUDING TEXT.
+    Returns (dimensions_dict, shape_string).
+    """
+    _initialize_libraries()
+    layer_name = pcbnew.BOARD.GetStandardLayerName(layer_id)
+    print(f"DEBUG: Processing '{footprint.GetReference()}' for layer '{layer_name}'", file=sys.stderr)
+    
+    # All graphical items can include text, shapes, etc.
+    all_graphical_items = list(footprint.GraphicalItems())
+    
+    # Filter for items ONLY on the requested layer
+    items_on_layer = [item for item in all_graphical_items if item.GetLayer() == layer_id]
+    
+    if items_on_layer:
+        print(f"DEBUG: Found {len(items_on_layer)} graphical items on layer '{layer_name}':", file=sys.stderr)
+        for i, item in enumerate(items_on_layer):
+            item_class = item.GetClass()
+            # For PCB_TEXT or subclasses, show the text content
+            text_content = f" Text='{item.GetText()}'" if hasattr(item, 'GetText') and callable(item.GetText) else ""
+            print(f"  - Item {i}: Type={item_class}{text_content}", file=sys.stderr)
+
+    # Explicitly filter for PCB_SHAPE, which excludes PCB_TEXT and PCB_FIELD.
+    shape_items = [
+        item for item in items_on_layer 
+        if isinstance(item, pcbnew.PCB_SHAPE)
+    ]
+    print(f"DEBUG: Filtered to {len(shape_items)} PCB_SHAPE items for bbox calculation.", file=sys.stderr)
+    
+    if not shape_items:
+        print(f"DEBUG: No usable geometry found on layer '{layer_name}'. Returning None.", file=sys.stderr)
+        return None, 'rectangle'
+
+    bbox = pcbnew.BOX2I()
+    is_likely_circle = False
+    if len(shape_items) == 1:
+        item = shape_items[0]
+        item_shape_enum = item.GetShape()
+        if isinstance(item, pcbnew.PCB_SHAPE) and item_shape_enum == pcbnew.S_CIRCLE:
+            is_likely_circle = True
+        elif isinstance(item, pcbnew.PAD) and item_shape_enum == pcbnew.PAD_SHAPE_CIRCLE:
+            is_likely_circle = True
+
+    for item in shape_items:
+        bbox.Merge(item.GetBoundingBox())
+
+    if not bbox.IsValid():
+        return None, 'rectangle'
+
+    if is_likely_circle:
+        diameter = max(bbox.GetWidth(), bbox.GetHeight())
+        return {'width': pcbnew.ToMM(diameter), 'height': pcbnew.ToMM(diameter)}, 'circle'
+    
+    return {'width': pcbnew.ToMM(bbox.GetWidth()), 'height': pcbnew.ToMM(bbox.GetHeight())}, 'rectangle'
+
+
 def define_component(payload):
     _initialize_libraries()
     state_file = get_state_path(payload['projectName'], 'state.json')
@@ -109,11 +167,11 @@ def define_component(payload):
             if 'components' not in state: state['components'] = []
 
             svg_path_rel, glb_path_rel = None, None
-            dimensions, fab_f_dimensions, fab_b_dimensions, crtyd_f_dimensions, crtyd_b_dimensions = None, None, None, None, None
             pins_data = []
 
             try:
                 footprint_id = payload.get('footprintIdentifier', '')
+                fp = None
                 if footprint_id and ':' in footprint_id:
                     library_name, footprint_name = footprint_id.split(':', 1)
                     
@@ -125,66 +183,88 @@ def define_component(payload):
                     custom_library_path = os.path.join(custom_footprint_dir, f"{library_name}.pretty")
 
                     library_path_to_use = None
-                    if os.path.isdir(custom_library_path):
-                        library_path_to_use = custom_library_path
-                    elif os.path.isdir(system_library_path):
-                        library_path_to_use = system_library_path
+                    if os.path.isdir(custom_library_path): library_path_to_use = custom_library_path
+                    elif os.path.isdir(system_library_path): library_path_to_use = system_library_path
                     
                     fp = pcbnew.FootprintLoad(library_path_to_use, footprint_name) if library_path_to_use else None
+                
+                # Initialize all dimension fields to None
+                fab_f_dimensions, fab_f_shape, fab_b_dimensions, fab_b_shape = None, 'rectangle', None, 'rectangle'
+                crtyd_f_dimensions, crtyd_f_shape, crtyd_b_dimensions, crtyd_b_shape = None, 'rectangle', None, 'rectangle'
+                placeholder_dimensions, placeholder_shape, drc_dimensions, drc_shape = None, 'rectangle', None, 'rectangle'
 
-                    if fp:
-                        sanitized_ref = re.sub(r'[\\\\/:*?"<>|]+', '_', payload['componentReference'])
-                        
-                        if payload.get('exportSVG'):
-                            final_svg_filename = f"{sanitized_ref}_{footprint_name}.svg"
-                            final_svg_path_abs = os.path.join(STATE_DIR, final_svg_filename)
-                            if not os.path.exists(final_svg_path_abs):
-                                cli_command = [ 'kicad-cli', 'fp', 'export', 'svg', '--footprint', footprint_name, '--output', STATE_DIR, '--layers', 'F.Fab,F.Cu', '--black-and-white', library_path_to_use ]
-                                temp_svg_path = os.path.join(STATE_DIR, f"{footprint_name}.svg")
-                                if os.path.exists(temp_svg_path): os.remove(temp_svg_path)
-                                subprocess.run(cli_command, check=True, capture_output=True, text=True)
-                                if os.path.exists(temp_svg_path):
-                                    if os.path.exists(final_svg_path_abs): os.remove(final_svg_path_abs)
-                                    os.rename(temp_svg_path, final_svg_path_abs)
-                            svg_path_rel = os.path.join('assets', final_svg_filename).replace(os.path.sep, '/')
-                        
-                        if payload.get('exportGLB'):
-                            final_glb_filename = f"{sanitized_ref}_{footprint_name}.glb"
-                            final_glb_path_abs = os.path.join(STATE_DIR, final_glb_filename)
-                            if not os.path.exists(final_glb_path_abs):
-                                temp_board = pcbnew.BOARD()
-                                temp_board.Add(fp)
-                                temp_pcb_path = os.path.join(STATE_DIR, '_temp_fp_board.kicad_pcb')
-                                pcbnew.SaveBoard(temp_pcb_path, temp_board)
-                                glb_cmd = ['kicad-cli', 'pcb', 'export', 'glb', '--output', final_glb_path_abs, '--subst-models', '--force', temp_pcb_path]
-                                subprocess.run(glb_cmd, check=True, capture_output=True, text=True)
-                                os.remove(temp_pcb_path)
-                            glb_path_rel = os.path.join('assets', final_glb_filename).replace(os.path.sep, '/')
+                if fp:
+                    is_bottom_side = fp.GetLayer() == pcbnew.B_Cu
+                    
+                    fab_f_dimensions, fab_f_shape = get_layer_geometry_info(fp, pcbnew.F_Fab)
+                    fab_b_dimensions, fab_b_shape = get_layer_geometry_info(fp, pcbnew.B_Fab)
+                    crtyd_f_dimensions, crtyd_f_shape = get_layer_geometry_info(fp, pcbnew.F_CrtYd)
+                    crtyd_b_dimensions, crtyd_b_shape = get_layer_geometry_info(fp, pcbnew.B_CrtYd)
+                    
+                    # Determine placeholder dimensions (visuals) - strictly from Fab layer
+                    placeholder_dimensions = fab_b_dimensions if is_bottom_side and fab_b_dimensions else fab_f_dimensions
+                    placeholder_shape = fab_b_shape if is_bottom_side and fab_b_dimensions else fab_f_shape
+                    
+                    # Determine DRC dimensions (physics) - from CrtYd with fallback to Fab
+                    drc_dimensions = (crtyd_b_dimensions if is_bottom_side and crtyd_b_dimensions else crtyd_f_dimensions) or \
+                                     (fab_b_dimensions if is_bottom_side and fab_b_dimensions else fab_f_dimensions)
+                    drc_shape = (crtyd_b_shape if is_bottom_side and crtyd_b_dimensions else crtyd_f_shape) or \
+                                (fab_b_shape if is_bottom_side and fab_b_dimensions else fab_f_shape)
+                    
+                    # If placeholder is still missing, fallback to overall bbox
+                    if not placeholder_dimensions:
+                        bbox = fp.GetBoundingBox(False, False)
+                        placeholder_dimensions = {'width': pcbnew.ToMM(bbox.GetWidth()), 'height': pcbnew.ToMM(bbox.GetHeight())}
+                        placeholder_shape = 'rectangle' # Can't determine shape from bbox alone
+                    
+                    # If DRC is still missing, it must equal the placeholder
+                    if not drc_dimensions:
+                        drc_dimensions = placeholder_dimensions
+                        drc_shape = placeholder_shape
 
-                        bbox = fp.GetBoundingBox(True, False)
-                        dimensions = {'width': pcbnew.ToMM(bbox.GetWidth()), 'height': pcbnew.ToMM(bbox.GetHeight())}
-                        layer_bboxes = { pcbnew.F_Fab: pcbnew.BOX2I(), pcbnew.B_Fab: pcbnew.BOX2I(), pcbnew.F_CrtYd: pcbnew.BOX2I(), pcbnew.B_CrtYd: pcbnew.BOX2I() }
-                        for item in fp.GraphicalItems():
-                            if item.GetLayer() in layer_bboxes: layer_bboxes[item.GetLayer()].Merge(item.GetBoundingBox())
-                        
-                        if layer_bboxes[pcbnew.F_Fab].IsValid(): fab_f_dimensions = {'width': pcbnew.ToMM(layer_bboxes[pcbnew.F_Fab].GetWidth()), 'height': pcbnew.ToMM(layer_bboxes[pcbnew.F_Fab].GetHeight())}
-                        if layer_bboxes[pcbnew.B_Fab].IsValid(): fab_b_dimensions = {'width': pcbnew.ToMM(layer_bboxes[pcbnew.B_Fab].GetWidth()), 'height': pcbnew.ToMM(layer_bboxes[pcbnew.B_Fab].GetHeight())}
-                        if layer_bboxes[pcbnew.F_CrtYd].IsValid(): crtyd_f_dimensions = {'width': pcbnew.ToMM(layer_bboxes[pcbnew.F_CrtYd].GetWidth()), 'height': pcbnew.ToMM(layer_bboxes[pcbnew.F_CrtYd].GetHeight())}
-                        if layer_bboxes[pcbnew.B_CrtYd].IsValid(): crtyd_b_dimensions = {'width': pcbnew.ToMM(layer_bboxes[pcbnew.B_CrtYd].GetWidth()), 'height': pcbnew.ToMM(layer_bboxes[pcbnew.B_CrtYd].GetHeight())}
+                    sanitized_ref = re.sub(r'[\\\\/:*?"<>|]+', '_', payload['componentReference'])
+                    
+                    if payload.get('exportSVG'):
+                        final_svg_filename = f"{sanitized_ref}_{footprint_name}.svg"
+                        final_svg_path_abs = os.path.join(STATE_DIR, final_svg_filename)
+                        if not os.path.exists(final_svg_path_abs):
+                            cli_command = [ 'kicad-cli', 'fp', 'export', 'svg', '--footprint', footprint_name, '--output', STATE_DIR, '--layers', 'F.Cu,F.Courtyard', '--black-and-white', library_path_to_use ]
+                            temp_svg_path = os.path.join(STATE_DIR, f"{footprint_name}.svg")
+                            if os.path.exists(temp_svg_path): os.remove(temp_svg_path)
+                            subprocess.run(cli_command, check=True, capture_output=True, text=True)
+                            if os.path.exists(temp_svg_path):
+                                if os.path.exists(final_svg_path_abs): os.remove(final_svg_path_abs)
+                                os.rename(temp_svg_path, final_svg_path_abs)
+                        svg_path_rel = os.path.join('assets', final_svg_filename).replace(os.path.sep, '/')
+                    
+                    if payload.get('exportGLB'):
+                        final_glb_filename = f"{sanitized_ref}_{footprint_name}.glb"
+                        final_glb_path_abs = os.path.join(STATE_DIR, final_glb_filename)
+                        if not os.path.exists(final_glb_path_abs):
+                            temp_board = pcbnew.BOARD()
+                            temp_board.Add(fp)
+                            temp_pcb_path = os.path.join(STATE_DIR, '_temp_fp_board.kicad_pcb')
+                            pcbnew.SaveBoard(temp_pcb_path, temp_board)
+                            glb_cmd = ['kicad-cli', 'pcb', 'export', 'glb', '--output', final_glb_path_abs, '--subst-models', '--force', temp_pcb_path]
+                            subprocess.run(glb_cmd, check=True, capture_output=True, text=True)
+                            os.remove(temp_pcb_path)
+                        glb_path_rel = os.path.join('assets', final_glb_filename).replace(os.path.sep, '/')
 
-                        for pad in fp.Pads():
-                            pad_pos = pad.GetPosition()
-                            pins_data.append({"name": str(pad.GetPadName()), "x": pcbnew.ToMM(pad_pos.x), "y": pcbnew.ToMM(pad_pos.y), "rotation": pad.GetOrientationDegrees()})
+                    for pad in fp.Pads():
+                        pad_pos = pad.GetPosition()
+                        pins_data.append({"name": str(pad.GetPadName()), "x": pcbnew.ToMM(pad_pos.x), "y": pcbnew.ToMM(pad_pos.y), "rotation": pad.GetOrientationDegrees()})
             except Exception as e:
                 print(f"WARNING: Footprint processing error for {payload.get('footprintIdentifier')}: {e}", file=sys.stderr)
 
             new_component = {
                 "ref": payload['componentReference'], "part": payload['componentDescription'], "value": payload['componentValue'],
                 "footprint": payload['footprintIdentifier'], "pin_count": payload.get('numberOfPins', 0),
-                "svgPath": svg_path_rel, "glbPath": glb_path_rel, "dimensions": dimensions,
-                "FabF_dimensions": fab_f_dimensions, "FabB_dimensions": fab_b_dimensions,
-                "CrtYdF_dimensions": crtyd_f_dimensions, "CrtYdB_dimensions": crtyd_b_dimensions,
-                "pins": pins_data, "side": payload.get('side', 'top')
+                "svgPath": svg_path_rel, "glbPath": glb_path_rel,
+                "pins": pins_data, "side": payload.get('side', 'top'),
+                "placeholder_dimensions": placeholder_dimensions,
+                "placeholder_shape": placeholder_shape,
+                "drc_dimensions": drc_dimensions,
+                "drc_shape": drc_shape
             }
             state['components'] = [c for c in state['components'] if c['ref'] != new_component['ref']]
             state['components'].append(new_component)
@@ -218,9 +298,21 @@ def define_net(payload):
     return {"message": f"Net '{payload['netName']}' defined.", "net": new_net}
 
 def add_absolute_position_constraint(payload):
-    rule = {"type": "AbsolutePositionConstraint", "component": payload['componentReference'], "x": payload['x'], "y": payload['y'], "enabled": True}
+    if 'x' not in payload and 'y' not in payload:
+        raise ValueError("Absolute Position Constraint requires at least an 'x' or a 'y' coordinate.")
+
+    rule = {"type": "AbsolutePositionConstraint", "component": payload['componentReference'], "enabled": True}
+    message_parts = []
+    if 'x' in payload:
+        rule['x'] = payload['x']
+        message_parts.append(f"x={payload['x']}")
+    if 'y' in payload:
+        rule['y'] = payload['y']
+        message_parts.append(f"y={payload['y']}")
+    
     add_rule_to_state(payload['projectName'], rule)
-    return {"message": f"Rule added: Lock {payload['componentReference']} to ({payload['x']}, {payload['y']}).", "rule": rule}
+    message = f"Rule added: Lock {payload['componentReference']} to ({', '.join(message_parts)})."
+    return {"message": message, "rule": rule}
 
 def add_proximity_constraint(payload):
     groups = json.loads(payload['groupsJSON'])
@@ -297,6 +389,7 @@ def generate_netlist(payload):
     return {"message": "Netlist generated successfully."}
 
 def create_initial_pcb(payload):
+    _initialize_libraries()
     netlist_path = get_state_path(payload['projectName'], 'netlist.net')
     pcb_path = get_state_path(payload['projectName'], 'pcb.kicad_pcb')
     if not os.path.exists(netlist_path):
@@ -312,7 +405,12 @@ def create_initial_pcb(payload):
     except subprocess.CalledProcessError as e:
         raise Exception(f"kinet2pcb failed. Stderr: {e.stderr}. Stdout: {e.stdout}") from e
     
-    return {"message": "Initial PCB created."}
+    # Load the newly created board and set its copper layer count to 4.
+    board = pcbnew.LoadBoard(pcb_path)
+    board.SetCopperLayerCount(4)
+    pcbnew.SaveBoard(pcb_path, board)
+    
+    return {"message": "Initial 4-layer PCB created."}
 
 def create_board_outline(payload):
     _initialize_libraries()
@@ -350,6 +448,61 @@ def create_board_outline(payload):
     pcbnew.SaveBoard(pcb_path, board)
     return {"message": message}
 
+def create_copper_pour(payload):
+    _initialize_libraries()
+    project_name = payload['projectName']
+    layer_name = payload['layerName']
+    net_name = payload['netName']
+    
+    pcb_path = get_state_path(project_name, 'pcb.kicad_pcb')
+    if not os.path.exists(pcb_path):
+        raise FileNotFoundError(f"PCB file for project '{project_name}' not found.")
+        
+    board = pcbnew.LoadBoard(pcb_path)
+    
+    # Get the board outline to define the zone shape
+    merged_outlines = dsn_utils.merge_all_drawings(board, 'Edge.Cuts')
+    if not merged_outlines or not merged_outlines[0]:
+        raise ValueError("Board outline (Edge.Cuts) is missing or empty. Cannot create copper pour.")
+    
+    zone_outline = pcbnew.SHAPE_POLY_SET()
+    outline_contour = zone_outline.NewOutline()
+    for point_tuple in merged_outlines[0]:
+        x, y = point_tuple
+        zone_outline.Append(int(x), int(y), outline_contour)
+
+    # Find the net
+    net_info = board.FindNet(net_name)
+    if not net_info or net_info.GetNetCode() == 0:
+        found = False
+        for code, net in board.GetNetsByNetcode().items():
+            if net.GetNetname().upper() == net_name.upper():
+                net_info = net
+                found = True
+                break
+        if not found:
+            raise ValueError(f"Net '{net_name}' not found in the board.")
+        
+    layer_id = board.GetLayerID(layer_name)
+    if layer_id == pcbnew.UNDEFINED_LAYER or not board.IsLayerEnabled(layer_id) or not pcbnew.IsCopperLayer(layer_id):
+        raise ValueError(f"Layer '{layer_name}' is not a valid, enabled copper layer.")
+        
+    zone = pcbnew.ZONE(board)
+    board.Add(zone)
+    zone.SetLayer(layer_id)
+    zone.SetNet(net_info)
+    zone.SetOutline(zone_outline)
+    
+    zone.SetMinThickness(pcbnew.FromMM(0.25))
+    zone.SetThermalReliefGap(pcbnew.FromMM(0.5))
+    zone.SetThermalReliefSpokeWidth(pcbnew.FromMM(0.5))
+    zone.SetPadConnection(pcbnew.ZONE_CONNECTION_THERMAL)
+    zone.SetIsFilled(False)
+    
+    pcbnew.SaveBoard(pcb_path, board)
+    
+    return {"message": f"Copper pour created on layer '{layer_name}' for net '{net_name}'."}
+
 def arrange_components(payload):
     _initialize_libraries()
     pcb_path = get_state_path(payload['projectName'], 'pcb.kicad_pcb')
@@ -370,9 +523,16 @@ def arrange_components(payload):
     for fp in board.Footprints():
         ref = fp.GetReference()
         state_comp = state_components_map.get(ref, {})
-        bbox = fp.GetBoundingBox(True, False)
-        width, height = pcbnew.ToMM(bbox.GetWidth()), pcbnew.ToMM(bbox.GetHeight())
-        layout_data["nodes"].append({"id": ref, "label": ref, "x": pcbnew.ToMM(fp.GetPosition().x), "y": pcbnew.ToMM(fp.GetPosition().y), "rotation": fp.GetOrientationDegrees(), "width": width, "height": height, "svgPath": state_comp.get('svgPath'), "glbPath": state_comp.get('glbPath'), "pins": state_comp.get('pins', []), "side": state_comp.get('side', 'top'), "CrtYdDimensions": state_comp.get('CrtYdF_dimensions') })
+        layout_data["nodes"].append({
+            "id": ref, "label": ref, "x": pcbnew.ToMM(fp.GetPosition().x), "y": pcbnew.ToMM(fp.GetPosition().y),
+            "rotation": fp.GetOrientationDegrees(), "side": "bottom" if fp.IsFlipped() else "top",
+            "svgPath": state_comp.get('svgPath'), "glbPath": state_comp.get('glbPath'),
+            "pins": state_comp.get('pins', []), "footprint": state_comp.get('footprint'),
+            "placeholder_dimensions": state_comp.get('placeholder_dimensions'),
+            "placeholder_shape": state_comp.get('placeholder_shape'),
+            "drc_dimensions": state_comp.get('drc_dimensions'),
+            "drc_shape": state_comp.get('drc_shape'),
+        })
     for net in state_data.get('nets', []):
         pins_on_net = net.get('pins', [])
         if len(pins_on_net) > 1:
@@ -433,7 +593,9 @@ def autoroute_pcb(payload):
     for line in iter(proc.stderr.readline, ''):
         print("FREEROUTING:", line.strip(), file=sys.stderr)
         if auto_stopper(line.strip()):
-            proc.terminate(); stop_routing = True; break
+            proc.terminate()
+            stop_routing = True
+            break
     
     if not stop_routing: proc.wait()
 
@@ -448,10 +610,12 @@ def autoroute_pcb(payload):
     # SVG Plotting
     final_svg_path_abs = get_state_path(payload['projectName'], 'routed.svg')
     pctl = pcbnew.PLOT_CONTROLLER(board)
-    popts = pctl.GetPlotOptions(); popts.SetOutputDirectory(STATE_DIR)
+    popts = pctl.GetPlotOptions()
+    popts.SetOutputDirectory(STATE_DIR)
     pctl.OpenPlotfile("routed", pcbnew.PLOT_FORMAT_SVG, "Routed board")
     for layer_id in [pcbnew.F_Cu, pcbnew.B_Cu, pcbnew.Edge_Cuts, pcbnew.F_SilkS, pcbnew.B_SilkS, pcbnew.F_Mask, pcbnew.B_Mask]:
-        pctl.SetLayer(layer_id); pctl.PlotLayer()
+        pctl.SetLayer(layer_id)
+        pctl.PlotLayer()
     pctl.ClosePlot()
     temp_svg_path = os.path.join(STATE_DIR, "routed.svg")
     if os.path.exists(temp_svg_path):

@@ -26,6 +26,8 @@ const RULE_DEFINITIONS = {
     'SymmetricalPairConstraint': [{ name: 'pairJSON', type: 'textarea', placeholder: '["J_A", "J_B"]' }, { name: 'axis', type: 'select', options: ['vertical', 'horizontal'] }, { name: 'separation', type: 'number', placeholder: '17.78' }],
 };
 
+// By memoizing the form, we prevent it from re-rendering unless its props change.
+// The key is to ensure the \`onAdd\` and \`onCancel\` props are stable function references.
 const AddRuleForm = React.memo(({ onAdd, onCancel }) => {
     const [ruleType, setRuleType] = React.useState('ProximityConstraint');
     const [args, setArgs] = React.useState({});
@@ -42,7 +44,6 @@ const AddRuleForm = React.memo(({ onAdd, onCancel }) => {
     const handleSubmit = (e) => {
         e.preventDefault();
         const newRule = { type: ruleType, enabled: true, ...args };
-
         if (newRule.type === 'AbsolutePositionConstraint' && newRule.componentReference) {
             newRule.component = newRule.componentReference;
             delete newRule.componentReference;
@@ -51,7 +52,6 @@ const AddRuleForm = React.memo(({ onAdd, onCancel }) => {
             newRule.component = newRule.componentReference;
             delete newRule.componentReference;
         }
-
         onAdd(newRule);
         setArgs({}); // Clear form for next entry
     };
@@ -76,24 +76,38 @@ const AddRuleForm = React.memo(({ onAdd, onCancel }) => {
     );
 });
 
-// The state for showing the form is managed here.
 const [showForm, setShowForm] = React.useState(false);
 
+// *** THE FIX: STABILIZE ALL CALLBACKS ***
+// We use refs to hold the latest version of props that change on every render.
+// This allows our useCallback hooks to have stable identities because they don't
+// need to list the changing props in their dependency arrays.
+const onUpdateRulesRef = React.useRef(props.onUpdateRules);
+onUpdateRulesRef.current = props.onUpdateRules; // Update ref on each render
+
+const rulesRef = React.useRef(props.rules);
+rulesRef.current = props.rules; // Update ref on each render
+
+// These callbacks are now stable (created only once) because their dependency array is empty.
+// They use the refs to access the *current* props when they are called.
 const handleToggle = React.useCallback((index) => {
-    const newRules = [...(props.rules || [])];
+    const newRules = [...(rulesRef.current || [])];
     newRules[index].enabled = !newRules[index].enabled;
-    props.onUpdateRules(newRules);
-}, [props.rules, props.onUpdateRules]);
+    onUpdateRulesRef.current(newRules);
+}, []); // Empty dependency array means this function reference is stable
 
 const handleDelete = React.useCallback((index) => {
-    const newRules = (props.rules || []).filter((_, i) => i !== index);
-    props.onUpdateRules(newRules);
-}, [props.rules, props.onUpdateRules]);
+    const newRules = (rulesRef.current || []).filter((_, i) => i !== index);
+    onUpdateRulesRef.current(newRules);
+}, []); // Empty dependency array means this function reference is stable
 
 const handleAddRule = React.useCallback((newRule) => {
-    props.onUpdateRules([...(props.rules || []), newRule]);
-    // Do not close the form after adding a rule. This improves UX for adding multiple rules.
-}, [props.rules, props.onUpdateRules]);
+    onUpdateRulesRef.current([...(rulesRef.current || []), newRule]);
+}, []); // Empty dependency array means this function reference is stable
+
+const handleCancelForm = React.useCallback(() => {
+    setShowForm(false);
+}, []); // Empty dependency array means this function reference is stable
 
 const formatRuleValue = (value) => {
     if (Array.isArray(value)) return \`[\${value.join(', ')}]\`;
@@ -108,7 +122,7 @@ return (
             <button onClick={() => setShowForm(prev => !prev)} className="bg-cyan-600 hover:bg-cyan-500 text-white font-bold py-1 px-2 rounded">{showForm ? '−' : '+'}</button>
         </div>
         
-        {showForm && <AddRuleForm onAdd={handleAddRule} onCancel={() => setShowForm(false)} />}
+        {showForm && <AddRuleForm onAdd={handleAddRule} onCancel={handleCancelForm} />}
         
         <div className="flex-grow overflow-y-auto pr-1 space-y-2">
             {(props.rules || []).map((rule, index) => (

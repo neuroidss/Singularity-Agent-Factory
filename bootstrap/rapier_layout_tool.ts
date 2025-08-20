@@ -1,8 +1,19 @@
+// bootstrap/rapier_layout_tool.ts
 import React from 'react';
 import type { ToolCreatorPayload } from '../types';
 import { GraphicsClassString } from './sim/graphics';
-import { AgentSimulationClassString } from './sim/agent_simulation';
+import { AgentSimulationCoreString } from './sim/agent_simulation';
+import { ForceSimulationFunctionsString } from './sim/simulation_forces';
+import { CollisionSimulationFunctionsString } from './sim/simulation_collisions';
 import { AgentDebugPanelString } from './sim/ui_panels';
+
+const FullAgentSimulationClassString = `
+class AgentSimulation {
+    ${AgentSimulationCoreString}
+    ${ForceSimulationFunctionsString}
+    ${CollisionSimulationFunctionsString}
+}
+`;
 
 const PCB_LAYOUT_TOOL: ToolCreatorPayload = {
     name: 'Interactive PCB Layout Tool',
@@ -24,11 +35,14 @@ const PCB_LAYOUT_TOOL: ToolCreatorPayload = {
         // --- Injected Module Code ---
         ${AgentDebugPanelString}
         ${GraphicsClassString}
-        ${AgentSimulationClassString}
+        ${FullAgentSimulationClassString}
         // --- End Injected Code ---
 
         const mountRef = React.useRef(null);
         const simRef = React.useRef(null); // Will hold { sim, graphics }
+        
+        // ** THE FIX for Inspector: Lift state up to the parent component **
+        const [inspectorFilter, setInspectorFilter] = React.useState('');
         
         const [selectedAgentId, setSelectedAgentId] = React.useState(null);
         const [agentDebugInfo, setAgentDebugInfo] = React.useState({});
@@ -37,6 +51,7 @@ const PCB_LAYOUT_TOOL: ToolCreatorPayload = {
 
         const [visibility, setVisibility] = React.useState({
             placeholders: true,
+            courtyards: true,
             svg: true,
             glb: true,
         });
@@ -45,6 +60,7 @@ const PCB_LAYOUT_TOOL: ToolCreatorPayload = {
             netLengthWeight: 0.01,
             boardEdgeConstraint: 10.0,
             settlingSpeed: 0.9,
+            repulsionRampUpTime: 300, // Time in frames (60 frames ~ 1s)
             // Rule strengths
             proximityStrength: 0.2,
             symmetryStrength: 2.0,
@@ -185,6 +201,33 @@ const PCB_LAYOUT_TOOL: ToolCreatorPayload = {
 
 
         // --- User Interaction & Auto-Commit Logic ---
+        
+        // ** THE FIX for Inspector Callbacks: Stabilize them so they don't cause re-renders **
+        const selectedAgentIdRef = React.useRef(selectedAgentId);
+        selectedAgentIdRef.current = selectedAgentId;
+        const setSelectedAgentIdRef = React.useRef(setSelectedAgentId);
+        setSelectedAgentIdRef.current = setSelectedAgentId;
+
+        const handleAgentHover = React.useCallback((agentId, isHovering) => {
+            if (simRef.current?.graphics) {
+                simRef.current.graphics.highlightMesh(agentId, isHovering);
+            }
+        }, []);
+        
+        const handleAgentSelect = React.useCallback((agentId) => {
+            if (!simRef.current?.graphics) return;
+            const currentSelectedId = selectedAgentIdRef.current;
+            const newId = currentSelectedId === agentId ? null : agentId;
+            
+            if (currentSelectedId) simRef.current.graphics.selectMesh(currentSelectedId, false);
+            if (newId) {
+                simRef.current.graphics.selectMesh(newId, true);
+                simRef.current.graphics.focusOn(newId);
+            }
+            setSelectedAgentIdRef.current(newId);
+        }, []);
+
+
         const handleCommit = React.useCallback(() => {
             if (onCommit && simRef.current?.sim) {
                 const finalPositions = simRef.current.sim.getFinalPositions();
@@ -192,6 +235,8 @@ const PCB_LAYOUT_TOOL: ToolCreatorPayload = {
             }
         }, [onCommit]);
         
+        // ** THE FIX for Layout Rules Editor: Pass a stable callback **
+        // onUpdateLayout is stable from props, so this callback is also stable.
         const handleUpdateRules = React.useCallback((newRules) => {
             if (onUpdateLayout) {
                 onUpdateLayout(prevLayout => ({
@@ -225,23 +270,6 @@ const PCB_LAYOUT_TOOL: ToolCreatorPayload = {
             }
         }, [isLayoutInteractive, isAutoCommitDone, handleCommit]);
         
-        const handleAgentHover = React.useCallback((agentId, isHovering) => {
-            if (simRef.current?.graphics) {
-                simRef.current.graphics.highlightMesh(agentId, isHovering);
-            }
-        }, []);
-        
-        const handleAgentSelect = React.useCallback((agentId) => {
-            if (!simRef.current?.graphics) return;
-            const newId = selectedAgentId === agentId ? null : agentId;
-            if(selectedAgentId) simRef.current.graphics.selectMesh(selectedAgentId, false);
-            if(newId) {
-                simRef.current.graphics.selectMesh(newId, true);
-                simRef.current.graphics.focusOn(newId);
-            }
-            setSelectedAgentId(newId);
-        }, [selectedAgentId]);
-
         const VisibilityPanel = () => (
             <div className="bg-gray-800/70 backdrop-blur-sm border border-gray-700 rounded-xl p-2 text-white">
                 <h3 className="text-lg font-bold text-cyan-300 mb-2 text-center">Visibility</h3>
@@ -274,6 +302,8 @@ const PCB_LAYOUT_TOOL: ToolCreatorPayload = {
                         selectedNode={selectedNode}
                         onSelect={handleAgentSelect}
                         onHover={handleAgentHover}
+                        filter={inspectorFilter}
+                        onFilterChange={setInspectorFilter}
                     />
                 </div>
                 <div className="flex-grow h-64 md:h-full relative">

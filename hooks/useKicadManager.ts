@@ -1,4 +1,5 @@
 
+
 import React, { useState, useCallback, useRef, useEffect, useMemo } from 'react';
 import type { WorkflowStep, AIToolCall, EnrichedAIResponse, LLMTool, KnowledgeGraphNode, KnowledgeGraphEdge, MainView, KnowledgeGraph, ExecuteActionFunction } from '../types';
 import { DEMO_WORKFLOW } from '../bootstrap/demo_workflow';
@@ -238,11 +239,6 @@ export const useKicadManager = (props: UseKicadManagerProps) => {
     }, []);
     
     // --- Interactive Demo Handlers ---
-
-    const getFootprintShape = (footprint_string: string | undefined): 'circle' | 'rectangle' => {
-        if (footprint_string && footprint_string.includes('pogo_pin')) return 'circle';
-        return 'rectangle';
-    };
     
     const executeDemoStep = useCallback(async (index: number) => {
         const actionExecutor = executeActionRef.current;
@@ -295,17 +291,17 @@ export const useKicadManager = (props: UseKicadManagerProps) => {
             const newNode: KnowledgeGraphNode = {
                 id: newComp.ref,
                 label: newComp.ref,
-                width: newComp.dimensions?.width || 2,
-                height: newComp.dimensions?.height || 2,
-                dimensions: newComp.dimensions,
-                CrtYdDimensions: newComp.CrtYdF_dimensions,
-                shape: getFootprintShape(newComp.footprint),
+                placeholder_dimensions: newComp.placeholder_dimensions,
+                placeholder_shape: newComp.placeholder_shape,
+                drc_dimensions: newComp.drc_dimensions,
+                drc_shape: newComp.drc_shape,
                 svgPath: newComp.svgPath,
                 glbPath: newComp.glbPath,
                 pins: newComp.pins,
                 side: newComp.side,
                 footprint: newComp.footprint,
             };
+
             const logMessage = `[SIM] Adding component: ${newNode.id}`;
             logKicadEvent(logMessage);
             setCurrentLayoutData(prev => {
@@ -445,13 +441,15 @@ export const useKicadManager = (props: UseKicadManagerProps) => {
     
         const defineComponentSim = (args: any) => {
             const { componentReference, footprintIdentifier, ...rest } = args;
-            const dims = { width: 2.54, height: 2.54 };
-            const pins_data = Array.from({ length: args.numberOfPins || 0 }, (_, i) => ({ name: `${i + 1}`, x: 0, y: 0, rotation: 0 }));
-            const newComp = { ref: componentReference, ...rest, footprint: footprintIdentifier, pins: pins_data };
+            // The python script now handles all dimension logic, so we just pass it through here
+            const newComp = { ref: componentReference, ...rest, footprint: footprintIdentifier };
             const newNode: KnowledgeGraphNode = {
-                id: newComp.ref, label: newComp.ref, width: dims.width, height: dims.height,
-                shape: getFootprintShape(newComp.footprint), svgPath: null, glbPath: null,
-                pins: newComp.pins, side: newComp.side, footprint: newComp.footprint,
+                id: newComp.ref, label: newComp.ref, 
+                placeholder_dimensions: newComp.placeholder_dimensions,
+                placeholder_shape: newComp.placeholder_shape,
+                drc_dimensions: newComp.drc_dimensions,
+                drc_shape: newComp.drc_shape,
+                ...newComp
             };
             return { success: true, message: `[SIM] Component '${componentReference}' defined.`, component: newComp, newNode: newNode };
         };

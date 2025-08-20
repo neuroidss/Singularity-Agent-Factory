@@ -1,5 +1,3 @@
-
-
 // bootstrap/kicad_tools.ts
 
 import type { ToolCreatorPayload } from '../types';
@@ -31,15 +29,15 @@ const KICAD_TOOL_DEFINITIONS: ToolCreatorPayload[] = [
     // --- Original Tool Definitions (now use an explicit proxy signal) ---
     {
         name: 'Add Absolute Position Constraint',
-        description: 'Fixes an electronic component to an absolute X, Y coordinate on the PCB. Essential for connectors, mounting holes, or parts with fixed mechanical constraints in the final device assembly.',
+        description: 'Fixes an electronic component to an absolute coordinate on the PCB along one or both axes. For example, you can lock a component to y=9, allowing its x-position to be determined by other forces like symmetry. Essential for connectors or parts with fixed mechanical constraints.',
         category: 'Server',
         executionEnvironment: 'Server',
         purpose: "To lock critical components to a specific physical location on the board, ensuring mechanical alignment with an enclosure or other hardware, which is a key step in designing a manufacturable product.",
         parameters: [
             { name: 'projectName', type: 'string', description: 'The unique name for this hardware project.', required: true },
             { name: 'componentReference', type: 'string', description: 'The reference designator of the component to fix (e.g., "U1").', required: true },
-            { name: 'x', type: 'number', description: 'The X coordinate in millimeters.', required: true },
-            { name: 'y', type: 'number', description: 'The Y coordinate in millimeters.', required: true },
+            { name: 'x', type: 'number', description: 'Optional: The X coordinate in millimeters to lock the component to.', required: false },
+            { name: 'y', type: 'number', description: 'Optional: The Y coordinate in millimeters to lock the component to.', required: false },
         ],
         implementationCode: 'kicad_service_proxy::add_absolute_position_constraint'
     },
@@ -181,7 +179,7 @@ const KICAD_TOOL_DEFINITIONS: ToolCreatorPayload[] = [
     },
     {
         name: 'Create Initial PCB',
-        description: 'Creates a blank .kicad_pcb file and imports the generated netlist, placing all component footprints at the origin, ready for arrangement.',
+        description: 'Creates a blank .kicad_pcb file and imports the generated netlist, placing all component footprints at the origin, ready for arrangement. Creates a 4-layer board by default.',
         category: 'Server',
         executionEnvironment: 'Server',
         purpose: 'To create the physical board file and load all the component footprints into it, officially starting the physical design phase of the hardware project.',
@@ -202,6 +200,19 @@ const KICAD_TOOL_DEFINITIONS: ToolCreatorPayload[] = [
             { name: 'diameterMillimeters', type: 'number', description: "For 'circle' shape, the desired diameter in mm. If omitted, it will auto-size to fit components.", required: false },
         ],
         implementationCode: 'kicad_service_proxy::create_board_outline'
+    },
+    {
+        name: 'Create Copper Pour',
+        description: 'Creates a copper pour (zone) connected to a specified net on a specified layer. The zone will fill the entire board outline.',
+        category: 'Server',
+        executionEnvironment: 'Server',
+        purpose: 'To create large copper areas, typically for ground (GND) or power planes, which improves signal integrity, provides shielding, and simplifies routing for the autorouter.',
+        parameters: [
+            { name: 'projectName', type: 'string', description: 'The unique name for this hardware project.', required: true },
+            { name: 'layerName', type: 'string', description: 'The name of the copper layer to create the pour on (e.g., "F.Cu", "In1.Cu", "B.Cu").', required: true },
+            { name: 'netName', type: 'string', description: 'The name of the net to connect the pour to (e.g., "GND", "VCC").', required: true },
+        ],
+        implementationCode: 'kicad_service_proxy::create_copper_pour'
     },
     {
         name: 'Arrange Components',
@@ -271,8 +282,7 @@ const KICAD_DESIGN_PROMPT_TEXT = `I need a PCB design for a FreeEEG8-alpha inspi
 
 Here is the plan:
 
-1.  **Start the KiCad Service:** The first step is to start the high-performance KiCad service.
-2.  **Component Definition:**
+1.  **Component Definition:**
     *   ADC 'U1': 'ADS131M08', footprint: 'Package_QFP:LQFP-32_5x5mm_P0.5mm', 32 pins.
     *   AVDD LDO 'U2': 'LP5907QMFX-3.3Q1', footprint: 'Package_TO_SOT_SMD:SOT-23-5', 5 pins.
     *   DVDD LDO 'U3': 'LP5907QMFX-3.3Q1', footprint: 'Package_TO_SOT_SMD:SOT-23-5', 5 pins.
@@ -282,7 +292,7 @@ Here is the plan:
     *   XIAO Headers 'J_XIAO_1', 'J_XIAO_2', footprint: 'Connector_PinHeader_2.54mm:PinHeader_1x07_P2.54mm_Vertical', 7 pins each.
     *   Pogo Pins 'J1'-'J10', footprint: 'freeeeg8-alpha:pogo_pin_d5x10mm_smd', 1 pin each, side: bottom.
 
-3.  **Net Definition:**
+2.  **Net Definition:**
     *   A net named 'GND' connecting pins: ["U1-13", "U1-25", "U1-28", "J10-1", "C1-1", "C2-1", "C3-2", "C4-2", "U2-2", "C5-2", "C6-1", "C7-1", "C8-2", "J_XIAO_2-6", "X1-2"]
     *   A net named 'AVDD' connecting pins: ["U1-15", "C3-1", "U2-5", "C5-1"]
     *   A net named 'DVDD' connecting pins: ["U1-26", "C4-1", "U3-5", "C7-2", "X1-4"]
@@ -306,7 +316,7 @@ Here is the plan:
     *   A net named 'AIN7P' connecting pins: ["J8-1", "U1-12"]
     *   A net named 'AINREF' connecting pins: ["J9-1", "U1-2", "U1-3", "U1-6", "U1-7", "U1-10", "U1-11", "U1-30", "U1-31"]
 
-4.  **Layout Rules:**
+3.  **Layout Rules:**
     *   The pogo pins (J1 to J10) should be on the 'bottom' layer, arranged in a circle with a radius of 12.5mm.
     *   All other than pogo pins components should be on the 'top' layer.
     *   The core components 'U1' and 'X1' must be aligned to the central vertical axis.
@@ -314,13 +324,13 @@ Here is the plan:
     *   To ensure good power integrity, the decoupling capacitors must be kept close to the ADC. Define proximity groups for [U1, C1], [U1, C2], [U1, C3], and [U1, C4].
     *   Create proximity rules to place decoupling capacitors C1-C4 near ADC U1, C5-C6 near LDO U2, and C7-C8 near LDO U3.
 
-5.  **Board Generation:**
+4.  **Board Generation:**
     *   Generate netlist, create initial PCB, create a circular 35mm diameter outline.
 
-6.  Arrange the components using the 'agent' arrangement strategy, which respects the defined layout rules, and wait for user input for final adjustments.
-7.  Autoroute the PCB.
-8.  Export the final fabrication files.
-9.  Stop the KiCad service.
+5.  Arrange the components using the 'agent' arrangement strategy, which respects the defined layout rules, and wait for user input for final adjustments.
+6.  Autoroute the PCB.
+7.  Export the final fabrication files.
+
     `;
 
 const KICAD_UI_PANEL_TOOL: ToolCreatorPayload = {
@@ -465,44 +475,17 @@ const KICAD_UI_PANEL_TOOL: ToolCreatorPayload = {
     )};
     
     const renderContent = () => {
-        const layoutProps = {
-            graph: currentLayoutData,
-            layoutStrategy: currentLayoutData?.layoutStrategy || 'agent',
-            mode: 'pcb',
-            isLayoutInteractive: isLayoutInteractive,
-            onCommit: onCommitLayout,
-            onUpdateLayout: onUpdateLayout,
-            getTool: getTool,
-            heuristics: layoutHeuristics,
-        };
-        const demoProps = {
-            workflow: demoWorkflow,
-            executionState: executionState,
-            currentStepIndex: currentStepIndex,
-            demoStepStatuses: demoStepStatuses,
-            onPlayPause: onPlayPause,
-            onStop: onStopDemo,
-            onStepForward: onStepForward,
-            onStepBackward: onStepBackward,
-            onRunFromStep: onRunFromStep,
-        };
-
-        if (isDemoActive) {
-            return (
-                <div className="flex-grow flex flex-col min-h-0 gap-4">
-                    <UIToolRunner tool={getTool('Interactive Demo Workflow Controller')} props={demoProps} />
-                    {currentLayoutData ? (
-                        <div className="flex-grow mt-2 relative min-h-[400px]">
-                            <UIToolRunner tool={getTool('Interactive PCB Layout Tool')} props={layoutProps} />
-                        </div>
-                    ) : (
-                        renderExecutionView({ currentArtifact })
-                    )}
-                </div>
-            );
-        }
-
         if (currentLayoutData) {
+            const layoutProps = {
+                graph: currentLayoutData,
+                layoutStrategy: currentLayoutData.layoutStrategy || 'agent',
+                mode: 'pcb',
+                isLayoutInteractive: isLayoutInteractive,
+                onCommit: onCommitLayout,
+                onUpdateLayout: onUpdateLayout,
+                getTool: getTool,
+                heuristics: layoutHeuristics,
+            };
             return (
                 <div className="flex-grow flex flex-col min-h-0">
                    {renderWorkflowTracker()}
@@ -512,12 +495,23 @@ const KICAD_UI_PANEL_TOOL: ToolCreatorPayload = {
                 </div>
             );
         }
-
+        if (isDemoActive) {
+            const demoProps = {
+                workflow: demoWorkflow,
+                executionState: executionState,
+                currentStepIndex: currentStepIndex,
+                demoStepStatuses: demoStepStatuses,
+                onPlayPause: onPlayPause,
+                onStop: onStopDemo,
+                onStepForward: onStepForward,
+                onStepBackward: onStepBackward,
+                onRunFromStep: onRunFromStep,
+            };
+            return <UIToolRunner tool={getTool('Interactive Demo Workflow Controller')} props={demoProps} />;
+        }
         if (isGenerating) return renderExecutionView({ currentArtifact });
-        
         return renderPromptForm();
     };
-
 
     return (
         <div className="bg-gray-800/80 border-2 border-sky-500/60 rounded-xl p-4 shadow-lg flex flex-col h-full">

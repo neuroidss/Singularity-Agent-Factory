@@ -30,12 +30,28 @@ class Graphics {
         this.envMaterial = new this.THREE.MeshStandardMaterial({ color: 0x6b7280 });
         this.highlightMaterial = new this.THREE.MeshStandardMaterial({ color: 0xffff00, emissive: 0xffff00, emissiveIntensity: 0.5 });
         this.selectMaterial = new this.THREE.MeshStandardMaterial({ color: 0x00ff00, emissive: 0x00ff00, emissiveIntensity: 0.5 });
-        this.footprintMaterial = new this.THREE.MeshBasicMaterial({ color: 0x00ff00, side: this.THREE.DoubleSide, transparent: true, opacity: 0.5 });
+        
+        this.materials = {
+            footprint: {
+                top: new this.THREE.MeshBasicMaterial({ color: 0xff0000, side: this.THREE.DoubleSide, transparent: true, opacity: 0.5 }),
+                bottom: new this.THREE.MeshBasicMaterial({ color: 0x0000ff, side: this.THREE.DoubleSide, transparent: true, opacity: 0.5 }),
+            },
+            courtyard: {
+                top: {
+                    fill: new this.THREE.MeshBasicMaterial({ color: 0xffc0cb, transparent: true, opacity: 0.1, side: this.THREE.DoubleSide }),
+                    line: new this.THREE.LineBasicMaterial({ color: 0xffc0cb, linewidth: 2 })
+                },
+                bottom: {
+                    fill: new this.THREE.MeshBasicMaterial({ color: 0x00ffff, transparent: true, opacity: 0.1, side: this.THREE.DoubleSide }),
+                    line: new this.THREE.LineBasicMaterial({ color: 0x00ffff, linewidth: 2 })
+                }
+            }
+        };
 
         this.meshes = new Map();
         this.simulation = null;
         this.boardY = 0;
-        this.visibility = { placeholders: true, svg: true, glb: true };
+        this.visibility = { placeholders: true, courtyards: true, svg: true, glb: true };
         
         if (boardOutline) this.addBoardMesh(boardOutline, scale);
         
@@ -176,20 +192,23 @@ class Graphics {
     createPlaceholderMesh(node, mode, scale) {
         let geom, mat, geomHeight;
          if (mode === 'pcb') {
-            const dims = node.CrtYdDimensions || node.dimensions || { width: node.width, height: node.height };
-            const width = dims.width * scale;
-            const depth = dims.height * scale;
-            const shape = node.shape || 'rectangle'; // default to rectangle if shape is missing
-            const footprint = node.footprint || '';
+            const { placeholder_dimensions, placeholder_shape, footprint, side } = node;
+            const isBottom = side === 'bottom';
+            
+            const visDims = placeholder_dimensions || { width: 2.54, height: 2.54 };
+            const visShape = placeholder_shape || 'rectangle';
+
+            const width = visDims.width * scale;
+            const depth = visDims.height * scale;
 
             // Determine height and material based on footprint heuristics
-            if (footprint.includes('pogo_pin')) {
-                geomHeight = 10 * scale; // Based on d5x10mm
+            if (footprint && footprint.toLowerCase().includes('pogo_pin')) {
+                geomHeight = 10 * scale;
                 mat = this.connectorMaterial.clone();
-            } else if (footprint.includes('LQFP') || node.id.startsWith('U')) {
+            } else if (footprint && (footprint.includes('LQFP') || node.id.startsWith('U'))) {
                 geomHeight = 2 * scale;
                 mat = this.icMaterial.clone();
-            } else if (footprint.includes('PinHeader')) {
+            } else if (footprint && footprint.includes('PinHeader')) {
                 geomHeight = 6 * scale;
                 mat = new this.THREE.MeshStandardMaterial({ color: 0x111111 });
             } else {
@@ -197,15 +216,13 @@ class Graphics {
                 mat = this.smdMaterial.clone();
             }
             
-            // Create geometry based on the new 'shape' property
-            if (shape === 'circle') {
-                const radius = width / 2; // Assuming width and height are the same for circles
+            if (visShape === 'circle') {
+                const radius = width / 2;
                 geom = new this.THREE.CylinderGeometry(radius, radius, geomHeight, 32);
             } else { // rectangle (default)
                 geom = new this.THREE.BoxGeometry(width, geomHeight, depth);
             }
             
-            // Translate geometry so its base is at Y=0. Rotation will handle flipping.
             geom.translate(0, geomHeight / 2, 0);
 
         } else { // robotics
@@ -230,11 +247,41 @@ class Graphics {
         placeholder.userData.agentId = id;
         this.scene.add(placeholder);
 
-        const meshEntry = { placeholder: placeholder, glb: null, footprint: null };
+        const meshEntry = { placeholder: placeholder, glb: null, footprint: null, courtyard: null };
         this.meshes.set(id, meshEntry);
+
+        if (mode === 'pcb' && node.drc_dimensions) {
+            const isBottom = node.side === 'bottom';
+            const courtyardMaterials = this.materials.courtyard[isBottom ? 'bottom' : 'top'];
+            const { drc_dimensions, drc_shape } = node;
+            const width = drc_dimensions.width * scale;
+            const depth = drc_dimensions.height * scale;
+            const courtyardHeight = 0.1 * scale;
+            let courtyardGeom;
+
+            if (drc_shape === 'circle') {
+                const radius = width / 2;
+                courtyardGeom = new this.THREE.CylinderGeometry(radius, radius, courtyardHeight, 32);
+            } else { // rectangle
+                courtyardGeom = new this.THREE.BoxGeometry(width, courtyardHeight, depth);
+            }
+            
+            const fillMesh = new this.THREE.Mesh(courtyardGeom, courtyardMaterials.fill);
+            const edgesGeom = new this.THREE.EdgesGeometry(courtyardGeom);
+            const lineMesh = new this.THREE.LineSegments(edgesGeom, courtyardMaterials.line);
+            const courtyardGroup = new this.THREE.Group();
+            courtyardGroup.add(fillMesh);
+            courtyardGroup.add(lineMesh);
+            
+            courtyardGroup.userData.agentId = id;
+            this.scene.add(courtyardGroup);
+            meshEntry.courtyard = courtyardGroup;
+        }
 
         if (mode === 'pcb' && node.svgPath) {
             const fullSvgUrl = node.svgPath.startsWith('http') ? node.svgPath : 'http://localhost:3001/' + node.svgPath;
+            const isBottom = node.side === 'bottom';
+            const footprintMaterial = this.materials.footprint[isBottom ? 'bottom' : 'top'];
 
             const loadSvgFromText = (svgText) => {
                 const data = this.svgLoader.parse(svgText);
@@ -245,7 +292,7 @@ class Graphics {
                     const shapes = this.SVGLoader.createShapes(path);
                     shapes.forEach(shape => {
                         const geometry = new this.THREE.ShapeGeometry(shape);
-                        const mesh = new this.THREE.Mesh(geometry, this.footprintMaterial);
+                        const mesh = new this.THREE.Mesh(geometry, footprintMaterial);
                         group.add(mesh);
                     });
                 });
@@ -253,8 +300,14 @@ class Graphics {
                 const box = new this.THREE.Box3().setFromObject(group);
                 const center = new this.THREE.Vector3();
                 box.getCenter(center);
-                group.position.sub(center);
-                group.scale.multiplyScalar(scale * 1.05); // slightly bigger to avoid z-fighting with board
+                
+                group.traverse(child => {
+                    if (child.isMesh && child.geometry) {
+                        child.geometry.translate(-center.x, -center.y, -center.z);
+                    }
+                });
+                
+                group.scale.multiplyScalar(scale);
 
                 meshEntry.footprint = group;
                 this.scene.add(group);
@@ -289,60 +342,58 @@ class Graphics {
             const loadGltfFromBlob = (blob) => {
                 const url = URL.createObjectURL(blob);
                 this.loader.load(url, (gltf) => {
-                    const model = gltf.scene;
-                    const group = new this.THREE.Group(); 
+                    if (!gltf || !gltf.scene) {
+                        console.error(\`[GLB] GLTF object for ID \${id} loaded, but it has no scene.\`);
+                        URL.revokeObjectURL(url);
+                        return;
+                    }
+                    const originalScene = gltf.scene;
+                    
+                    const componentNode = originalScene.getObjectByName('REF**');
+
+                    if (!componentNode) {
+                        console.warn(\`[GLB] Could not find component node 'REF**' in GLB for ID: \${id}. The 3D model might be missing. Proceeding with placeholder.\`);
+                        URL.revokeObjectURL(url);
+                        return;
+                    }
+                    
+                    const group = new this.THREE.Group();
+                    group.add(componentNode);
                     group.userData.agentId = id;
-                    group.add(model); 
                     
                     if (mode === 'pcb') {
-                        // Calculate bounding box of the raw model to find its bottom.
-                        const box = new this.THREE.Box3().setFromObject(model);
-                        const modelBottomY = box.min.y;
-
                         const transforms = node.assetTransforms?.glb || {};
+                        const customOffset = transforms.offset || [0, 0, 0];
                         
-                        // Apply transforms from node data if they exist.
-                        const scaleFactor = transforms.scale || 1;
-                        if (Array.isArray(scaleFactor)) {
-                            model.scale.set(scaleFactor[0], scaleFactor[1], scaleFactor[2]);
-                        } else {
-                            model.scale.set(scaleFactor, scaleFactor, scaleFactor);
-                        }
-
                         if (transforms.rotation) {
                             const rot = transforms.rotation; // degrees
-                            model.rotation.set(
+                            componentNode.rotation.set(
                                 rot[0] * this.THREE.MathUtils.DEG2RAD,
                                 rot[1] * this.THREE.MathUtils.DEG2RAD,
                                 rot[2] * this.THREE.MathUtils.DEG2RAD
                             );
                         }
 
-                        const customOffset = transforms.offset || [0, 0, 0];
-                        // Apply custom offset, the substrate thickness correction (1.6mm in meters), and the original model bottom offset.
-                        model.position.set(
+                        componentNode.position.set(
                             customOffset[0],
-                            customOffset[1] - modelBottomY - 0.0016, 
+                            customOffset[1],
                             customOffset[2]
                         );
 
-                        // Apply the global scale for KiCad units (meters) to scene units (mm-ish)
-                        // to the parent group. This will correctly scale the model and its local position.
                         const glbScale = 1000 * scale;
                         group.scale.set(glbScale, glbScale, glbScale);
 
                     } else { // robotics
-                        const box = new this.THREE.Box3().setFromObject(model);
+                        const box = new this.THREE.Box3().setFromObject(componentNode);
                         const size = box.getSize(new this.THREE.Vector3());
                         const maxDim = Math.max(size.x, size.y, size.z);
                         const desiredSize = scale * (node.type === 'robot' ? 1.5 : 1.0);
                         const scaleFactor = maxDim > 0 ? desiredSize / maxDim : 1.0;
-                        model.scale.set(scaleFactor, scaleFactor, scaleFactor);
+                        group.scale.set(scaleFactor, scaleFactor, scaleFactor);
                         
-                        // Center the model and place its bottom at y=0
-                        const newBox = new this.THREE.Box3().setFromObject(model);
+                        const newBox = new this.THREE.Box3().setFromObject(group);
                         const center = newBox.getCenter(new this.THREE.Vector3());
-                        model.position.sub(center).sub(new this.THREE.Vector3(0, newBox.min.y, 0));
+                        group.position.sub(center).sub(new this.THREE.Vector3(0, newBox.min.y, 0));
                     }
 
 
@@ -442,7 +493,10 @@ class Graphics {
         this.meshes.forEach((meshEntry, id) => {
             const pos = this.simulation.getPosition(id);
             const simRot = this.simulation.getRotation(id);
-            if (!pos || !simRot) return;
+            const node = this.simulation.getNode(id);
+            if (!pos || !simRot || !node) return;
+
+            const isBottom = node.side === 'bottom';
 
             if (meshEntry.placeholder) {
                 meshEntry.placeholder.position.set(pos.x, pos.y, pos.z);
@@ -454,13 +508,34 @@ class Graphics {
                 meshEntry.glb.quaternion.copy(simRot);
                 meshEntry.glb.visible = this.visibility.glb;
             }
+            if (meshEntry.courtyard) {
+                const courtyardY = isBottom ? -this.boardY : this.boardY;
+                meshEntry.courtyard.position.set(pos.x, courtyardY, pos.z);
+                meshEntry.courtyard.quaternion.copy(simRot);
+                meshEntry.courtyard.visible = this.visibility.courtyards;
+                
+                const targetMaterials = this.materials.courtyard[isBottom ? 'bottom' : 'top'];
+                meshEntry.courtyard.traverse(child => {
+                    if (child.isMesh && child.material !== targetMaterials.fill) child.material = targetMaterials.fill;
+                    if (child.isLineSegments && child.material !== targetMaterials.line) child.material = targetMaterials.line;
+                });
+            }
             
             if (meshEntry.footprint) {
                 const zUpToYUpQuaternion = new this.THREE.Quaternion().setFromEuler(new this.THREE.Euler(-Math.PI / 2, 0, 0));
-                meshEntry.footprint.position.set(pos.x, this.boardY + 0.1, pos.z);
+                const footprintY = isBottom ? -this.boardY - 0.1 : this.boardY + 0.1;
+                meshEntry.footprint.position.set(pos.x, footprintY, pos.z);
+                
                 const finalFootprintRot = new this.THREE.Quaternion().multiplyQuaternions(simRot, zUpToYUpQuaternion);
                 meshEntry.footprint.quaternion.copy(finalFootprintRot);
                 meshEntry.footprint.visible = this.visibility.svg;
+
+                const targetMaterial = this.materials.footprint[isBottom ? 'bottom' : 'top'];
+                meshEntry.footprint.traverse(child => {
+                    if (child.isMesh && child.material !== targetMaterial) {
+                        child.material = targetMaterial;
+                    }
+                });
             }
         });
         

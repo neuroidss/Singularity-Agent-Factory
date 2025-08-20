@@ -124,6 +124,7 @@ export interface AssetTransform {
 export interface KnowledgeGraphNode {
   id: string;
   label: string;
+  shape?: 'rectangle' | 'circle';
   assetTransforms?: {
     glb?: AssetTransform;
     svg?: AssetTransform;
