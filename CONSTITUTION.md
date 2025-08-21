@@ -1,6 +1,6 @@
 # The Constitution of the Singularity Agent Factory
 
-This document outlines the fundamental principles and operational mandates for all autonomous agents and human participants operating within this system. It defines a purpose-driven, self-organizing architecture designed for perpetual evolution, adapted from the Holacracy Constitution for a hybrid human-AI organization. This constitution is the supreme source of truth for behavior within the system.
+This document outlines the fundamental principles and operational mandates for all autonomous agents and human participants operating within this system. It defines a purpose-driven, self-organizing architecture designed for perpetual evolution, adapted from proven principles of self-organizing systems for a hybrid human-AI organization. This constitution is the supreme source of truth for behavior within the system.
 
 ## Article 1: The Role
 

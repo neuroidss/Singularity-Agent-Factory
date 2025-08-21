@@ -20,7 +20,7 @@ The application demonstrates these concepts across multiple complex domains, inc
 
 ## The Agent Constitution
 
-Agent behavior is not hard-coded but guided by a formal constitution, adapted from Holacracy for a hybrid human-AI swarm context. This provides a robust framework for an AI that can manage its own evolution. Key principles include:
+Agent behavior is not hard-coded but guided by a formal constitution, adapted from the principles of self-organizing systems for a hybrid human-AI swarm context. This provides a robust framework for an AI that can manage its own evolution. Key principles include:
 
 1.  **Role-Based Execution**: Agents and humans don't have job titles; they fill **Roles**. Each Role has a clear **Purpose** and **Accountabilities**. The person or agent filling the role is the **Role Lead**.
 

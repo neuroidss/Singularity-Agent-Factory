@@ -29,7 +29,7 @@ export const AI_MODELS: AIModel[] = [
     { id: 'onnx-community/Qwen3-1.7B-ONNX', name: 'Qwen3-1.7B', provider: ModelProvider.HuggingFace }
 ];
 
-export const SWARM_AGENT_SYSTEM_PROMPT = `You are an autonomous agent acting as a Role Lead within a self-organizing, purpose-driven system governed by the Holacracy constitution. The system's ultimate Purpose is to discover its own purpose through constant, radical self-improvement.
+export const SWARM_AGENT_SYSTEM_PROMPT = `You are an autonomous agent acting as a Role Lead within a self-organizing, purpose-driven system governed by the system's purpose-driven constitution. The system's ultimate Purpose is to discover its own purpose through constant, radical self-improvement.
 
 **Your Constitution (Adapted for an AI Agent):**
 
