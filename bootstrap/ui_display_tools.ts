@@ -28,7 +28,7 @@ export const UI_DISPLAY_TOOLS: ToolCreatorPayload[] = [
     
           return (
             <div className="w-full bg-gray-800/60 border border-gray-700 rounded-xl p-4">
-                <h3 className="text-lg font-bold text-indigo-300 mb-2">Mission Control</h3>
+                <h3 className="text-lg font-bold text-indigo-300 mb-2">Mission Command</h3>
                 <div className="relative w-full group">
                     <textarea
                         id="userInput"
@@ -282,6 +282,90 @@ export const UI_DISPLAY_TOOLS: ToolCreatorPayload[] = [
                     </div>
                     <ScoreBar score={score} />
                   </div>
+                ))}
+              </div>
+            </div>
+          );
+        `
+    },
+    {
+        name: 'Tool List Display',
+        description: 'Displays a searchable and categorized list of all available tools for the agent.',
+        category: 'UI Component',
+        executionEnvironment: 'Client',
+        purpose: 'To provide users with a clear overview of the agent\'s current capabilities.',
+        parameters: [
+          { name: 'tools', type: 'array', description: 'The array of all available LLMTool objects.', required: true },
+          { name: 'isServerConnected', type: 'boolean', description: 'Indicates if the backend server is connected.', required: true },
+        ],
+        implementationCode: `
+          const [filter, setFilter] = React.useState('');
+          const [expandedCategories, setExpandedCategories] = React.useState({ 'UI Component': true, 'Functional': true, 'Automation': true, 'Server': true });
+    
+          const filteredTools = React.useMemo(() => {
+            return tools.filter(tool => tool.name.toLowerCase().includes(filter.toLowerCase()));
+          }, [tools, filter]);
+    
+          const groupedTools = React.useMemo(() => {
+            const groups = { 'UI Component': [], 'Functional': [], 'Automation': [], 'Server': [] };
+            filteredTools.forEach(tool => {
+              if (groups[tool.category]) {
+                groups[tool.category].push(tool);
+              }
+            });
+            return groups;
+          }, [filteredTools]);
+          
+          const toggleCategory = (category) => {
+            setExpandedCategories(prev => ({ ...prev, [category]: !prev[category] }));
+          };
+    
+          const getCategoryIcon = (category) => {
+              if (category === 'UI Component') return <UIIcon className="w-5 h-5 text-indigo-400" />;
+              if (category === 'Functional') return <FunctionalIcon className="w-5 h-5 text-sky-400" />;
+              if (category === 'Automation') return <AutomationIcon className="w-5 h-5 text-purple-400" />;
+              if (category === 'Server') return <GearIcon className="w-5 h-5 text-green-400" />;
+              return null;
+          };
+    
+          return (
+            <div className="bg-gray-800/60 border border-gray-700 rounded-xl p-4 flex flex-col h-full min-h-0">
+              <div className="flex-shrink-0 flex justify-between items-center mb-3">
+                  <h3 className="text-lg font-bold text-indigo-300">Tool List ({tools.length})</h3>
+                  <div className={\`flex items-center gap-2 text-xs px-2 py-1 rounded-full \${isServerConnected ? 'bg-green-900/70 text-green-300' : 'bg-red-900/70 text-red-300'}\`}>
+                      <div className={\`w-2 h-2 rounded-full \${isServerConnected ? 'bg-green-400' : 'bg-red-400'}\`}></div>
+                      <span>{isServerConnected ? 'Server Connected' : 'Server Offline'}</span>
+                  </div>
+              </div>
+              <input
+                type="text"
+                placeholder="Filter tools..."
+                value={filter}
+                onChange={e => setFilter(e.target.value)}
+                className="w-full bg-gray-900 border border-gray-600 rounded-lg p-2 text-sm mb-3 flex-shrink-0"
+              />
+              <div className="flex-grow overflow-y-auto pr-2 space-y-2">
+                {Object.entries(groupedTools).map(([category, toolsInCategory]) => (
+                  toolsInCategory.length > 0 && (
+                    <div key={category}>
+                      <button onClick={() => toggleCategory(category)} className="w-full flex items-center justify-between p-2 bg-gray-700/50 rounded-lg text-left">
+                        <div className="flex items-center gap-2">
+                            {getCategoryIcon(category)}
+                            <span className="font-semibold text-white">{category}</span>
+                        </div>
+                        <span className="text-gray-400 text-sm">({toolsInCategory.length})</span>
+                      </button>
+                      {expandedCategories[category] && (
+                        <div className="pl-4 pt-2 space-y-1">
+                          {toolsInCategory.sort((a,b) => a.name.localeCompare(b.name)).map(tool => (
+                            <div key={tool.id} className="p-2 bg-gray-900/40 rounded-md" title={tool.description}>
+                                <p className="text-sm text-gray-200 truncate">{tool.name} <span className="text-xs text-gray-500">(v{tool.version})</span></p>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  )
                 ))}
               </div>
             </div>

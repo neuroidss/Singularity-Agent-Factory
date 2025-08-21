@@ -8,7 +8,7 @@ export const useAppStateManager = () => {
     const [userInput, setUserInput] = useState<string>('');
     const [eventLog, setEventLog] = useState<string[]>([]);
     const [mainView, setMainView] = useState<MainView>('KICAD');
-    const [apiCallCount, setApiCallCount] = useState<number>(0);
+    const [apiCallCount, setApiCallCount] = useState<Record<string, number>>({});
 
     const [selectedModel, setSelectedModel] = useState<AIModel>(AI_MODELS[0]);
     const [apiConfig, setApiConfig] = useState<APIConfig>(() => {

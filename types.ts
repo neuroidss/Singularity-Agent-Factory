@@ -81,6 +81,7 @@ export enum ModelProvider {
   OpenAI_API = 'OpenAI_API',
   Ollama = 'Ollama',
   HuggingFace = 'HuggingFace',
+  Wllama = 'Wllama',
 }
 
 export interface AIModel {
@@ -105,12 +106,13 @@ export interface RobotState {
   y: number;
   rotation: number; // 0: up, 90: right, 180: down, 270: left
   hasResource: boolean;
+  powerLevel: number; // Represents the agent's energy reserves
 }
 
 export interface EnvironmentObject {
   x: number;
   y: number;
-  type: 'wall' | 'resource' | 'collection_point' | 'tree' | 'target';
+  type: 'wall' | 'drone_battery_charged' | 'drone_battery_depleted' | 'battery_swapping_station' | 'tree' | 'red_car' | 'blue_car' | 'green_car' | 'rough_terrain';
   id?: string;
   asset_glb?: string;
 }

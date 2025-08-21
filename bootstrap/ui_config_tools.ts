@@ -1,5 +1,5 @@
-
 import type { ToolCreatorPayload } from '../types';
+import { LOCAL_AI_PANEL_TOOL_PAYLOAD } from './local_ai_tools';
 
 export const UI_CONFIG_TOOLS: ToolCreatorPayload[] = [
     {
@@ -36,6 +36,7 @@ export const UI_CONFIG_TOOLS: ToolCreatorPayload[] = [
                 OpenAI_API: [],
                 Ollama: [],
                 HuggingFace: [],
+                Wllama: [],
             };
             availableModels.forEach(model => {
                 if (groups[model.provider]) {
@@ -51,6 +52,8 @@ export const UI_CONFIG_TOOLS: ToolCreatorPayload[] = [
                 return <p className="text-xs text-gray-400 mt-1">Ensure the Ollama server is running and the model ('{selectedModel.id}') is pulled.</p>;
               case 'HuggingFace':
                 return <p className="text-xs text-gray-400 mt-1">Model will be downloaded and run directly in your browser. Requires a modern browser and may be slow on first load.</p>;
+              case 'Wllama':
+                return <p className="text-xs text-gray-400 mt-1">Model (GGUF) will be downloaded and run in-browser via WebAssembly. Can be slow on first load and requires a powerful device.</p>;
               case 'OpenAI_API':
                 return <p className="text-xs text-gray-400 mt-1">Works with any OpenAI-compatible API (e.g., a local Ollama server).</p>;
               default:
@@ -181,5 +184,6 @@ export const UI_CONFIG_TOOLS: ToolCreatorPayload[] = [
             </div>
           );
         `
-    }
+    },
+    LOCAL_AI_PANEL_TOOL_PAYLOAD
 ];

@@ -74,6 +74,20 @@ export const ROBOTICS_TOOLS: ToolCreatorPayload[] = [
         `
     },
     {
+        name: 'Move Backward',
+        description: 'Moves the robot one step backward from its current direction.',
+        category: 'Functional',
+        executionEnvironment: 'Client',
+        purpose: 'To provide a primitive action for robot locomotion, allowing for reverse movement.',
+        parameters: [
+            { name: 'agentId', type: 'string', description: 'The ID of the robot to move.', required: true }
+        ],
+        implementationCode: `
+            // Implemented directly in useAppRuntime for state management.
+            return { success: true, message: "Move backward command issued." };
+        `
+    },
+    {
         name: 'Turn Left',
         description: 'Turns the robot 90 degrees to its left.',
         category: 'Functional',

@@ -1,25 +1,6 @@
-
 import type { ToolCreatorPayload } from '../types';
-import { LOCAL_AI_PANEL_TOOL_PAYLOAD } from './local_ai_tools';
 
 export const AUTOMATION_TOOLS: ToolCreatorPayload[] = [
-    {
-        name: 'Install Local Multimodal AI Demo',
-        description: 'Installs the local multimodal AI demo feature. In client-only mode, this creates a UI panel that informs the user about the feature.',
-        category: 'Automation',
-        executionEnvironment: 'Client',
-        purpose: 'To demonstrate the agent\'s ability to dynamically add complex, multimodal capabilities to itself and the swarm.',
-        parameters: [],
-        implementationCode: `
-            const panelPayload = ${JSON.stringify(LOCAL_AI_PANEL_TOOL_PAYLOAD)};
-            
-            // In client-only mode, we only create the UI panel.
-            // The panel's implementation is updated to handle the lack of a server.
-            await runtime.tools.run('Tool Creator', { ...panelPayload, executionEnvironment: 'Client' });
-
-            return { success: true, message: 'Local AI Demo UI panel installed. Feature is simulated in client-only mode.' };
-        `
-    },
     {
         name: 'Create Skill From Observation',
         description: "Analyzes the recent history of manual actions and creates a new, reusable tool (a workflow) from that sequence. This is how the agent learns patterns from a pilot.",

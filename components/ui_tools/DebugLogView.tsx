@@ -1,15 +1,16 @@
 
+
 import React, { useState, useEffect, useRef } from 'react';
 import { BeakerIcon } from '../icons';
 
 interface DebugLogViewProps {
     logs: string[];
     onReset: () => void;
-    apiCallCount: number;
+    apiCallCounts: Record<string, number>;
     apiCallLimit: number;
 }
 
-const DebugLogView: React.FC<DebugLogViewProps> = ({ logs, onReset, apiCallCount, apiCallLimit }) => {
+const DebugLogView: React.FC<DebugLogViewProps> = ({ logs, onReset, apiCallCounts, apiCallLimit }) => {
     const [isOpen, setIsOpen] = useState(false);
     const logsContainerRef = useRef<HTMLDivElement>(null);
 
@@ -19,8 +20,12 @@ const DebugLogView: React.FC<DebugLogViewProps> = ({ logs, onReset, apiCallCount
         }
     }, [logs]);
 
+    const totalCalls = React.useMemo(() => 
+        Object.values(apiCallCounts || {}).reduce((sum, count) => sum + count, 0), 
+    [apiCallCounts]);
+
     const isUnlimited = apiCallLimit === -1;
-    const usagePercentage = !isUnlimited && apiCallLimit > 0 ? (apiCallCount / apiCallLimit) * 100 : 0;
+    const usagePercentage = !isUnlimited && apiCallLimit > 0 ? (totalCalls / apiCallLimit) * 100 : 0;
     let usageColorClass = 'text-green-400';
     if (usagePercentage > 90) {
         usageColorClass = 'text-red-500';
@@ -62,6 +67,21 @@ const DebugLogView: React.FC<DebugLogViewProps> = ({ logs, onReset, apiCallCount
                         </button>
                     </div>
                 </div>
+                <div className="flex-shrink-0 border-b border-slate-700 mb-2 pb-2">
+                    <h4 className="text-sm font-semibold text-slate-200 mb-1">API Call Stats</h4>
+                    <div className="text-xs space-y-1 max-h-24 overflow-y-auto">
+                        {Object.entries(apiCallCounts).length > 0 ? (
+                            Object.entries(apiCallCounts).sort(([, a], [, b]) => b - a).map(([modelId, count]) => (
+                                <div key={modelId} className="flex justify-between items-center bg-black/20 px-1.5 py-0.5 rounded">
+                                    <span className="text-slate-400 truncate pr-2" title={modelId}>{modelId}</span>
+                                    <span className="font-mono text-cyan-300 font-bold">{count}</span>
+                                </div>
+                            ))
+                        ) : (
+                            <p className="text-slate-500 text-center">No API calls recorded.</p>
+                        )}
+                    </div>
+                </div>
                 <div ref={logsContainerRef} className="flex-grow overflow-y-auto bg-black/30 p-2 rounded text-xs font-mono scroll-smooth">
                     {logs.map((log, index) => {
                         const isApiCall = log.toUpperCase().includes('[API CALL');
@@ -75,9 +95,9 @@ const DebugLogView: React.FC<DebugLogViewProps> = ({ logs, onReset, apiCallCount
                 </div>
             </div>
             <div className="flex items-center gap-2">
-                 <div title="API Calls Used Today" className="flex items-center gap-2 bg-slate-800/80 backdrop-blur-sm text-white px-3 py-2 rounded-lg shadow-lg border border-slate-700">
+                 <div title="Total API Calls Used" className="flex items-center gap-2 bg-slate-800/80 backdrop-blur-sm text-white px-3 py-2 rounded-lg shadow-lg border border-slate-700">
                      <BeakerIcon className="h-5 w-5 text-cyan-400" />
-                     <span className={`font-mono text-sm font-bold ${usageColorClass}`}>{apiCallCount} / {apiLimitDisplay}</span>
+                     <span className={`font-mono text-sm font-bold ${usageColorClass}`}>{totalCalls} / {apiLimitDisplay}</span>
                  </div>
                  <button
                     onClick={() => setIsOpen(!isOpen)}

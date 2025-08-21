@@ -103,6 +103,7 @@ const handleDelete = React.useCallback((index) => {
 
 const handleAddRule = React.useCallback((newRule) => {
     onUpdateRulesRef.current([...(rulesRef.current || []), newRule]);
+    setShowForm(false); // Hide form after adding
 }, []); // Empty dependency array means this function reference is stable
 
 const handleCancelForm = React.useCallback(() => {

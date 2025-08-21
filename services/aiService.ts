@@ -1,10 +1,9 @@
-
-
 import { ModelProvider, type AIModel, type APIConfig, type AIResponse, type LLMTool } from '../types';
 import * as geminiService from './geminiService';
 import * as openAIService from './openAIService';
 import * as ollamaService from './ollamaService';
 import * as huggingFaceService from './huggingFaceService';
+import * as wllamaService from './wllamaService';
 
 // This prompt is now only used as a fallback for providers that don't support native tool calling.
 const JSON_TOOL_CALL_SYSTEM_PROMPT = `
@@ -100,12 +99,16 @@ export const generateResponse = async (
              // Ollama service currently only takes text.
             return ollamaService.generateWithTools(userInput.text, systemInstruction, model.id, apiConfig, relevantTools);
         
+        case ModelProvider.Wllama:
         case ModelProvider.HuggingFace: {
-            // HuggingFace pipeline doesn't support native tool calling, so we fall back to JSON prompting.
+            // Wllama and HuggingFace pipelines don't support native tool calling, so we fall back to JSON prompting.
             const toolsForPrompt = relevantTools.map(t => ({ name: t.name, description: t.description, parameters: t.parameters }));
             const toolDefinitions = JSON.stringify(toolsForPrompt, null, 2);
             const fullSystemInstruction = systemInstruction + '\n\n' + JSON_TOOL_CALL_SYSTEM_PROMPT.replace('{{TOOLS_JSON}}', toolDefinitions);
-            const responseText = await huggingFaceService.generateJsonOutput(userInput.text, fullSystemInstruction, model.id, 0.1, apiConfig, onProgress);
+            
+            const service = model.provider === ModelProvider.Wllama ? wllamaService : huggingFaceService;
+            const responseText = await service.generateJsonOutput(userInput.text, fullSystemInstruction, model.id, 0.1, apiConfig, onProgress);
+
             return parseToolCallResponse(responseText);
         }
 

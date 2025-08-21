@@ -1,4 +1,7 @@
 
+
+
+
 import React, { useState, useCallback, useRef, useEffect } from 'react';
 import { SWARM_AGENT_SYSTEM_PROMPT } from '../constants';
 import { contextualizeWithSearch } from '../services/aiService';
@@ -8,6 +11,7 @@ type UseSwarmManagerProps = {
     logEvent: (message: string) => void;
     setUserInput: (input: string) => void;
     setEventLog: (callback: (prev: string[]) => string[]) => void;
+    setApiCallCount: React.Dispatch<React.SetStateAction<Record<string, number>>>;
     findRelevantTools: (userRequestText: string, allTools: LLMTool[], topK: number, threshold: number, systemPromptForContext: string | null) => Promise<ScoredTool[]>;
 };
 
@@ -28,7 +32,7 @@ export type StartSwarmTaskOptions = {
 };
 
 export const useSwarmManager = (props: UseSwarmManagerProps) => {
-    const { logEvent, setUserInput, setEventLog, findRelevantTools } = props;
+    const { logEvent, setUserInput, setEventLog, setApiCallCount, findRelevantTools } = props;
 
     const [agentSwarm, setAgentSwarm] = useState<AgentWorker[]>([]);
     const [isSwarmRunning, setIsSwarmRunning] = useState(false);
@@ -124,6 +128,7 @@ export const useSwarmManager = (props: UseSwarmManagerProps) => {
                 if (currentUserTask.useSearch && swarmHistoryRef.current.length === 0) {
                     logEvent('🔎 Performing web search for additional context...');
                     try {
+                        setApiCallCount(prev => ({ ...prev, 'gemini-2.5-flash': (prev['gemini-2.5-flash'] || 0) + 1 }));
                         const searchPrompt = `Based on the following user request and any provided files, find and summarize the key technical requirements, component datasheets, pinouts, and specifications needed to design a PCB. \n\nUser Request: "${currentUserTask.userRequest.text}"`;
                         
                         const searchResult = await contextualizeWithSearch({
@@ -234,7 +239,7 @@ export const useSwarmManager = (props: UseSwarmManagerProps) => {
             } catch (err) {
                 const errorMessage = err instanceof Error ? err.message : "Unknown error.";
                 setAgentSwarm(prev => prev.map(a => a.id === agent.id ? { ...a, status: 'failed', error: errorMessage, lastAction: `CRITICAL FAILURE` } : a));
-                logEvent(`[ERROR] 🛑 Agent task failed critically: ${errorMessage}`);
+                logEvent(`[ERROR] 🛑 Agent task failed: ${errorMessage}`);
                 handleStopSwarm("Critical agent error");
             }
         } finally {
@@ -245,7 +250,7 @@ export const useSwarmManager = (props: UseSwarmManagerProps) => {
             }
             isCycleInProgress.current = false; // Release lock
         }
-    }, [currentUserTask, logEvent, currentSystemPrompt, handleStopSwarm, isSequential, findRelevantTools, relevanceTopK, relevanceThreshold]);
+    }, [currentUserTask, logEvent, setApiCallCount, currentSystemPrompt, handleStopSwarm, isSequential, findRelevantTools, relevanceTopK, relevanceThreshold]);
 
     const startSwarmTask = useCallback(async (options: StartSwarmTaskOptions) => {
         const { task, systemPrompt, sequential = false, resume = false, historyEventToInject = null } = options;

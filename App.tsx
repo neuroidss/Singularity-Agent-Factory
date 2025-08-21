@@ -1,5 +1,9 @@
 
 
+
+
+
+
 import React, { useState, useCallback, useMemo, useEffect, useRef } from 'react';
 import { CORE_TOOLS, AI_MODELS } from './constants';
 import { UIToolRunner } from './components/UIToolRunner';
@@ -60,6 +64,7 @@ const App: React.FC = () => {
         logEvent,
         setUserInput: appSetters.setUserInput,
         setEventLog: appSetters.setEventLog,
+        setApiCallCount: appSetters.setApiCallCount,
         findRelevantTools, // Pass the relevance finder to the swarm
     });
 
@@ -103,6 +108,7 @@ const App: React.FC = () => {
         // Dependencies
         allToolsRef, logEvent, generateMachineReadableId,
         apiConfig: appState.apiConfig, selectedModel: appState.selectedModel,
+        setApiCallCount: appSetters.setApiCallCount,
         isServerConnected,
         setTools,
         forceRefreshServerTools,
@@ -243,7 +249,7 @@ const App: React.FC = () => {
         localStorage.removeItem('singularity-agent-factory-state');
         const { initializeTools } = await import('./hooks/useToolManager');
         setTools(initializeTools());
-        appSetters.setApiCallCount(0);
+        appSetters.setApiCallCount({});
         installerRunRef.current = false; // Allow installer to run again after reset
         logEvent('[SUCCESS] Full system reset complete. Reinstalling default tool suites...');
     
@@ -332,7 +338,7 @@ const App: React.FC = () => {
         availableModels: AI_MODELS, selectedModel: appState.selectedModel,
         setSelectedModel: appSetters.setSelectedModel
     };
-    const debugLogProps = { logs: appState.eventLog, onReset: handleResetTools, apiCallCount: appState.apiCallCount, apiCallLimit: -1 };
+    const debugLogProps = { logs: appState.eventLog, onReset: handleResetTools, apiCallCounts: appState.apiCallCount, apiCallLimit: -1 };
     const localAiServerProps = { logEvent };
     const pcbViewerProps = kicadState.pcbArtifacts ? { ...kicadState.pcbArtifacts, onClose: () => kicadSetters.setPcbArtifacts(null) } : null;
     const kicadPanelProps = { 
@@ -389,10 +395,24 @@ const App: React.FC = () => {
 
         switch(appState.mainView) {
             case 'ROBOTICS': {
+                const personalityMap = new Map(robotState.agentPersonalities.map(p => [p.id, p]));
                 const robotGraph = {
                     nodes: [
-                        ...robotState.robotStates.map(r => ({ id: r.id, label: r.id, type: 'robot', width: 10, height: 10, x: r.x, y: r.y, rotation: r.rotation })),
-                        ...robotState.environmentState.map((e, i) => ({ id: e.id || `env_${e.type}_${i}`, label: e.type, type: e.type, width: 10, height: 10, x: e.x, y: e.y, rotation: 0 }))
+                        ...robotState.robotStates.map(r => {
+                            const personality = personalityMap.get(r.id);
+                            return {
+                                id: r.id,
+                                label: r.id,
+                                type: 'robot',
+                                width: 10,
+                                height: 10,
+                                x: r.x,
+                                y: r.y,
+                                rotation: r.rotation,
+                                asset_glb: personality ? personality.asset_glb : undefined,
+                            };
+                        }),
+                        ...robotState.environmentState.map((e, i) => ({ id: e.id || `env_${e.type}_${i}`, label: e.type, type: e.type, width: 10, height: 10, x: e.x, y: e.y, rotation: 0, asset_glb: e.asset_glb }))
                     ],
                     edges: [],
                     board_outline: { x: -60, y: -60, width: 120, height: 120, shape: 'rectangle' }
@@ -403,7 +423,9 @@ const App: React.FC = () => {
                     mode: 'robotics',
                     isLayoutInteractive: false,
                     onCommit: () => {},
+                    onUpdateLayout: () => {},
                     getTool: getTool,
+                    isServerConnected: isServerConnected,
                 };
                  return <UIToolRunner tool={getTool('Interactive PCB Layout Tool')} props={layoutProps} />;
             }
@@ -441,25 +463,36 @@ const App: React.FC = () => {
                     </div>
                 </main>
             ) : (
-                <main className="flex-grow grid grid-cols-1 lg:grid-cols-3 gap-6 mt-4">
-                    {/* Left Column */}
-                    <div className="lg:col-span-2 space-y-6">
+                <main className="flex-grow grid grid-cols-1 lg:grid-cols-5 gap-4 mt-4 h-[calc(100vh-120px)]">
+                    {/* Left Sidebar */}
+                    <div className="lg:col-span-1 space-y-4 flex flex-col">
                         <UIToolRunner tool={getTool('Main View Selector')} props={{ mainView: appState.mainView, setMainView: appSetters.setMainView, isPcbResultVisible: !!kicadState.pcbArtifacts }} />
+                        
                         {appState.mainView === 'ROBOTICS' && (
                              <UIToolRunner tool={getTool('Agent Control Panel')} props={agentControlProps} />
                         )}
-                        {renderMainView()}
-                        <UIToolRunner tool={getTool('Local AI Server Panel')} props={localAiServerProps} />
-                        <UIToolRunner tool={getTool('Configuration Panel')} props={configProps} />
-                        <UIToolRunner tool={getTool('Tool Relevance Configuration')} props={relevanceConfigProps} />
+
+                        <UIToolRunner tool={getTool('Agent Status Display')} props={{ agentSwarm: swarmState.agentSwarm, isSwarmRunning: swarmState.isSwarmRunning, handleStopSwarm: swarmHandlers.handleStopSwarm, currentUserTask: swarmState.currentUserTask }} />
+                        {swarmState.isSwarmRunning && <UIToolRunner tool={getTool('Active Tool Context')} props={activeToolsProps} />}
+
+                        {/* This spacer will push the input form to the bottom of the column */}
+                        <div className="flex-grow" />
+
                         <UIToolRunner tool={getTool('User Input Form')} props={{ userInput: appState.userInput, setUserInput: appSetters.setUserInput, handleSubmit, isSwarmRunning: swarmState.isSwarmRunning }} />
                     </div>
 
-                    {/* Right Column */}
-                    <div className="lg:col-span-1 space-y-6">
-                         <UIToolRunner tool={getTool('Agent Status Display')} props={{ agentSwarm: swarmState.agentSwarm, isSwarmRunning: swarmState.isSwarmRunning, handleStopSwarm: swarmHandlers.handleStopSwarm, currentUserTask: swarmState.currentUserTask }} />
-                         {swarmState.isSwarmRunning && <UIToolRunner tool={getTool('Active Tool Context')} props={activeToolsProps} />}
+                    {/* Main Content */}
+                    <div className="lg:col-span-3 flex flex-col h-full min-h-0">
+                        {renderMainView()}
+                    </div>
+
+                    {/* Right Sidebar */}
+                    <div className="lg:col-span-1 space-y-4 flex flex-col overflow-y-auto">
                         <UIToolRunner tool={getTool('Tool List Display')} props={{ tools: allTools, isServerConnected: isServerConnected }} />
+                        
+                        <UIToolRunner tool={getTool('Configuration Panel')} props={configProps} />
+                        <UIToolRunner tool={getTool('Tool Relevance Configuration')} props={relevanceConfigProps} />
+                        <UIToolRunner tool={getTool('Local AI Server Panel')} props={localAiServerProps} />
                     </div>
                 </main>
             )}

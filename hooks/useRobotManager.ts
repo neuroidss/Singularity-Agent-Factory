@@ -1,22 +1,23 @@
+
 import { useState, useCallback } from 'react';
 import type { RobotState, EnvironmentObject, AIToolCall, EnrichedAIResponse, AgentPersonality } from '../types';
 
 const initialEnvironmentState: EnvironmentObject[] = [
     // Arena walls
-    ...Array.from({length: 25}, (_, i) => ({ x: i - 12, y: 12, type: 'wall' as const })),
-    ...Array.from({length: 25}, (_, i) => ({ x: i - 12, y: -12, type: 'wall' as const })),
-    ...Array.from({length: 23}, (_, i) => ({ x: -12, y: i - 11, type: 'wall' as const })),
-    ...Array.from({length: 23}, (_, i) => ({ x: 12, y: i - 11, type: 'wall' as const })),
-    // Foliage (trees) with GLB assets
-    { x: -5, y: -5, type: 'tree', asset_glb: 'assets/tree.glb' }, { x: -6, y: -4, type: 'tree', asset_glb: 'assets/tree.glb' }, { x: -4, y: -6, type: 'tree', asset_glb: 'assets/tree.glb' },
-    { x: 5, y: 5, type: 'tree', asset_glb: 'assets/tree.glb' }, { x: 6, y: 4, type: 'tree', asset_glb: 'assets/tree.glb' }, { x: 4, y: 6, type: 'tree', asset_glb: 'assets/tree.glb' },
-    { x: -5, y: 5, type: 'tree', asset_glb: 'assets/tree.glb' }, { x: -4, y: 4, type: 'tree', asset_glb: 'assets/tree.glb' },
-    { x: 5, y: -5, type: 'tree', asset_glb: 'assets/tree.glb' }, { x: 4, y: -4, type: 'tree', asset_glb: 'assets/tree.glb' },
-    // Target ("red car") with a GLB asset
-    { x: 9, y: -9, type: 'target', id: 'red_car', asset_glb: 'assets/car.glb' },
-    // Resource and collection point (for other behaviors)
-    { x: 9, y: 2, type: 'resource' },
-    { x: -9, y: 9, type: 'collection_point' },
+    ...Array.from({length: 25}, (_, i) => ({ x: i - 12, y: 12, type: 'wall' as const, asset_glb: 'assets/wall.glb' })),
+    ...Array.from({length: 25}, (_, i) => ({ x: i - 12, y: -12, type: 'wall' as const, asset_glb: 'assets/wall.glb' })),
+    ...Array.from({length: 23}, (_, i) => ({ x: -12, y: i - 11, type: 'wall' as const, asset_glb: 'assets/wall.glb' })),
+    ...Array.from({length: 23}, (_, i) => ({ x: 12, y: i - 11, type: 'wall' as const, asset_glb: 'assets/wall.glb' })),
+    
+    // Foliage (trees as obstacles)
+    { x: -5, y: -5, type: 'tree', asset_glb: 'assets/pine_tree.glb' }, { x: -6, y: -4, type: 'tree', asset_glb: 'assets/pine_tree.glb' }, { x: -4, y: -6, type: 'tree', asset_glb: 'assets/pine_tree.glb' },
+    { x: 5, y: 5, type: 'tree', asset_glb: 'assets/pine_tree.glb' }, { x: 6, y: 4, type: 'tree', asset_glb: 'assets/pine_tree.glb' }, { x: 4, y: 6, type: 'tree', asset_glb: 'assets/pine_tree.glb' },
+    { x: -5, y: 5, type: 'tree', asset_glb: 'assets/pine_tree.glb' }, { x: -4, y: 4, type: 'tree', asset_glb: 'assets/pine_tree.glb' },
+    { x: 5, y: -5, type: 'tree', asset_glb: 'assets/pine_tree.glb' }, { x: 4, y: -4, type: 'tree', asset_glb: 'assets/pine_tree.glb' },
+
+    // --- Core Mission & Distractors ---
+    // Target
+    { x: 9, y: -9, type: 'red_car', id: 'red_car_1', asset_glb: 'assets/car_red.glb' },
 ];
 
 export const useRobotManager = ({ logEvent }: { logEvent: (message: string) => void }) => {
@@ -30,7 +31,7 @@ export const useRobotManager = ({ logEvent }: { logEvent: (message: string) => v
         if (!robot) {
             // It's possible for some tools (like Define) to be called before a robot exists.
             // Return a default or empty state instead of throwing an error.
-            const defaultRobot: RobotState = { id: agentId, x: 0, y: 0, rotation: 0, hasResource: false };
+            const defaultRobot: RobotState = { id: agentId, x: 0, y: 0, rotation: 0, hasResource: false, powerLevel: 100 };
             return { robot: defaultRobot, environment: environmentState, personalities: agentPersonalities };
         }
         return { robot, environment: environmentState, personalities: agentPersonalities };

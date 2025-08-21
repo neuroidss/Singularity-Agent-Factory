@@ -3,10 +3,11 @@
 // Force and collision logic has been moved to separate files.
 
 export const AgentSimulationCoreString = `
-    constructor(graphData, scale, THREE) {
+    constructor(graphData, scale, THREE, mode) {
         this.THREE = THREE;
         this.graph = graphData; // Initially may have no nodes/edges
         this.SCALE = scale;
+        this.mode = mode; // 'pcb' or 'robotics'
         this.nodeMap = new Map();
         this.agents = new Map();
         this.draggedAgentId = null;
@@ -31,6 +32,27 @@ export const AgentSimulationCoreString = `
             symmetryRotationStrength: 2.0,
             circularRotationStrength: 2.0,
         };
+        
+        if (this.mode === 'robotics') {
+            this.params = {
+                ...this.params,
+                componentSpacing: 10.0, // Minimal repulsion between robots
+                netLengthWeight: 0,
+                boardEdgeConstraint: 50.0, // Strong walls
+                distributionStrength: 0,   // No center repulsion
+                // Disable all PCB-specific rule forces
+                proximityStrength: 0,
+                symmetryStrength: 0,
+                alignmentStrength: 0,
+                circularStrength: 0,
+                symmetricalPairStrength: 0,
+                absolutePositionStrength: 0,
+                fixedRotationStrength: 0,
+                symmetryRotationStrength: 0,
+                circularRotationStrength: 0,
+            };
+        }
+
 
         this.pinDataMap = new Map();
         
@@ -60,6 +82,12 @@ export const AgentSimulationCoreString = `
             new this.THREE.Euler(0, (node.rotation || 0) * Math.PI / 180, 0)
         );
         
+        let inertia = 1.0;
+        if (this.mode === 'robotics' && (node.type === 'wall' || node.type === 'tree')) {
+            // Make walls and trees heavy but not static. Robots have an inertia of 1.0.
+            inertia = 100.0; 
+        }
+        
         this.agents.set(node.id, {
             pos: { x: initialX, y: initialY, z: initialZ },
             vel: { x: 0, y: 0, z: 0 },
@@ -69,7 +97,7 @@ export const AgentSimulationCoreString = `
             torque: { x: 0, y: 0, z: 0 },
             lastForces: {},
             drcStatus: 'ok',
-            placementInertia: 1.0, // Default inertia
+            placementInertia: inertia,
         });
         
         this.isStable = false;
@@ -83,6 +111,8 @@ export const AgentSimulationCoreString = `
     }
 
     updateParams(newParams) {
+        // In robotics mode, UI-driven param changes are ignored to keep physics stable
+        if (this.mode === 'robotics') return;
         this.params = { ...this.params, ...newParams };
         this.isStable = false;
         this.step_count = 0; // Restart ramp when params change
@@ -118,8 +148,14 @@ export const AgentSimulationCoreString = `
     updateNodeDimensions(agentId, width, height) {
         const node = this.nodeMap.get(agentId);
         if (node) {
-            node.width = width;
-            node.height = height;
+            // This is the fallback mechanism. If server-provided DRC dimensions
+            // are NOT present, we use the dimensions derived from the SVG.
+            if (!node.drc_dimensions) {
+                node.svg_drc_dimensions = { width, height };
+                // The shape from a bounding box is always a rectangle.
+                node.svg_drc_shape = 'rectangle';
+                this.isStable = false; // Dimensions changed, re-evaluate stability
+            }
         }
     }
 
@@ -153,14 +189,30 @@ export const AgentSimulationCoreString = `
     }
 
     getDrcInfo(node) {
-        const drcDims = node.drc_dimensions || { width: 2.54, height: 2.54 };
-        const drcShape = node.drc_shape || 'rectangle';
-        return { drcDims, drcShape };
+        if (this.mode === 'robotics' && (node.type === 'wall' || node.type === 'tree' || node.type === 'rough_terrain')) {
+            return { drcDims: { width: 1.0, height: 1.0 }, drcShape: 'rectangle' };
+        }
+
+        // 1. Prioritize server-provided DRC dimensions from KiCad footprints
+        if (node.drc_dimensions) {
+            return { drcDims: node.drc_dimensions, drcShape: node.drc_shape || 'rectangle' };
+        }
+        
+        // 2. Fallback to dimensions derived from SVG bounding box (client-only demo)
+        if (node.svg_drc_dimensions) {
+            return { drcDims: node.svg_drc_dimensions, drcShape: node.svg_drc_shape || 'rectangle' };
+        }
+
+        // 3. Final fallback to a generic placeholder if no other info is available
+        const defaultDims = { width: 2.54, height: 2.54 };
+        return { drcDims: defaultDims, drcShape: 'rectangle' };
     }
 
     step() {
         this.step_count++;
-        const DAMPING = this.params.settlingSpeed;
+        // Introduce a "settling" phase at the start with high damping to prevent explosions.
+        const SETTLING_FRAMES = 200;
+        const DAMPING = this.step_count < SETTLING_FRAMES ? 0.85 : this.params.settlingSpeed;
         const DT = 0.016;      
         const allPinWorldPos = {};
         this.agents.forEach((_, id) => { allPinWorldPos[id] = this.getPinWorldPos(id); });

@@ -49,6 +49,7 @@ export const LAYOUT_HEURISTICS_TUNER_TOOL_PAYLOAD: ToolCreatorPayload = {
                 <div className="flex-grow overflow-y-auto p-2 space-y-4">
                     <h4 className="font-semibold text-cyan-400 -mb-2">Global Forces</h4>
                     <ParameterSlider name="componentSpacing" label="Component Repulsion" min="0" max="200" step="1" value={params.componentSpacing} onChange={handleParamChange} description="Force pushing components apart to prevent overlap." />
+                    <ParameterSlider name="distributionStrength" label="Center Repulsion" min="0" max="2.0" step="0.05" value={params.distributionStrength} onChange={handleParamChange} description="Force pushing all components away from the center." />
                     <ParameterSlider name="netLengthWeight" label="Net Attraction Strength" min="0" max="0.1" step="0.001" value={params.netLengthWeight} onChange={handleParamChange} description="Force pulling connected components together to shorten net lengths." />
                     <ParameterSlider name="boardEdgeConstraint" label="Board Edge Force" min="0" max="50" step="0.5" value={params.boardEdgeConstraint} onChange={handleParamChange} description="Force pushing components away from the board edges."/>
                     

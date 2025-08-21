@@ -30,6 +30,7 @@ const PCB_LAYOUT_TOOL: ToolCreatorPayload = {
         { name: 'isLayoutInteractive', type: 'boolean', description: 'Flag to determine if the commit button should be active.', required: true },
         { name: 'getTool', type: 'object', description: 'Function to retrieve a tool definition by name.', required: true },
         { name: 'heuristics', type: 'object', description: 'Initial simulation heuristics from the workflow.', required: false },
+        { name: 'isServerConnected', type: 'boolean', description: 'Flag indicating if the backend server is connected.', required: true },
     ],
     implementationCode: `
         // --- Injected Module Code ---
@@ -61,6 +62,7 @@ const PCB_LAYOUT_TOOL: ToolCreatorPayload = {
             boardEdgeConstraint: 10.0,
             settlingSpeed: 0.9,
             repulsionRampUpTime: 300, // Time in frames (60 frames ~ 1s)
+            distributionStrength: 0.5,
             // Rule strengths
             proximityStrength: 0.2,
             symmetryStrength: 2.0,
@@ -97,10 +99,10 @@ const PCB_LAYOUT_TOOL: ToolCreatorPayload = {
                     
                     const simScale = mode === 'pcb' ? 1 : 10;
                     
-                    graphics = new Graphics(mountRef.current, THREE, OrbitControls, GLTFLoader, SVGLoader, graph.board_outline, simScale);
+                    graphics = new Graphics(mountRef.current, THREE, OrbitControls, GLTFLoader, SVGLoader, graph.board_outline, simScale, isServerConnected);
                     
                     const initialGraph = { ...graph, nodes: [], edges: [], rules: [] };
-                    sim = new AgentSimulation(initialGraph, simScale, THREE);
+                    sim = new AgentSimulation(initialGraph, simScale, THREE, mode);
 
                     if (!isMounted) return { sim, graphics };
                     graphics.setSimulation(sim);
@@ -143,7 +145,7 @@ const PCB_LAYOUT_TOOL: ToolCreatorPayload = {
                     if (cleanupFn) cleanupFn();
                 });
             };
-        }, [mode]);
+        }, [mode, isServerConnected]);
 
         // --- Data Update Effects ---
         React.useEffect(() => {
@@ -317,22 +319,26 @@ const PCB_LAYOUT_TOOL: ToolCreatorPayload = {
                 </div>
                 <div className="flex-shrink-0 md:w-1/4 h-96 md:h-full min-h-0 flex flex-col gap-2">
                     <VisibilityPanel />
-                    <UIToolRunner 
-                        tool={getTool('Layout Rules Editor')}
-                        props={{
-                            rules: graph.rules || [],
-                            onUpdateRules: handleUpdateRules,
-                        }}
-                    />
-                    <UIToolRunner 
-                        tool={getTool('Layout Heuristics Tuner')}
-                        props={{
-                            params: simParams,
-                            setParams: setSimParams,
-                            selectedAgent: selectedAgentId ? { id: selectedAgentId, ...simRef.current?.sim.agents.get(selectedAgentId) } : null,
-                            updateAgent: (id, key, value) => simRef.current?.sim.updateAgentParam(id, key, value)
-                        }}
-                    />
+                    {mode === 'pcb' && getTool && (
+                        <React.Fragment>
+                            <UIToolRunner 
+                                tool={getTool('Layout Rules Editor')}
+                                props={{
+                                    rules: graph.rules || [],
+                                    onUpdateRules: handleUpdateRules,
+                                }}
+                            />
+                            <UIToolRunner 
+                                tool={getTool('Layout Heuristics Tuner')}
+                                props={{
+                                    params: simParams,
+                                    setParams: setSimParams,
+                                    selectedAgent: selectedAgentId ? { id: selectedAgentId, ...simRef.current?.sim.agents.get(selectedAgentId) } : null,
+                                    updateAgent: (id, key, value) => simRef.current?.sim.updateAgentParam(id, key, value)
+                                }}
+                            />
+                        </React.Fragment>
+                    )}
                 </div>
                 <div className="absolute bottom-4 left-1/2 transform -translate-x-1/2 z-10">
                     {mode === 'pcb' && (

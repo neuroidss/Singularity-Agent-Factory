@@ -23,7 +23,8 @@
     "three": "^0.166.1",
     "@dimforge/rapier3d-compat": "latest",
     "lil-gui": "^0.19.1",
-    "idb": "^8"
+    "idb": "^8",
+    "@wllama/wllama": "2.3.4"
   },
   "devDependencies": {
     "@types/node": "^22.14.0",

@@ -14,6 +14,7 @@ type UseAppRuntimeProps = {
     generateMachineReadableId: (name: string, existingTools: LLMTool[]) => string;
     apiConfig: APIConfig;
     selectedModel: AIModel;
+    setApiCallCount: React.Dispatch<React.SetStateAction<Record<string, number>>>;
     isServerConnected: boolean;
     setTools: React.Dispatch<React.SetStateAction<LLMTool[]>>;
     forceRefreshServerTools: () => Promise<{ success: boolean; count: number }>;
@@ -38,7 +39,7 @@ type UseAppRuntimeProps = {
 export const useAppRuntime = (props: UseAppRuntimeProps) => {
     const {
         allToolsRef, logEvent, generateMachineReadableId,
-        apiConfig, selectedModel, isServerConnected, setTools,
+        apiConfig, selectedModel, setApiCallCount, isServerConnected, setTools,
         forceRefreshServerTools,
         // Kicad
         setPcbArtifacts, kicadLogEvent, setCurrentKicadArtifact,
@@ -126,7 +127,7 @@ export const useAppRuntime = (props: UseAppRuntimeProps) => {
         },
         clearObservationHistory: () => setObservationHistory([]),
         getRobotSimState: () => getRobotStateForRuntime(agentId),
-    }), [runToolImplementation, logEvent, setTools, setPcbArtifacts, generateMachineReadableId, allToolsRef, executeActionRef, setObservationHistory, getRobotStateForRuntime, forceRefreshServerTools]);
+    }), [runToolImplementation, logEvent, setTools, setPcbArtifacts, generateMachineReadableId, setObservationHistory, getRobotStateForRuntime, forceRefreshServerTools]);
 
     const executeAction = useCallback(async (toolCall: AIToolCall, agentId: string): Promise<EnrichedAIResponse> => {
         if (!toolCall) return { toolCall: null };
@@ -165,9 +166,9 @@ export const useAppRuntime = (props: UseAppRuntimeProps) => {
         // --- ROBOTICS PRIMITIVE ACTIONS ---
         if (toolToExecute.category === 'Functional' && (toolToExecute.name.startsWith('Move') || toolToExecute.name.startsWith('Turn'))) {
             try {
-                const { robot, environment } = getRobotStateForRuntime(agentId);
-                let { x, y, rotation } = robot;
-                let message = `Robot ${agentId} is already at a wall. Cannot move further.`;
+                const { robot, environment } = getRobotStateForRuntime(toolCall.arguments.agentId);
+                let { x, y, rotation, powerLevel } = robot;
+                let message = `Robot ${toolCall.arguments.agentId} is blocked. Cannot move further.`;
                 let moved = false;
         
                 if (toolToExecute.name === 'Move Forward') {
@@ -177,26 +178,41 @@ export const useAppRuntime = (props: UseAppRuntimeProps) => {
                     else if (rotation === 180) nextY += 1; // Down
                     else if (rotation === 270) nextX -= 1; // Left
         
-                    if (!environment.some(e => e.x === nextX && e.y === nextY && (e.type === 'wall' || e.type === 'tree'))) {
+                    if (!environment.some(e => e.x === nextX && e.y === nextY && (e.type === 'wall' || e.type === 'tree' || e.type === 'rough_terrain'))) {
                         x = nextX; y = nextY;
-                        message = `Robot ${agentId} moved forward to (${x}, ${y}).`;
+                        message = `Robot ${toolCall.arguments.agentId} moved forward to (${x}, ${y}).`;
+                        moved = true;
+                    }
+                } else if (toolToExecute.name === 'Move Backward') {
+                    let nextX = x, nextY = y;
+                    if (rotation === 0) nextY += 1; // Down
+                    else if (rotation === 90) nextX -= 1; // Left
+                    else if (rotation === 180) nextY -= 1; // Up
+                    else if (rotation === 270) nextX += 1; // Right
+        
+                    if (!environment.some(e => e.x === nextX && e.y === nextY && (e.type === 'wall' || e.type === 'tree' || e.type === 'rough_terrain'))) {
+                        x = nextX; y = nextY;
+                        message = `Robot ${toolCall.arguments.agentId} moved backward to (${x}, ${y}).`;
                         moved = true;
                     }
                 } else if (toolToExecute.name === 'Turn Left') {
                     rotation = (rotation - 90 + 360) % 360;
-                    message = `Robot ${agentId} turned left. New rotation: ${rotation} degrees.`;
+                    message = `Robot ${toolCall.arguments.agentId} turned left. New rotation: ${rotation} degrees.`;
                     moved = true;
                 } else if (toolToExecute.name === 'Turn Right') {
                     rotation = (rotation + 90) % 360;
-                    message = `Robot ${agentId} turned right. New rotation: ${rotation} degrees.`;
+                    message = `Robot ${toolCall.arguments.agentId} turned right. New rotation: ${rotation} degrees.`;
                      moved = true;
                 }
         
                 if (moved) {
-                    setRobotStates(prev => prev.map(r => r.id === agentId ? { ...r, x, y, rotation } : r));
+                    // All actions consume power
+                    powerLevel = Math.max(0, powerLevel - 2); // Movement is costly
+                    setRobotStates(prev => prev.map(r => r.id === toolCall.arguments.agentId ? { ...r, x, y, rotation, powerLevel } : r));
                 }
                 enrichedResult.executionResult = { success: moved, message };
-                logEvent(`[ROBOTICS] ${message}`);
+                // Do not log manual control spam
+                // logEvent(`[ROBOTICS] ${message}`);
             } catch (e) {
                 enrichedResult.executionError = e instanceof Error ? e.message : String(e);
             }
@@ -208,7 +224,7 @@ export const useAppRuntime = (props: UseAppRuntimeProps) => {
              if (toolToExecute.name === 'Start Robot Simulation') {
                 setRobotStates(prev => {
                     const personalities = runtime.getRobotSimState().personalities;
-                    const newStates = personalities.map(p => ({ id: p.id, x: p.startX, y: p.startY, rotation: 0, hasResource: false }));
+                    const newStates = personalities.map(p => ({ id: p.id, x: p.startX, y: p.startY, rotation: 0, hasResource: false, powerLevel: 100 }));
                     return newStates;
                 });
                 enrichedResult.executionResult = { success: true, message: 'Robotics simulation started.' };
@@ -322,7 +338,7 @@ export const useAppRuntime = (props: UseAppRuntimeProps) => {
                     // Always run the simulator to update ephemeral React state (like kicadProjectState).
                     // This is crucial for workflows to function correctly across page reloads when using the cache.
                     let simResult;
-                    const simKey = toolToExecute.name.replace(/KiCad /g, '').replace(/\\s/g, '_').toLowerCase();
+                    const simKey = toolToExecute.name.replace(/KiCad /g, '').replace(/\s/g, '_').toLowerCase();
                     if (toolToExecute.name.toLowerCase().includes('kicad') && kicadSimulators[simKey]) {
                          // Pass the full sorted arguments to the simulator.
                          simResult = await kicadSimulators[simKey](sortedArgs);
@@ -458,17 +474,18 @@ export const useAppRuntime = (props: UseAppRuntimeProps) => {
         relevantTools: LLMTool[],
     ): Promise<AIToolCall[] | null> => {
         logEvent(`[API CALL] Agent ${agentId} is thinking...`);
+        setApiCallCount(prev => ({ ...prev, [selectedModelRef.current.id]: (prev[selectedModelRef.current.id] || 0) + 1 }));
         try {
             const aiResponse = await aiService.generateResponse(prompt, systemInstruction, selectedModelRef.current, apiConfigRef.current, (progress) => logEvent(`[AI-PROGRESS] ${progress}`), relevantTools);
             if (aiResponse.toolCalls && aiResponse.toolCalls.length > 0) return aiResponse.toolCalls;
             logEvent(`[WARN] Agent ${agentId} did not choose any tool calls.`);
             return null;
         } catch (error) {
-            const errorMessage = error instanceof Error ? error.message : String(error);
-            logEvent(`[ERROR] Agent ${agentId} failed during AI generation: ${errorMessage}`);
+            const errorMessage = error instanceof Error ? error.message : String(error);            
+            logEvent(`[ERROR] Agent ${agentId} failed during AI generation: ${errorMessage.replace(/API key not valid. Please pass a valid API key./, 'Invalid API Key provided.')}`);
             throw error;
         }
-    }, [logEvent]);
+    }, [logEvent, setApiCallCount]);
 
     return { executeActionRef, processRequest };
 };

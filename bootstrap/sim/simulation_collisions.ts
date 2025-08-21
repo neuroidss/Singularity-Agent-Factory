@@ -139,32 +139,66 @@ export const CollisionSimulationFunctionsString = `
                     }
                 }
 
-                // --- Positional Correction ---
                 if (mtv) {
-                    const totalInertia = agentA.placementInertia + agentB.placementInertia;
-                    const ratioA = totalInertia > 0 ? agentB.placementInertia / totalInertia : 0.5;
-                    const ratioB = totalInertia > 0 ? agentA.placementInertia / totalInertia : 0.5;
-
-                    agentA.pos.x += mtv.x * ratioA;
-                    agentA.pos.z += mtv.z * ratioA;
-                    agentB.pos.x -= mtv.x * ratioB;
-                    agentB.pos.z -= mtv.z * ratioB;
-
-                    // --- Velocity Correction ---
+                    const isAStatic = agentA.placementInertia > 1e6;
+                    const isBStatic = agentB.placementInertia > 1e6;
+                
+                    // Skip collision resolution between two static objects to prevent them from moving.
+                    if (isAStatic && isBStatic) continue;
+                
+                    // --- Positional Correction ---
+                    if (isAStatic) {
+                        // A is static, so only B moves
+                        agentB.pos.x -= mtv.x;
+                        agentB.pos.z -= mtv.z;
+                    } else if (isBStatic) {
+                        // B is static, so only A moves
+                        agentA.pos.x += mtv.x;
+                        agentA.pos.z += mtv.z;
+                    } else {
+                        // Both are dynamic, so move them based on their mass ratio
+                        const totalInertia = agentA.placementInertia + agentB.placementInertia;
+                        const ratioA = totalInertia > 0 ? agentB.placementInertia / totalInertia : 0.5;
+                        const ratioB = totalInertia > 0 ? agentA.placementInertia / totalInertia : 0.5;
+                        agentA.pos.x += mtv.x * ratioA;
+                        agentA.pos.z += mtv.z * ratioA;
+                        agentB.pos.x -= mtv.x * ratioB;
+                        agentB.pos.z -= mtv.z * ratioB;
+                    }
+                
+                    // --- Velocity Correction (simplified impulse) ---
                     const mtvNorm = Math.hypot(mtv.x, mtv.z);
                     if (mtvNorm > 1e-6) {
                         const normal = { x: mtv.x / mtvNorm, z: mtv.z / mtvNorm };
                         const relVel = { x: agentA.vel.x - agentB.vel.x, z: agentA.vel.z - agentB.vel.z };
                         const velAlongNormal = relVel.x * normal.x + relVel.z * normal.z;
-
-                        if (velAlongNormal < 0) { // Only resolve if moving towards each other
-                            const impulseMag = -velAlongNormal;
-                            const impulse = { x: normal.x * impulseMag, z: normal.z * impulseMag };
+                
+                        if (velAlongNormal < 0) { // Only resolve if they are moving towards each other
+                            const restitution = 0.05; // Low bounciness for stability
+                            const impulseMag = -(1 + restitution) * velAlongNormal;
                             
-                            agentA.vel.x += impulse.x * ratioA;
-                            agentA.vel.z += impulse.z * ratioA;
-                            agentB.vel.x -= impulse.x * ratioB;
-                            agentB.vel.z -= impulse.z * ratioB;
+                            if (isAStatic) {
+                                // Agent A is static, all impulse affects B
+                                const impulse = { x: normal.x * impulseMag, z: normal.z * impulseMag };
+                                agentB.vel.x -= impulse.x;
+                                agentB.vel.z -= impulse.z;
+                            } else if (isBStatic) {
+                                // Agent B is static, all impulse affects A
+                                const impulse = { x: normal.x * impulseMag, z: normal.z * impulseMag };
+                                agentA.vel.x += impulse.x;
+                                agentA.vel.z += impulse.z;
+                            } else {
+                                // Both are dynamic
+                                const totalInertia = agentA.placementInertia + agentB.placementInertia;
+                                if (totalInertia > 0) {
+                                    const impulseDistributed = impulseMag / (1/agentA.placementInertia + 1/agentB.placementInertia);
+                                    const impulse = { x: normal.x * impulseDistributed, z: normal.z * impulseDistributed };
+                                    agentA.vel.x += impulse.x / agentA.placementInertia;
+                                    agentA.vel.z += impulse.z / agentA.placementInertia;
+                                    agentB.vel.x -= impulse.x / agentB.placementInertia;
+                                    agentB.vel.z -= impulse.z / agentB.placementInertia;
+                                }
+                            }
                         }
                     }
                 }

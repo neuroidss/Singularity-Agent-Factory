@@ -2,12 +2,13 @@
 
 export const GraphicsClassString = `
 class Graphics {
-    constructor(mountNode, THREE, OrbitControls, GLTFLoader, SVGLoader, boardOutline, scale) {
+    constructor(mountNode, THREE, OrbitControls, GLTFLoader, SVGLoader, boardOutline, scale, isServerConnected) {
         this.THREE = THREE;
         this.GLTFLoader = GLTFLoader;
         this.SVGLoader = SVGLoader;
         this.loader = new this.GLTFLoader();
         this.svgLoader = new this.SVGLoader();
+        this.isServerConnected = isServerConnected;
 
         this.scene = new this.THREE.Scene();
         this.scene.background = new this.THREE.Color(0x111827); // bg-gray-900
@@ -279,7 +280,13 @@ class Graphics {
         }
 
         if (mode === 'pcb' && node.svgPath) {
-            const fullSvgUrl = node.svgPath.startsWith('http') ? node.svgPath : 'http://localhost:3001/' + node.svgPath;
+            let fullSvgUrl;
+            if (this.isServerConnected) {
+                fullSvgUrl = node.svgPath.startsWith('http') ? node.svgPath : 'http://localhost:3001/' + node.svgPath;
+            } else {
+                fullSvgUrl = node.svgPath; // Use relative path for client-only
+            }
+            
             const isBottom = node.side === 'bottom';
             const footprintMaterial = this.materials.footprint[isBottom ? 'bottom' : 'top'];
 
@@ -297,6 +304,17 @@ class Graphics {
                     });
                 });
                 
+                // --- NEW: Calculate SVG bounds and update simulation ---
+                const svgBbox = new this.THREE.Box3().setFromObject(group);
+                const svgSize = new this.THREE.Vector3();
+                svgBbox.getSize(svgSize);
+
+                if (this.simulation && (svgSize.x > 0 || svgSize.y > 0)) {
+                    // Pass the dimensions (in mm, which is the SVG's unit) to the simulation.
+                    this.simulation.updateNodeDimensions(id, svgSize.x, svgSize.y);
+                }
+                // --- END NEW LOGIC ---
+
                 const box = new this.THREE.Box3().setFromObject(group);
                 const center = new this.THREE.Vector3();
                 box.getCenter(center);
@@ -337,7 +355,12 @@ class Graphics {
                           (mode === 'robotics' && node.asset_glb) ? node.asset_glb : null;
 
         if (assetPath) {
-            const fullGlbUrl = assetPath.startsWith('http') ? assetPath : 'http://localhost:3001/' + assetPath;
+            let fullGlbUrl;
+            if (this.isServerConnected) {
+                fullGlbUrl = assetPath.startsWith('http') ? assetPath : 'http://localhost:3001/' + assetPath;
+            } else {
+                fullGlbUrl = assetPath; // Use relative path for client-only
+            }
             
             const loadGltfFromBlob = (blob) => {
                 const url = URL.createObjectURL(blob);
@@ -349,51 +372,52 @@ class Graphics {
                     }
                     const originalScene = gltf.scene;
                     
-                    const componentNode = originalScene.getObjectByName('REF**');
+                    let modelRoot;
 
-                    if (!componentNode) {
-                        console.warn(\`[GLB] Could not find component node 'REF**' in GLB for ID: \${id}. The 3D model might be missing. Proceeding with placeholder.\`);
-                        URL.revokeObjectURL(url);
-                        return;
+                    if (mode === 'pcb') {
+                        const componentNode = originalScene.getObjectByName('REF**');
+                        if (!componentNode) {
+                            console.warn(\`[GLB] KiCad mode: Could not find component node 'REF**' in GLB for ID: \${id}. The 3D model might be missing. Proceeding with placeholder.\`);
+                            URL.revokeObjectURL(url);
+                            return;
+                        }
+                        modelRoot = new this.THREE.Group();
+                        modelRoot.add(componentNode);
+                    } else {
+                        modelRoot = originalScene.clone();
                     }
-                    
-                    const group = new this.THREE.Group();
-                    group.add(componentNode);
-                    group.userData.agentId = id;
+
+                    modelRoot.userData.agentId = id;
                     
                     if (mode === 'pcb') {
+                        const componentNodeForTransform = modelRoot.children[0];
                         const transforms = node.assetTransforms?.glb || {};
                         const customOffset = transforms.offset || [0, 0, 0];
                         
                         if (transforms.rotation) {
                             const rot = transforms.rotation; // degrees
-                            componentNode.rotation.set(
+                            componentNodeForTransform.rotation.set(
                                 rot[0] * this.THREE.MathUtils.DEG2RAD,
                                 rot[1] * this.THREE.MathUtils.DEG2RAD,
                                 rot[2] * this.THREE.MathUtils.DEG2RAD
                             );
                         }
 
-                        componentNode.position.set(
-                            customOffset[0],
-                            customOffset[1],
-                            customOffset[2]
-                        );
-
+                        componentNodeForTransform.position.set(customOffset[0], customOffset[1], customOffset[2]);
                         const glbScale = 1000 * scale;
-                        group.scale.set(glbScale, glbScale, glbScale);
+                        modelRoot.scale.set(glbScale, glbScale, glbScale);
 
                     } else { // robotics
-                        const box = new this.THREE.Box3().setFromObject(componentNode);
+                        const box = new this.THREE.Box3().setFromObject(modelRoot);
                         const size = box.getSize(new this.THREE.Vector3());
                         const maxDim = Math.max(size.x, size.y, size.z);
                         const desiredSize = scale * (node.type === 'robot' ? 1.5 : 1.0);
                         const scaleFactor = maxDim > 0 ? desiredSize / maxDim : 1.0;
-                        group.scale.set(scaleFactor, scaleFactor, scaleFactor);
+                        modelRoot.scale.set(scaleFactor, scaleFactor, scaleFactor);
                         
-                        const newBox = new this.THREE.Box3().setFromObject(group);
+                        const newBox = new this.THREE.Box3().setFromObject(modelRoot);
                         const center = newBox.getCenter(new this.THREE.Vector3());
-                        group.position.sub(center).sub(new this.THREE.Vector3(0, newBox.min.y, 0));
+                        modelRoot.position.sub(center).sub(new this.THREE.Vector3(0, newBox.min.y, 0));
                     }
 
 
@@ -401,8 +425,8 @@ class Graphics {
                         meshEntry.placeholder.visible = false;
                     }
                     
-                    meshEntry.glb = group;
-                    this.scene.add(group);
+                    meshEntry.glb = modelRoot;
+                    this.scene.add(modelRoot);
                     
                     URL.revokeObjectURL(url);
                 }, undefined, (error) => console.error(\`[GLB] Error loading model from blob for \${id}:\`, error));

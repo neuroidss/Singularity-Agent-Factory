@@ -1,6 +1,5 @@
 
 
-
 import React from 'react';
 import type { LLMTool, AIModel } from './types';
 import { ModelProvider } from './types';
@@ -26,7 +25,9 @@ export const AI_MODELS: AIModel[] = [
     { id: 'onnx-community/Qwen3-0.6B-ONNX', name: 'Qwen3-0.6B', provider: ModelProvider.HuggingFace },
     { id: 'onnx-community/gemma-3n-E2B-it-ONNX', name: 'Gemma 3N E2B', provider: ModelProvider.HuggingFace },
     { id: 'onnx-community/Qwen3-4B-ONNX', name: 'Qwen3-4B', provider: ModelProvider.HuggingFace },
-    { id: 'onnx-community/Qwen3-1.7B-ONNX', name: 'Qwen3-1.7B', provider: ModelProvider.HuggingFace }
+    { id: 'onnx-community/Qwen3-1.7B-ONNX', name: 'Qwen3-1.7B', provider: ModelProvider.HuggingFace },
+    { id: 'https://huggingface.co/Qwen/Qwen1.5-0.5B-Chat-GGUF/resolve/main/qwen1_5-0_5b-chat-q2_k.gguf', name: 'Qwen1.5 0.5B (Wllama)', provider: ModelProvider.Wllama },
+    { id: 'https://huggingface.co/g-201/gemma-3-1b-it-gguf/resolve/main/gemma-3-1b-it-q2_k.gguf', name: 'Gemma 3 1B (Wllama)', provider: ModelProvider.Wllama },
 ];
 
 export const SWARM_AGENT_SYSTEM_PROMPT = `You are an autonomous agent acting as a Role Lead within a self-organizing, purpose-driven system governed by the system's purpose-driven constitution. The system's ultimate Purpose is to discover its own purpose through constant, radical self-improvement.

@@ -1,4 +1,3 @@
-
 import type { ToolCreatorPayload } from '../types';
 
 export const UI_AGENT_TOOLS: ToolCreatorPayload[] = [
@@ -14,62 +13,202 @@ export const UI_AGENT_TOOLS: ToolCreatorPayload[] = [
           { name: 'handleManualControl', type: 'object', description: 'Function to execute a manual command.', required: true },
         ],
         implementationCode: `
-          const { robotState, personalities, handleManualControl } = props;
           const { robotStates, environmentState, observationHistory } = robotState;
           
-          const pilotAgentId = 'robot-1'; // Hardcode pilot for now
+          const pilotAgentId = 'Scout-Drone-1'; // Pilot the scout drone
 
           const handleDefineAgent = () => {
-              handleManualControl('Define Robot Agent', { id: 'robot-1', startX: 2, startY: 2, behaviorType: 'seek_target', targetId: 'red_car' });
-              handleManualControl('Define Robot Agent', { id: 'robot-2', startX: 10, startY: 10, behaviorType: 'patroller' });
+              // Deploys a team for the mission
+              handleManualControl('Define Robot Agent', { id: 'Scout-Drone-1', asset_glb: 'assets/drone_scout.glb', startX: 2, startY: 2, behaviorType: 'seek_target', targetId: 'red_car_1' });
+              // You can define other agents here if needed, for example a resource collector for depleted batteries.
           };
           
-          const getStatusColor = (status) => {
-            if (status.includes('FAIL')) return 'text-red-400';
-            if (status.includes('SUCCESS')) return 'text-green-400';
-            return 'text-gray-300';
-          };
-      
+          // --- Multi-input Control System ---
+          const [gamepadStatus, setGamepadStatus] = React.useState('Disconnected');
+          const joystickBaseRef = React.useRef(null);
+          const joystickKnobRef = React.useRef(null);
+          const inputState = React.useRef({
+              joyX: 0, joyY: 0, joyActive: false,
+              keyF: 0, keyB: 0, keyL: 0, keyR: 0,
+              padX: 0, padY: 0, padConnected: false,
+          });
+          const lastCommandTimeRef = React.useRef(0);
+          const animationFrameId = React.useRef(null);
+          
+          const COMMAND_INTERVAL = 150; // ms between commands
+
+          React.useEffect(() => {
+            const handleGamepadConnected = (e) => {
+                inputState.current.padConnected = true;
+                setGamepadStatus(\`Connected: \${e.gamepad.id}\`);
+            };
+            const handleGamepadDisconnected = (e) => {
+                inputState.current.padConnected = false;
+                setGamepadStatus('Disconnected');
+            };
+            window.addEventListener('gamepadconnected', handleGamepadConnected);
+            window.addEventListener('gamepaddisconnected', handleGamepadDisconnected);
+
+            const handleKeyDown = (e) => {
+                if (e.repeat) return;
+                if (e.key === 'w' || e.key === 'ArrowUp') inputState.current.keyF = 1;
+                if (e.key === 's' || e.key === 'ArrowDown') inputState.current.keyB = 1;
+                if (e.key === 'a' || e.key === 'ArrowLeft') inputState.current.keyL = 1;
+                if (e.key === 'd' || e.key === 'ArrowRight') inputState.current.keyR = 1;
+            };
+            const handleKeyUp = (e) => {
+                if (e.key === 'w' || e.key === 'ArrowUp') inputState.current.keyF = 0;
+                if (e.key === 's' || e.key === 'ArrowDown') inputState.current.keyB = 0;
+                if (e.key === 'a' || e.key === 'ArrowLeft') inputState.current.keyL = 0;
+                if (e.key === 'd' || e.key === 'ArrowRight') inputState.current.keyR = 0;
+            };
+            window.addEventListener('keydown', handleKeyDown);
+            window.addEventListener('keyup', handleKeyUp);
+            
+            const base = joystickBaseRef.current;
+            const knob = joystickKnobRef.current;
+            if (!base || !knob) return;
+            
+            const handlePointerDown = (e) => {
+                e.preventDefault();
+                inputState.current.joyActive = true;
+            };
+            const handlePointerMove = (e) => {
+                if (!inputState.current.joyActive) return;
+                e.preventDefault();
+                const rect = base.getBoundingClientRect();
+                const size = rect.width;
+                const halfSize = size / 2;
+                let x = e.clientX - rect.left - halfSize;
+                let y = e.clientY - rect.top - halfSize;
+                const dist = Math.min(halfSize, Math.hypot(x, y));
+                const angle = Math.atan2(y, x);
+                x = Math.cos(angle) * dist;
+                y = Math.sin(angle) * dist;
+                knob.style.transform = \`translate(-50%, -50%) translate(\${x}px, \${y}px)\`;
+                inputState.current.joyX = x / halfSize;
+                inputState.current.joyY = y / halfSize;
+            };
+            const handlePointerUp = (e) => {
+                e.preventDefault();
+                inputState.current.joyActive = false;
+                knob.style.transform = 'translate(-50%, -50%)';
+                inputState.current.joyX = 0;
+                inputState.current.joyY = 0;
+            };
+            
+            base.addEventListener('pointerdown', handlePointerDown);
+            window.addEventListener('pointermove', handlePointerMove);
+            window.addEventListener('pointerup', handlePointerUp);
+
+            const gameLoop = () => {
+                const now = performance.now();
+                
+                if (inputState.current.padConnected) {
+                    const gp = navigator.getGamepads()[0];
+                    if (gp) {
+                        const deadzone = 0.2;
+                        const rawX = gp.axes[0] || 0;
+                        const rawY = gp.axes[1] || 0;
+                        inputState.current.padX = Math.abs(rawX) > deadzone ? rawX : 0;
+                        inputState.current.padY = Math.abs(rawY) > deadzone ? rawY : 0;
+                    }
+                }
+                
+                // Combine inputs (gamepad takes precedence)
+                const finalY = inputState.current.padConnected ? -inputState.current.padY : -inputState.current.joyY + (inputState.current.keyF - inputState.current.keyB);
+                const finalX = inputState.current.padConnected ? inputState.current.padX : inputState.current.joyX + (inputState.current.keyR - inputState.current.keyL);
+
+                if (now - lastCommandTimeRef.current > COMMAND_INTERVAL) {
+                    let command = null;
+                    if (finalY > 0.5) command = 'Move Forward';
+                    else if (finalY < -0.5) command = 'Move Backward';
+                    else if (finalX < -0.5) command = 'Turn Left';
+                    else if (finalX > 0.5) command = 'Turn Right';
+                    
+                    if (command) {
+                        handleManualControl(command, { agentId: pilotAgentId });
+                        lastCommandTimeRef.current = now;
+                    }
+                }
+                animationFrameId.current = requestAnimationFrame(gameLoop);
+            };
+            gameLoop();
+
+            return () => {
+                window.removeEventListener('gamepadconnected', handleGamepadConnected);
+                window.removeEventListener('gamepaddisconnected', handleGamepadDisconnected);
+                window.removeEventListener('keydown', handleKeyDown);
+                window.removeEventListener('keyup', handleKeyUp);
+                if (base) base.removeEventListener('pointerdown', handlePointerDown);
+                window.removeEventListener('pointermove', handlePointerMove);
+                window.removeEventListener('pointerup', handlePointerUp);
+                if (animationFrameId.current) cancelAnimationFrame(animationFrameId.current);
+            };
+          }, [handleManualControl]);
+
           return (
             <div className="bg-gray-800/60 border border-gray-700 rounded-xl p-4 space-y-4">
               <h3 className="text-lg font-bold text-indigo-300">Robotics Control</h3>
               
-              {/* Simulation Controls */}
               <div className="grid grid-cols-3 gap-2">
                 <button onClick={() => handleManualControl('Start Robot Simulation')} className="bg-green-600 hover:bg-green-700 text-white font-semibold py-2 px-3 rounded-lg">Start</button>
                 <button onClick={() => handleManualControl('Step Robot Simulation')} className="bg-blue-600 hover:bg-blue-700 text-white font-semibold py-2 px-3 rounded-lg">Step</button>
                 <button onClick={() => handleManualControl('Stop Robot Simulation')} className="bg-red-600 hover:bg-red-700 text-white font-semibold py-2 px-3 rounded-lg">Stop</button>
               </div>
 
-              {/* Agent Definition */}
-               <button onClick={handleDefineAgent} className="w-full bg-purple-600 hover:bg-purple-700 text-white font-semibold py-2 px-3 rounded-lg">Define Agents</button>
+              <button onClick={handleDefineAgent} className="w-full bg-purple-600 hover:bg-purple-700 text-white font-semibold py-2 px-3 rounded-lg">Define Agents</button>
               
-              {/* Manual Piloting */}
               <div className="pt-2 border-t border-gray-700">
                   <h4 className="font-semibold text-gray-300 text-center mb-2">Manual Pilot for {pilotAgentId}</h4>
-                  <div className="grid grid-cols-3 gap-2 justify-items-center">
-                      <div></div>
-                      <button onClick={() => handleManualControl('Move Forward', { agentId: pilotAgentId })} className="bg-gray-600 hover:bg-gray-500 rounded-md p-3">⬆️</button>
-                      <div></div>
-                      <button onClick={() => handleManualControl('Turn Left', { agentId: pilotAgentId })} className="bg-gray-600 hover:bg-gray-500 rounded-md p-3">⬅️</button>
-                      <button onClick={() => handleManualControl('Create Skill From Observation', { skillName: 'LearnedPatrol', skillDescription: 'A pattern learned from manual piloting.' })} className="bg-yellow-600 hover:bg-yellow-500 rounded-md p-3 text-sm font-bold">Learn</button>
-                      <button onClick={() => handleManualControl('Turn Right', { agentId: pilotAgentId })} className="bg-gray-600 hover:bg-gray-500 rounded-md p-3">➡️</button>
+                  <p className="text-xs text-center text-gray-400 mb-2">Use Joystick, WASD/Arrows, or connect a Gamepad.</p>
+                  <div className="flex items-center justify-center gap-4">
+                      <div ref={joystickBaseRef} className="relative w-32 h-32 bg-gray-700/50 rounded-full flex-shrink-0 touch-none select-none">
+                          <div ref={joystickKnobRef} className="absolute w-16 h-16 bg-gray-500 rounded-full border-2 border-gray-400" style={{ top: '50%', left: '50%', transform: 'translate(-50%, -50%)', transition: 'transform 0.1s' }}></div>
+                      </div>
+                      <div className="flex flex-col gap-2">
+                          <button onClick={() => handleManualControl('Create Skill From Observation', { skillName: 'LearnedPatrol', skillDescription: 'A pattern learned from manual piloting.' })} className="bg-yellow-600 hover:bg-yellow-500 rounded-lg p-3 text-sm font-bold">
+                              Learn Skill
+                          </button>
+                          <div className="text-center text-xs p-2 bg-gray-900/50 rounded-lg">
+                              <p className="font-semibold text-gray-300">Gamepad:</p>
+                              <p className={\`\${inputState.current.padConnected ? 'text-green-400' : 'text-gray-500'}\`}>
+                                  {gamepadStatus}
+                              </p>
+                          </div>
+                      </div>
                   </div>
               </div>
               
-               {/* Agent Status Display */}
                <div className="pt-2 border-t border-gray-700">
                   <h4 className="font-semibold text-gray-300 mb-2">Agent Status</h4>
-                   <div className="space-y-2">
-                     {robotStates.map(agent => (
-                       <div key={agent.id} className="bg-gray-900/50 p-2 rounded-lg text-sm">
-                         <div className="flex justify-between">
-                           <span className="font-bold">{agent.id}</span>
-                           <span className="font-mono">({agent.x}, {agent.y}) rot: {agent.rotation}°</span>
-                         </div>
-                       </div>
-                     ))}
-                     {robotStates.length === 0 && <p className="text-gray-500 text-sm">No active agents.</p>}
+                   <div className="space-y-2 max-h-48 overflow-y-auto">
+                     {personalities.map(p => {
+                        const activeAgent = robotStates.find(r => r.id === p.id);
+                        const statusColor = activeAgent ? 'text-green-400' : 'text-yellow-400';
+                        const statusText = activeAgent ? 'Active' : 'Defined';
+
+                        const powerLevel = activeAgent?.powerLevel || 0;
+                        const powerColor = powerLevel > 50 ? 'text-green-400' : powerLevel > 20 ? 'text-yellow-400' : 'text-red-500';
+
+                        return (
+                           <div key={p.id} className="bg-gray-900/50 p-2 rounded-lg text-sm">
+                                <div className="flex justify-between">
+                                   <span className="font-bold">{p.id}</span>
+                                   <span className={\`font-mono \${statusColor}\`}>{statusText}</span>
+                                </div>
+                                {activeAgent ? (
+                                    <div className="font-mono text-xs text-gray-400 flex justify-between items-center">
+                                      <span>({activeAgent.x.toFixed(0)}, {activeAgent.y.toFixed(0)}) rot: {activeAgent.rotation}°</span>
+                                      <span className={powerColor}>PWR: {powerLevel}%</span>
+                                    </div>
+                                ) : (
+                                    <div className="font-mono text-xs text-gray-400">Behavior: {p.behaviorType}</div>
+                                )}
+                           </div>
+                        );
+                     })}
+                     {personalities.length === 0 && <p className="text-gray-500 text-sm">No agents defined.</p>}
                    </div>
                </div>
             </div>
