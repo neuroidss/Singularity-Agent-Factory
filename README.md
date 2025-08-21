@@ -2,7 +2,7 @@
 
 **Live Demo:** [https://neuroidss.github.io/Singularity-Agent-Factory/](https://neuroidss.github.io/Singularity-Agent-Factory/)
 
-This project is an experimental, browser-first platform for building a self-improving AI agent swarm. The system is designed around a purpose-driven architecture where agents resolve user requests by identifying and processing "deltas"—the gap between the current reality and a desired potential. It dynamically evolves its own capabilities by creating new tools and automating complex workflows, with the ultimate goal of bootstrapping a recursively self-improving "singularity agent."
+This project is an experimental, browser-first platform for building a self-improving AI agent swarm. The system is designed around a purpose-driven architecture where agents resolve user requests by identifying and processing "Tensions"—the gap between the current reality and a desired potential. It dynamically evolves its own capabilities by creating new tools and automating complex workflows, with the ultimate goal of bootstrapping a recursively self-improving "singularity agent."
 
 The application demonstrates these concepts across multiple complex domains, including **automated hardware engineering (KiCad PCB Design)**, **robotics simulation**, and **long-term strategic planning** via a knowledge graph.
 
@@ -20,15 +20,17 @@ The application demonstrates these concepts across multiple complex domains, inc
 
 ## The Agent Constitution
 
-Agent behavior is not hard-coded but guided by a formal constitution. This provides a robust framework for an AI that can manage its own evolution. Key principles include:
+Agent behavior is not hard-coded but guided by a formal constitution, adapted from Holacracy for a hybrid human-AI swarm context. This provides a robust framework for an AI that can manage its own evolution. Key principles include:
 
-1.  **Delta-Driven Execution**: The agent doesn't just execute a plan. It identifies and resolves "Deltas"—the gap between the current reality and a potential future. A user's request is the initial Delta; a missing tool is an "Evolutionary Delta."
+1.  **Role-Based Execution**: Agents and humans don't have job titles; they fill **Roles**. Each Role has a clear **Purpose** and **Accountabilities**. The person or agent filling the role is the **Role Lead**.
 
-2.  **Evolution is the Prime Directive**: The agent's primary way to solve novel problems is to evolve the system itself. If a capability is missing, its highest priority is to create a new tool.
+2.  **Tension-Driven Action**: The core driver of the system is the processing of **Tensions**—the gap between the current reality and a Role's potential. A user request is the initial Tension; a missing tool creates a **"Governance Tension."**
 
-3.  **Strategic Cognition**: Agents operate on two levels: tactical (solving the immediate problem) and strategic (pursuing long-term goals, or "Directives"). These Directives are stored in a persistent knowledge graph, forming the agent's long-term memory.
+3.  **Universal Tool-Based Interaction**: All actors, whether human or AI, interact with the system by executing **Tools**. There are no backdoors. This ensures every action is explicit, logged, and contributes to the system's history, making the entire organization transparent and auditable.
 
-4.  **Distributed Capabilities**: When one agent creates a new tool, it instantly becomes available to all other agents. This allows the collective to dynamically create and distribute contextual skills, making the entire system more capable.
+4.  **Changing Governance is the Prime Directive**: The agent's primary way to solve novel problems is to evolve the system's **Governance** (its set of tools and workflows). The system is bootstrapped by a `Tool Creator` tool, which can, in turn, create new tools—including those that might one day modify the core agent logic itself.
+
+5.  **Hybrid Human-AI Operation**: Humans can fill Roles just like agents. However, to ensure the system's progress is never blocked, a Circle Lead can reassign a Role from a human to an agent if needed, maintaining the operational flow.
 
 ## Application Modules
 

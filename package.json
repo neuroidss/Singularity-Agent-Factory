@@ -1,5 +1,5 @@
 {
-  "name": "singularity-agent-factory-mcp-kicad-autoroute",
+  "name": "singularity-agent-factory-mcp-kicad-freerouting",
   "private": true,
   "version": "0.0.0",
   "type": "module",
