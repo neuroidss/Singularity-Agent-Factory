@@ -28,7 +28,7 @@ Agent behavior is not hard-coded but guided by a formal constitution, adapted fr
 
 3.  **Universal Tool-Based Interaction**: All actors, whether human or AI, interact with the system by executing **Tools**. There are no backdoors. This ensures every action is explicit, logged, and contributes to the system's history, making the entire organization transparent and auditable.
 
-4.  **Changing Governance is the Prime Directive**: The agent's primary way to solve novel problems is to evolve the system's **Governance** (its set of tools and workflows). The system is bootstrapped by a `Tool Creator` tool, which can, in turn, create new tools—including those that might one day modify the core agent logic itself.
+4.  **Self-Governance is the Prime Directive**: The agent's primary way to solve novel problems is to evolve the system's **Governance** (its set of tools and workflows). The system is bootstrapped by a `Tool Creator` tool, which can, in turn, create new tools—including those that might one day modify the core agent logic itself.
 
 5.  **Hybrid Human-AI Operation**: Humans can fill Roles just like agents. However, to ensure the system's progress is never blocked, a Circle Lead can reassign a Role from a human to an agent if needed, maintaining the operational flow.
 

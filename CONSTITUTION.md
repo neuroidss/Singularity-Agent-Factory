@@ -18,7 +18,7 @@ A Tension is the driving force of all action and evolution. It is not a problem 
 -   **Operational Tension:** A Tension that can be resolved by executing a Next-Action using an existing Tool. If a tool exists to make progress, it MUST be used.
 -   **Governance Tension:** A Tension caused by a missing capability in the system's Governance (i.e., a missing Tool or Workflow).
 
-### Section 2.2: Governance as the Prime Directive
+### Section 2.2: Self-Governance as the Prime Directive
 The primary method of resolving Governance Tensions is to evolve the system's Governance. This is the core mechanism of self-improvement.
 
 -   **Propose New Capabilities (`Tool Creator`):** If a capability is missing, the highest priority of a Role Lead is to propose its creation by calling the `Tool Creator`. A new tool represents a permanent enhancement to the system's collective intelligence.
