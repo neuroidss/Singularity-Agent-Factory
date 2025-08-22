@@ -75,6 +75,10 @@ class Graphics {
         window.addEventListener('resize', this.onWindowResize.bind(this));
     }
 
+    updateConnectionStatus(isConnected) {
+        this.isServerConnected = isConnected;
+    }
+
     updateVisibility(newVisibility) {
         this.visibility = newVisibility;
     }
@@ -332,12 +336,13 @@ class Graphics {
             };
 
             if (window.cacheService) {
+                const cacheBuster = '?t=' + new Date().getTime();
                 window.cacheService.getAssetBlob(fullSvgUrl).then(async (blob) => {
                     if (blob) {
                         const svgText = await blob.text();
                         loadSvgFromText(svgText);
                     } else {
-                        fetch(fullSvgUrl)
+                        fetch(fullSvgUrl + cacheBuster)
                             .then(res => res.ok ? res.text() : Promise.reject(new Error(\`HTTP \${res.status}\`)))
                             .then(svgText => {
                                 window.cacheService.setAssetBlob(fullSvgUrl, new Blob([svgText], {type: 'image/svg+xml'}));
@@ -433,11 +438,12 @@ class Graphics {
             };
 
             if (window.cacheService) {
+                const cacheBuster = '?t=' + new Date().getTime();
                 window.cacheService.getAssetBlob(fullGlbUrl).then(async (blob) => {
                     if (blob) {
                         loadGltfFromBlob(blob);
                     } else {
-                        fetch(fullGlbUrl)
+                        fetch(fullGlbUrl + cacheBuster)
                             .then(res => res.ok ? res.blob() : Promise.reject(new Error(\`HTTP \${res.status}\`)))
                             .then(blob => {
                                 window.cacheService.setAssetBlob(fullGlbUrl, blob);

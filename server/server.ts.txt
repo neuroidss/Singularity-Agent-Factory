@@ -28,9 +28,8 @@ const MAX_LOGS = 100;
 // --- Middleware ---
 app.use(cors()); // Allow requests from the frontend
 app.use(express.json()); // Parse JSON bodies
-// Statically serve the scripts and assets directory to allow frontend access to generated files
+// Statically serve the scripts directory to allow frontend access to generated files
 app.use('/scripts', express.static(SCRIPTS_DIR));
-app.use('/assets', express.static(ASSETS_DIR));
 
 // --- Utility Functions ---
 const readToolsAndLoadCache = async (): Promise<LLMTool[]> => {
@@ -159,6 +158,29 @@ const startKicadService = async (): Promise<{ success: boolean; message: string;
 };
 
 // --- API Endpoints ---
+
+// NEW: Explicitly serve files from the assets directory
+app.get('/assets/:filename', async (req, res) => {
+    try {
+        const { filename } = req.params;
+        // Security: Prevent directory traversal attacks
+        if (filename.includes('..') || path.isAbsolute(filename)) {
+            return res.status(400).send('Invalid filename.');
+        }
+        const filePath = path.join(ASSETS_DIR, filename);
+
+        // Check if file exists before attempting to send
+        await fs.access(filePath);
+        
+        // Let Express handle setting the correct Content-Type header
+        res.sendFile(filePath);
+    } catch (error) {
+        // This will now provide a clear log on the server side when an asset is not found.
+        console.error(`[ASSET SERVER] Error serving '${req.path}':`, error);
+        res.status(404).send('Asset not found');
+    }
+});
+
 
 // Get all server-side tools from the cache
 app.get('/api/tools', (req: express.Request, res: express.Response) => {

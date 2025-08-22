@@ -145,9 +145,17 @@ const PCB_LAYOUT_TOOL: ToolCreatorPayload = {
                     if (cleanupFn) cleanupFn();
                 });
             };
-        }, [mode, isServerConnected]);
+        }, [mode]);
 
         // --- Data Update Effects ---
+
+        // NEW EFFECT: Keep graphics object in sync with server connection status to prevent stale state.
+        React.useEffect(() => {
+            if (simRef.current?.graphics && isSimReady) {
+                simRef.current.graphics.updateConnectionStatus(isServerConnected);
+            }
+        }, [isServerConnected, isSimReady]);
+
         React.useEffect(() => {
             if (heuristics && Object.keys(heuristics).length > 0) {
                 setSimParams(prev => ({ ...prev, ...heuristics }));

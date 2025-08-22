@@ -5,7 +5,7 @@ export const DEMO_WORKFLOW: AIToolCall[] = [
     { name: 'Define KiCad Component', arguments: { componentReference: 'U1', componentDescription: '8-Channel ADC', componentValue: 'ADS131M08', footprintIdentifier: 'Package_QFP:LQFP-32_5x5mm_P0.5mm', numberOfPins: 32, side: 'top' } },
     { name: 'Define KiCad Component', arguments: { componentReference: 'U2', componentDescription: '3.3V LDO Voltage Regulator', componentValue: 'LP5907QMFX-3.3Q1', footprintIdentifier: 'Package_TO_SOT_SMD:SOT-23-5', numberOfPins: 5, side: 'top' } },
     { name: 'Define KiCad Component', arguments: { componentReference: 'U3', componentDescription: '3.3V LDO Voltage Regulator', componentValue: 'LP5907QMFX-3.3Q1', footprintIdentifier: 'Package_TO_SOT_SMD:SOT-23-5', numberOfPins: 5, side: 'top' } },
-    { name: 'Define KiCad Component', arguments: { componentReference: 'X1', componentDescription: '8.192MHz Crystal', componentValue: '8.192MHz', footprintIdentifier: 'freeeeg8-alpha:Oscillator_SMD_EuroQuartz_XO32-4Pin_3.2x2.5mm_HandSoldering', numberOfPins: 4, side: 'top' } },
+    { name: 'Define KiCad Component', arguments: { componentReference: 'X1', componentDescription: '8.192MHz Crystal', componentValue: '8.192MHz', footprintIdentifier: 'freeeeg8-alpha:Oscillator_SMD_EuroQuartz_XO32-4Pin_3.2x2.5mm_RotB_HandSoldering', numberOfPins: 4, side: 'top' } },
     { name: 'Define KiCad Component', arguments: { componentReference: 'C1', componentDescription: '220nF Ceramic Capacitor', componentValue: '220nF', footprintIdentifier: 'Capacitor_SMD:C_0402_1005Metric', numberOfPins: 2, side: 'top' } },
     { name: 'Define KiCad Component', arguments: { componentReference: 'C2', componentDescription: '100nF Ceramic Capacitor', componentValue: '100nF', footprintIdentifier: 'Capacitor_SMD:C_0402_1005Metric', numberOfPins: 2, side: 'top' } },
     { name: 'Define KiCad Component', arguments: { componentReference: 'C3', componentDescription: '1uF Ceramic Capacitor', componentValue: '1uF', footprintIdentifier: 'Capacitor_SMD:C_0402_1005Metric', numberOfPins: 2, side: 'top' } },
@@ -42,7 +42,7 @@ export const DEMO_WORKFLOW: AIToolCall[] = [
     { name: 'Define KiCad Net', arguments: { netName: 'DOUT', pins: ["U1-20", "J_XIAO_2-3"] } },
     { name: 'Define KiCad Net', arguments: { netName: 'DIN', pins: ["U1-21", "J_XIAO_2-4"] } },
     { name: 'Define KiCad Net', arguments: { netName: 'XTAL1/CLKIN', pins: ["U1-23", "X1-1"] } },
-    { name: 'Set Simulation Heuristics', arguments: { componentSpacing: 200.0, netLengthWeight: 0.03, boardEdgeConstraint: 2.0, settlingSpeed: 0.99, proximityStrength: 1.0, symmetryStrength: 10.0, alignmentStrength: 10.0, circularStrength: 10.0, symmetricalPairStrength: 20.0, absolutePositionStrength: 10.0, fixedRotationStrength: 50.0, symmetryRotationStrength: 10.0, circularRotationStrength: 10.0, distributionStrength: 0.5 } },
+    { name: 'Set Simulation Heuristics', arguments: { componentSpacing: 200.0, netLengthWeight: 0.03, boardEdgeConstraint: 2.0, settlingSpeed: 0.99, repulsionRampUpTime: 300, proximityStrength: 1.0, symmetryStrength: 10.0, alignmentStrength: 10.0, circularStrength: 10.0, symmetricalPairStrength: 20.0, absolutePositionStrength: 10.0, fixedRotationStrength: 50.0, symmetryRotationStrength: 10.0, circularRotationStrength: 10.0, distributionStrength: 0.5 } },
 
     // --- Logical Layout Rules instead of absolute placement ---
     { name: 'Add Absolute Position Constraint', arguments: { componentReference: 'U1', x: 0, y: -6 } },

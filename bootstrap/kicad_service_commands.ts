@@ -221,35 +221,57 @@ def define_component(payload):
                     if not drc_dimensions:
                         drc_dimensions = placeholder_dimensions
                         drc_shape = placeholder_shape
-
-                    sanitized_ref = re.sub(r'[\\\\/:*?"<>|]+', '_', payload['componentReference'])
                     
+                    # --- Asset Generation ---
+                    # Use the full identifier for the filename to ensure uniqueness across libraries.
+                    sanitized_footprint_id = re.sub(r'[\\\\/:*?"<>|]+', '_', footprint_id.replace(':', '_'))
+
                     if payload.get('exportSVG'):
-                        final_svg_filename = f"{sanitized_ref}_{footprint_name}.svg"
+                        final_svg_filename = f"{sanitized_footprint_id}.svg"
                         final_svg_path_abs = os.path.join(STATE_DIR, final_svg_filename)
-                        if not os.path.exists(final_svg_path_abs):
-                            cli_command = [ 'kicad-cli', 'fp', 'export', 'svg', '--footprint', footprint_name, '--output', STATE_DIR, '--layers', 'F.Cu,F.Courtyard', '--black-and-white', library_path_to_use ]
-                            temp_svg_path = os.path.join(STATE_DIR, f"{footprint_name}.svg")
-                            if os.path.exists(temp_svg_path): os.remove(temp_svg_path)
-                            subprocess.run(cli_command, check=True, capture_output=True, text=True)
-                            if os.path.exists(temp_svg_path):
-                                if os.path.exists(final_svg_path_abs): os.remove(final_svg_path_abs)
-                                os.rename(temp_svg_path, final_svg_path_abs)
-                        svg_path_rel = os.path.join('assets', final_svg_filename).replace(os.path.sep, '/')
+                        
+                        if os.path.exists(final_svg_path_abs):
+                            svg_path_rel = os.path.join('assets', final_svg_filename).replace(os.path.sep, '/')
+                        else:
+                            try:
+                                # kicad-cli creates a file named after the footprint_name, not the full ID
+                                temp_svg_path = os.path.join(STATE_DIR, f"{footprint_name}.svg")
+                                if os.path.exists(temp_svg_path): os.remove(temp_svg_path)
+
+                                cli_command = [ 'kicad-cli', 'fp', 'export', 'svg', '--footprint', footprint_name, '--output', STATE_DIR, '--layers', 'F.Cu,F.Courtyard', '--black-and-white', library_path_to_use ]
+                                subprocess.run(cli_command, check=True, capture_output=True, text=True)
+                                
+                                if os.path.exists(temp_svg_path):
+                                    os.rename(temp_svg_path, final_svg_path_abs)
+                                    svg_path_rel = os.path.join('assets', final_svg_filename).replace(os.path.sep, '/')
+                                else:
+                                    print(f"WARNING: kicad-cli did not generate expected SVG at {temp_svg_path}", file=sys.stderr)
+                            except subprocess.CalledProcessError as e:
+                                print(f"ERROR: kicad-cli SVG export failed for {footprint_id}. Stderr: {e.stderr}", file=sys.stderr)
                     
                     if payload.get('exportGLB'):
-                        final_glb_filename = f"{sanitized_ref}_{footprint_name}.glb"
+                        final_glb_filename = f"{sanitized_footprint_id}.glb"
                         final_glb_path_abs = os.path.join(STATE_DIR, final_glb_filename)
-                        if not os.path.exists(final_glb_path_abs):
-                            temp_board = pcbnew.BOARD()
-                            temp_board.Add(fp)
-                            temp_pcb_path = os.path.join(STATE_DIR, '_temp_fp_board.kicad_pcb')
-                            pcbnew.SaveBoard(temp_pcb_path, temp_board)
-                            glb_cmd = ['kicad-cli', 'pcb', 'export', 'glb', '--output', final_glb_path_abs, '--subst-models', '--force', temp_pcb_path]
-                            subprocess.run(glb_cmd, check=True, capture_output=True, text=True)
-                            os.remove(temp_pcb_path)
-                        glb_path_rel = os.path.join('assets', final_glb_filename).replace(os.path.sep, '/')
 
+                        if os.path.exists(final_glb_path_abs):
+                            glb_path_rel = os.path.join('assets', final_glb_filename).replace(os.path.sep, '/')
+                        else:
+                            temp_pcb_path = None
+                            try:
+                                temp_board = pcbnew.BOARD()
+                                temp_board.Add(fp)
+                                temp_pcb_path = os.path.join(STATE_DIR, '_temp_fp_board.kicad_pcb')
+                                pcbnew.SaveBoard(temp_pcb_path, temp_board)
+                                glb_cmd = ['kicad-cli', 'pcb', 'export', 'glb', '--output', final_glb_path_abs, '--subst-models', '--force', temp_pcb_path]
+                                subprocess.run(glb_cmd, check=True, capture_output=True, text=True)
+                                if os.path.exists(final_glb_path_abs):
+                                    glb_path_rel = os.path.join('assets', final_glb_filename).replace(os.path.sep, '/')
+                            except subprocess.CalledProcessError as e:
+                                print(f"ERROR: kicad-cli GLB export failed for {footprint_id}. Stderr: {e.stderr}", file=sys.stderr)
+                            finally:
+                                if temp_pcb_path and os.path.exists(temp_pcb_path):
+                                    os.remove(temp_pcb_path)
+                    
                     for pad in fp.Pads():
                         pad_pos = pad.GetPosition()
                         pins_data.append({"name": str(pad.GetPadName()), "x": pcbnew.ToMM(pad_pos.x), "y": pcbnew.ToMM(pad_pos.y), "rotation": pad.GetOrientationDegrees()})
