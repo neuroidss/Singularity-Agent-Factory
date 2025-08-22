@@ -284,13 +284,6 @@ class Graphics {
         }
 
         if (mode === 'pcb' && node.svgPath) {
-            let fullSvgUrl;
-            if (this.isServerConnected) {
-                fullSvgUrl = node.svgPath.startsWith('http') ? node.svgPath : 'http://localhost:3001/' + node.svgPath;
-            } else {
-                fullSvgUrl = node.svgPath; // Use relative path for client-only
-            }
-            
             const isBottom = node.side === 'bottom';
             const footprintMaterial = this.materials.footprint[isBottom ? 'bottom' : 'top'];
 
@@ -308,16 +301,13 @@ class Graphics {
                     });
                 });
                 
-                // --- NEW: Calculate SVG bounds and update simulation ---
                 const svgBbox = new this.THREE.Box3().setFromObject(group);
                 const svgSize = new this.THREE.Vector3();
                 svgBbox.getSize(svgSize);
 
                 if (this.simulation && (svgSize.x > 0 || svgSize.y > 0)) {
-                    // Pass the dimensions (in mm, which is the SVG's unit) to the simulation.
                     this.simulation.updateNodeDimensions(id, svgSize.x, svgSize.y);
                 }
-                // --- END NEW LOGIC ---
 
                 const box = new this.THREE.Box3().setFromObject(group);
                 const center = new this.THREE.Vector3();
@@ -335,38 +325,50 @@ class Graphics {
                 this.scene.add(group);
             };
 
-            if (window.cacheService) {
+            const attemptLoadSvg = (url, isFallback = false) => {
                 const cacheBuster = '?t=' + new Date().getTime();
-                window.cacheService.getAssetBlob(fullSvgUrl).then(async (blob) => {
-                    if (blob) {
-                        const svgText = await blob.text();
-                        loadSvgFromText(svgText);
-                    } else {
-                        fetch(fullSvgUrl + cacheBuster)
-                            .then(res => res.ok ? res.text() : Promise.reject(new Error(\`HTTP \${res.status}\`)))
-                            .then(svgText => {
-                                window.cacheService.setAssetBlob(fullSvgUrl, new Blob([svgText], {type: 'image/svg+xml'}));
-                                loadSvgFromText(svgText);
-                            })
-                            .catch(err => { console.error(\`[SVG] Failed to load '\${fullSvgUrl}':\`, err); });
-                    }
-                });
-            } else {
-                 this.svgLoader.load(fullSvgUrl, (data) => { /* original logic */ }, undefined, () => {});
-            }
+                if (window.cacheService) {
+                    window.cacheService.getAssetBlob(url).then(async (blob) => {
+                        if (blob) {
+                            loadSvgFromText(await blob.text());
+                        } else {
+                            fetch(url + cacheBuster)
+                                .then(res => {
+                                    if (res.ok) return res.text();
+                                    if (!isFallback && this.isServerConnected) {
+                                        console.warn(\`[SVG] Failed to load from server '\${url}'. Falling back to local path.\`);
+                                        attemptLoadSvg(node.svgPath, true);
+                                        return null;
+                                    }
+                                    return Promise.reject(new Error(\`HTTP \${res.status} for \${url}\`));
+                                })
+                                .then(svgText => {
+                                    if (svgText) {
+                                        window.cacheService.setAssetBlob(url, new Blob([svgText], {type: 'image/svg+xml'}));
+                                        loadSvgFromText(svgText);
+                                    }
+                                })
+                                .catch(err => {
+                                    if (isFallback || !this.isServerConnected) {
+                                        console.error(\`[SVG] Final attempt to load '\${url}' failed:\`, err);
+                                    }
+                                });
+                        }
+                    });
+                }
+            };
+            
+            const initialSvgUrl = (this.isServerConnected && !node.svgPath.startsWith('http'))
+                ? 'http://localhost:3001/' + node.svgPath
+                : node.svgPath;
+            
+            attemptLoadSvg(initialSvgUrl, !this.isServerConnected);
         }
         
         const assetPath = (mode === 'pcb' && node.glbPath) ? node.glbPath :
                           (mode === 'robotics' && node.asset_glb) ? node.asset_glb : null;
 
         if (assetPath) {
-            let fullGlbUrl;
-            if (this.isServerConnected) {
-                fullGlbUrl = assetPath.startsWith('http') ? assetPath : 'http://localhost:3001/' + assetPath;
-            } else {
-                fullGlbUrl = assetPath; // Use relative path for client-only
-            }
-            
             const loadGltfFromBlob = (blob) => {
                 const url = URL.createObjectURL(blob);
                 this.loader.load(url, (gltf) => {
@@ -437,22 +439,44 @@ class Graphics {
                 }, undefined, (error) => console.error(\`[GLB] Error loading model from blob for \${id}:\`, error));
             };
 
-            if (window.cacheService) {
+            const attemptLoadGlb = (url, isFallback = false) => {
                 const cacheBuster = '?t=' + new Date().getTime();
-                window.cacheService.getAssetBlob(fullGlbUrl).then(async (blob) => {
-                    if (blob) {
-                        loadGltfFromBlob(blob);
-                    } else {
-                        fetch(fullGlbUrl + cacheBuster)
-                            .then(res => res.ok ? res.blob() : Promise.reject(new Error(\`HTTP \${res.status}\`)))
-                            .then(blob => {
-                                window.cacheService.setAssetBlob(fullGlbUrl, blob);
-                                loadGltfFromBlob(blob);
-                            })
-                            .catch(err => console.error(\`[GLB] Failed to fetch and cache '\${fullGlbUrl}':\`, err));
-                    }
-                });
-            }
+                if (window.cacheService) {
+                    window.cacheService.getAssetBlob(url).then(async (blob) => {
+                        if (blob) {
+                            loadGltfFromBlob(blob);
+                        } else {
+                            fetch(url + cacheBuster)
+                                .then(res => {
+                                    if (res.ok) return res.blob();
+                                    if (!isFallback && this.isServerConnected) {
+                                        console.warn(\`[GLB] Failed to load from server '\${url}'. Falling back to local path.\`);
+                                        attemptLoadGlb(assetPath, true);
+                                        return null;
+                                    }
+                                    return Promise.reject(new Error(\`HTTP \${res.status} for \${url}\`));
+                                })
+                                .then(blob => {
+                                    if (blob) {
+                                        window.cacheService.setAssetBlob(url, blob);
+                                        loadGltfFromBlob(blob);
+                                    }
+                                })
+                                .catch(err => {
+                                    if (isFallback || !this.isServerConnected) {
+                                        console.error(\`[GLB] Final attempt to load '\${url}' failed:\`, err);
+                                    }
+                                });
+                        }
+                    });
+                }
+            };
+            
+            const initialGlbUrl = (this.isServerConnected && !assetPath.startsWith('http'))
+                ? 'http://localhost:3001/' + assetPath
+                : assetPath;
+            
+            attemptLoadGlb(initialGlbUrl, !this.isServerConnected);
         }
     }
 
