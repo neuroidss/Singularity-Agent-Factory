@@ -24,6 +24,7 @@ export const SIMULATION_TOOLS: ToolCreatorPayload[] = [
             { name: 'fixedRotationStrength', type: 'number', description: 'Strength of the torque twisting a component to a fixed rotation.', required: false },
             { name: 'symmetryRotationStrength', type: 'number', description: 'Strength of the torque for symmetrical rotation.', required: false },
             { name: 'circularRotationStrength', type: 'number', description: 'Strength of the torque for circular rotation pattern.', required: false },
+            { name: 'boardPadding', type: 'number', description: 'The margin in millimeters to add around components when auto-sizing the board outline.', required: false },
         ],
         implementationCode: `
             // This is a special client-side tool. Its logic is handled inside useAppRuntime

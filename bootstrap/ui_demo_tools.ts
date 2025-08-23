@@ -1,18 +1,18 @@
 
 import type { ToolCreatorPayload } from '../types';
 
-export const UI_DEMO_TOOLS: ToolCreatorPayload[] = [
+export const UI_WORKFLOW_TOOLS: ToolCreatorPayload[] = [
     {
-        name: 'Interactive Demo Workflow Controller',
-        description: 'An interactive panel for controlling a demo workflow, similar to a Jupyter notebook, with play, pause, step, and run-from-here functionality.',
+        name: 'Interactive Workflow Controller',
+        description: 'An interactive panel for controlling a scripted workflow, similar to a Jupyter notebook, with play, pause, step, and run-from-here functionality.',
         category: 'UI Component',
         executionEnvironment: 'Client',
-        purpose: 'To provide detailed, interactive control and visibility over a simulated agent workflow for debugging and demonstration.',
+        purpose: 'To provide detailed, interactive control and visibility over a scripted agent workflow for debugging and analysis.',
         parameters: [
             { name: 'workflow', type: 'array', description: 'The array of AIToolCall steps in the workflow.', required: true },
             { name: 'executionState', type: 'string', description: 'The current state of the execution engine (running, paused, idle, etc.).', required: true },
             { name: 'currentStepIndex', type: 'number', description: 'The index of the step that will be executed next.', required: true },
-            { name: 'demoStepStatuses', type: 'array', description: 'An array tracking the status and result of each step.', required: true },
+            { name: 'stepStatuses', type: 'array', description: 'An array tracking the status and result of each step.', required: true },
             { name: 'onPlayPause', type: 'object', description: 'Callback to play or pause the execution.', required: true },
             { name: 'onStop', type: 'object', description: 'Callback to stop and reset the execution.', required: true },
             { name: 'onStepForward', type: 'object', description: 'Callback to execute the next step.', required: true },
@@ -66,7 +66,7 @@ export const UI_DEMO_TOOLS: ToolCreatorPayload[] = [
                     </div>
                     <div ref={scrollRef} className="flex-grow bg-black/20 rounded-b-lg p-2 min-h-[50px] overflow-y-auto space-y-2">
                         {workflow.map((step, index) => {
-                             const statusInfo = demoStepStatuses[index] || { status: 'pending' };
+                             const statusInfo = stepStatuses[index] || { status: 'pending' };
                              const isCurrent = index === currentStepIndex && (isRunning || isPaused);
                              
                              let statusIcon = '⚪'; let borderColor = 'border-gray-700';

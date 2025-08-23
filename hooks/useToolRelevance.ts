@@ -1,7 +1,9 @@
+
+
 import { useState, useCallback, useEffect, useRef } from 'react';
 import { generateEmbeddings, cosineSimilarity } from '../services/embeddingService';
 import { CORE_TOOLS } from '../constants';
-import type { LLMTool, ScoredTool } from '../types';
+import type { LLMTool, ScoredTool, MainView } from '../types';
 
 export const useToolRelevance = ({ allTools, logEvent }: { allTools: LLMTool[], logEvent: (msg: string) => void }) => {
     const [toolEmbeddings, setToolEmbeddings] = useState<Map<string, number[]>>(new Map());
@@ -57,15 +59,26 @@ export const useToolRelevance = ({ allTools, logEvent }: { allTools: LLMTool[], 
         availableTools: LLMTool[],
         topK: number,
         relevanceThreshold: number,
-        systemPromptForContext: string | null = null
+        systemPromptForContext: string | null = null,
+        mainView: MainView | null = null
     ): Promise<ScoredTool[]> => {
         try {
             // Lazily compute tool embeddings on the first call.
             await ensureToolEmbeddings();
 
             let contextForEmbedding = "";
+            
+            // Add view-specific context to help the embedding model understand the domain.
+            if (mainView === 'ROBOTICS') {
+                contextForEmbedding += "Context: Robotics simulation, agent navigation, and task execution in a 3D environment. ";
+            } else if (mainView === 'KICAD') {
+                contextForEmbedding += "Context: Electronic design automation (EDA), KiCad software, PCB layout, and hardware engineering. ";
+            } else if (mainView === 'KNOWLEDGE_GRAPH') {
+                contextForEmbedding += "Context: Strategic planning, knowledge representation, and managing long-term agent memory. ";
+            }
+            
             if (systemPromptForContext) {
-                contextForEmbedding += `System Goal: ${systemPromptForContext}\n\n`;
+                contextForEmbedding += `System Goal: ${systemPromptForContext}\\n\\n`;
             }
             contextForEmbedding += `User's Current Task: ${userRequestText}`;
 
@@ -86,21 +99,28 @@ export const useToolRelevance = ({ allTools, logEvent }: { allTools: LLMTool[], 
                 return { tool, score };
             }).sort((a, b) => b.score - a.score);
 
-            const relevantScoredTools = scoredTools
-                .filter(item => item.score >= relevanceThreshold)
-                .slice(0, topK);
+            const relevantByThreshold = scoredTools.filter(item => item.score >= relevanceThreshold);
+            const topKTools = relevantByThreshold.slice(0, topK);
 
-            const relevantToolIds = new Set(relevantScoredTools.map(item => item.tool.id));
+            const debugLogLines = [`[Relevance] All tool scores (Threshold > ${relevanceThreshold.toFixed(2)}):`];
+            scoredTools.slice(0, 100).forEach(({ tool, score }) => { // log top 100 to avoid spam
+                const passed = score >= relevanceThreshold;
+                debugLogLines.push(`- ${passed ? '✅' : '❌'} ${tool.name}: ${score.toFixed(3)}`);
+            });
+            logEvent(debugLogLines.join('\\n'));
+
+            const relevantToolIds = new Set(topKTools.map(item => item.tool.id));
             
-            // Always ensure CORE_TOOLS are available, regardless of score.
+            // Always include CORE_TOOLS to ensure the agent can create tools or finish tasks.
             for (const coreTool of CORE_TOOLS) {
                 if (!relevantToolIds.has(coreTool.id)) {
                     const coreToolScoreItem = scoredTools.find(st => st.tool.id === coreTool.id);
-                    relevantScoredTools.push(coreToolScoreItem || { tool: coreTool, score: 0 });
+                    topKTools.push(coreToolScoreItem || { tool: coreTool, score: 0 });
+                    relevantToolIds.add(coreTool.id); // Add to set to prevent duplicates
                 }
             }
             
-            const finalTools = relevantScoredTools.sort((a, b) => b.score - a.score);
+            const finalTools = topKTools.sort((a, b) => b.score - a.score);
             logEvent(`[Relevance] Filtered to ${finalTools.length} tools (Top K: ${topK}, Threshold: ${relevanceThreshold}).`);
             return finalTools;
 

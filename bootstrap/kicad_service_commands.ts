@@ -427,48 +427,103 @@ def create_initial_pcb(payload):
     except subprocess.CalledProcessError as e:
         raise Exception(f"kinet2pcb failed. Stderr: {e.stderr}. Stdout: {e.stdout}") from e
     
-    # Load the newly created board and set its copper layer count to 4.
+    # Load the newly created board
     board = pcbnew.LoadBoard(pcb_path)
     board.SetCopperLayerCount(4)
+    
+    # Set component sides based on state file before saving
+    state_file = get_state_path(payload['projectName'], 'state.json')
+    if os.path.exists(state_file):
+        state_data = json.load(open(state_file))
+        components_state = state_data.get('components', [])
+        
+        for comp_data in components_state:
+            if comp_data.get('side') == 'bottom':
+                ref = comp_data.get('ref')
+                fp = board.FindFootprintByReference(ref)
+                if fp:
+                    # kinet2pcb places everything on F.Cu by default.
+                    # If the desired side is 'bottom' and it's currently on 'F.Cu', flip it.
+                    if fp.GetLayer() == pcbnew.F_Cu:
+                        fp.SetLayerAndFlip(pcbnew.B_Cu)
+                        print(f"INFO: Flipped component '{ref}' to bottom side as per definition.", file=sys.stderr)
+
     pcbnew.SaveBoard(pcb_path, board)
     
     return {"message": "Initial 4-layer PCB created."}
 
 def create_board_outline(payload):
     _initialize_libraries()
-    pcb_path = get_state_path(payload['projectName'], 'pcb.kicad_pcb')
+    project_name = payload['projectName']
+    pcb_path = get_state_path(project_name, 'pcb.kicad_pcb')
+    state_file = get_state_path(project_name, 'state.json')
+    lock_path = state_file + '.lock'
+
     if not os.path.exists(pcb_path):
         raise FileNotFoundError("PCB file not found.")
     board = pcbnew.LoadBoard(pcb_path)
     for drawing in list(board.GetDrawings()):
         if drawing.GetLayerName() == 'Edge.Cuts':
             board.Remove(drawing)
+
+    # Determine autoSize status
+    is_auto_size = not payload.get('boardWidthMillimeters') and not payload.get('boardHeightMillimeters') and not payload.get('diameterMillimeters')
     
+    outline_data = {
+        "shape": payload.get('shape', 'rectangle'),
+        "autoSize": is_auto_size
+    }
+
     if payload.get('shape') == 'circle':
         diameter_mm = payload.get('diameterMillimeters', 0)
-        # Auto-sizing logic for circle...
-        radius_nm = pcbnew.FromMM(diameter_mm / 2.0)
-        center = pcbnew.VECTOR2I(0,0)
-        circle = pcbnew.PCB_SHAPE(board)
-        circle.SetShape(pcbnew.S_CIRCLE)
-        circle.SetLayer(pcbnew.Edge_Cuts)
-        circle.SetStart(center)
-        circle.SetEnd(pcbnew.VECTOR2I(center.x + radius_nm, center.y))
-        board.Add(circle)
-        message = f"Circular board outline created (diameter: {diameter_mm:.2f}mm)."
-    else:
-        width_mm, height_mm = payload.get('boardWidthMillimeters', 20), payload.get('boardHeightMillimeters', 20)
-        w_nm, h_nm = pcbnew.FromMM(width_mm), pcbnew.FromMM(height_mm)
-        x_offset, y_offset = -w_nm // 2, -h_nm // 2
-        points = [ pcbnew.VECTOR2I(x_offset, y_offset), pcbnew.VECTOR2I(x_offset + w_nm, y_offset), pcbnew.VECTOR2I(x_offset + w_nm, y_offset + h_nm), pcbnew.VECTOR2I(x_offset, y_offset + h_nm), pcbnew.VECTOR2I(x_offset, y_offset) ]
-        for i in range(len(points) - 1):
-            seg = pcbnew.PCB_SHAPE(board)
-            seg.SetShape(pcbnew.S_SEGMENT); seg.SetStart(points[i]); seg.SetEnd(points[i+1]); seg.SetLayer(pcbnew.Edge_Cuts); seg.SetWidth(pcbnew.FromMM(0.1))
-            board.Add(seg)
-        message = f"Rectangular board outline created ({width_mm:.2f}mm x {height_mm:.2f}mm)."
+        if not diameter_mm and not is_auto_size:
+            diameter_mm = 50 # default if not auto-sizing and no diameter given
+        
+        outline_data['diameter'] = diameter_mm
+        
+        if not is_auto_size:
+            radius_nm = pcbnew.FromMM(diameter_mm / 2.0)
+            center = pcbnew.VECTOR2I(0,0)
+            circle = pcbnew.PCB_SHAPE(board)
+            circle.SetShape(pcbnew.S_CIRCLE)
+            circle.SetLayer(pcbnew.Edge_Cuts)
+            circle.SetStart(center)
+            circle.SetEnd(pcbnew.VECTOR2I(center.x + int(radius_nm), center.y))
+            board.Add(circle)
+        message = f"Circular board outline created (diameter: {diameter_mm:.2f}mm, autoSize: {is_auto_size})."
+    else: # rectangle
+        width_mm = payload.get('boardWidthMillimeters', 0)
+        height_mm = payload.get('boardHeightMillimeters', 0)
+        if not width_mm and not is_auto_size: width_mm = 50
+        if not height_mm and not is_auto_size: height_mm = 50
+
+        outline_data['width'] = width_mm
+        outline_data['height'] = height_mm
+
+        if not is_auto_size:
+            w_nm, h_nm = pcbnew.FromMM(width_mm), pcbnew.FromMM(height_mm)
+            x_offset, y_offset = -w_nm // 2, -h_nm // 2
+            points = [ pcbnew.VECTOR2I(x_offset, y_offset), pcbnew.VECTOR2I(x_offset + w_nm, y_offset), pcbnew.VECTOR2I(x_offset + w_nm, y_offset + h_nm), pcbnew.VECTOR2I(x_offset, y_offset + h_nm), pcbnew.VECTOR2I(x_offset, y_offset) ]
+            for i in range(len(points) - 1):
+                seg = pcbnew.PCB_SHAPE(board)
+                seg.SetShape(pcbnew.S_SEGMENT); seg.SetStart(points[i]); seg.SetEnd(points[i+1]); seg.SetLayer(pcbnew.Edge_Cuts); seg.SetWidth(pcbnew.FromMM(0.1))
+                board.Add(seg)
+        message = f"Rectangular board outline created ({width_mm:.2f}mm x {height_mm:.2f}mm, autoSize: {is_auto_size})."
 
     pcbnew.SaveBoard(pcb_path, board)
-    return {"message": message}
+
+    # Save outline info to state
+    with open(lock_path, 'w') as lock_file:
+        fcntl.flock(lock_file, fcntl.LOCK_EX)
+        try:
+            state = json.load(open(state_file)) if os.path.exists(state_file) else {}
+            state['board_outline'] = outline_data
+            with open(state_file, 'w') as f:
+                json.dump(state, f, indent=2)
+        finally:
+             fcntl.flock(lock_file, fcntl.LOCK_UN)
+
+    return {"message": message, "outline": payload}
 
 def create_copper_pour(payload):
     _initialize_libraries()
@@ -534,20 +589,40 @@ def arrange_components(payload):
     board = pcbnew.LoadBoard(pcb_path)
     state_data = json.load(open(state_file))
 
+    # Get board outline info from state file first
+    board_outline_settings = state_data.get('board_outline', {})
+    
+    # Calculate bounding box from Edge.Cuts as a fallback or for positioning
     edge_cuts = dsn_utils.merge_all_drawings(board, 'Edge.Cuts')
     min_x, max_x, min_y, max_y = 0, 0, 0, 0
     if edge_cuts and edge_cuts[0]:
         all_x = [p[0] for p in edge_cuts[0]]; all_y = [p[1] for p in edge_cuts[0]]
         min_x, max_x, min_y, max_y = min(all_x), max(all_x), min(all_y), max(all_y)
 
-    layout_data = {"nodes": [], "edges": [], "rules": state_data.get("rules", []), "layoutStrategy": payload.get("layoutStrategy", "agent"), "board_outline": {"x": pcbnew.ToMM(min_x), "y": pcbnew.ToMM(min_y), "width": pcbnew.ToMM(max_x - min_x), "height": pcbnew.ToMM(max_y - min_y)} }
+    # Use the shape from state, but dimensions from actual geometry for correct centering
+    final_outline = {
+        "shape": board_outline_settings.get('shape', 'rectangle'),
+        "autoSize": board_outline_settings.get('autoSize', True),
+        "x": pcbnew.ToMM(min_x), 
+        "y": pcbnew.ToMM(min_y), 
+        "width": pcbnew.ToMM(max_x - min_x), 
+        "height": pcbnew.ToMM(max_y - min_y)
+    }
+    
+    layout_data = {
+        "nodes": [], 
+        "edges": [], 
+        "rules": state_data.get("rules", []), 
+        "layoutStrategy": payload.get("layoutStrategy", "agent"), 
+        "board_outline": final_outline
+    }
     state_components_map = {comp['ref']: comp for comp in state_data.get('components', [])}
     for fp in board.Footprints():
         ref = fp.GetReference()
         state_comp = state_components_map.get(ref, {})
         layout_data["nodes"].append({
             "id": ref, "label": ref, "x": pcbnew.ToMM(fp.GetPosition().x), "y": pcbnew.ToMM(fp.GetPosition().y),
-            "rotation": fp.GetOrientationDegrees(), "side": "bottom" if fp.IsFlipped() else "top",
+            "rotation": fp.GetOrientationDegrees(), "side": state_comp.get('side', 'top'),
             "svgPath": state_comp.get('svgPath'), "glbPath": state_comp.get('glbPath'),
             "pins": state_comp.get('pins', []), "footprint": state_comp.get('footprint'),
             "placeholder_dimensions": state_comp.get('placeholder_dimensions'),
@@ -566,9 +641,12 @@ def arrange_components(payload):
 
 def update_component_positions(payload):
     _initialize_libraries()
-    pcb_path = get_state_path(payload['projectName'], 'pcb.kicad_pcb')
+    project_name = payload['projectName']
+    pcb_path = get_state_path(project_name, 'pcb.kicad_pcb')
+    state_file = get_state_path(project_name, 'state.json')
     board = pcbnew.LoadBoard(pcb_path)
     positions = json.loads(payload['componentPositionsJSON'])
+    
     for ref, pos_data in positions.items():
         fp = board.FindFootprintByReference(ref)
         if fp:
@@ -577,20 +655,55 @@ def update_component_positions(payload):
             if pos_data.get('side') == 'bottom' and not fp.IsFlipped(): fp.SetLayerAndFlip(pcbnew.B_Cu)
             elif pos_data.get('side') == 'top' and fp.IsFlipped(): fp.SetLayerAndFlip(pcbnew.F_Cu)
 
-    for drawing in list(board.GetDrawings()):
-        if drawing.GetLayerName() == 'Edge.Cuts': board.Remove(drawing)
-    footprints_bbox = pcbnew.BOX2I()
-    for fp in board.Footprints(): footprints_bbox.Merge(fp.GetBoundingBox(True, False))
-    margin_nm = pcbnew.FromMM(5)
-    footprints_bbox.Inflate(margin_nm, margin_nm)
-    x_offset, y_offset, w_nm, h_nm = footprints_bbox.GetX(), footprints_bbox.GetY(), footprints_bbox.GetWidth(), footprints_bbox.GetHeight()
-    points = [ pcbnew.VECTOR2I(x_offset, y_offset), pcbnew.VECTOR2I(x_offset + w_nm, y_offset), pcbnew.VECTOR2I(x_offset + w_nm, y_offset + h_nm), pcbnew.VECTOR2I(x_offset, y_offset + h_nm), pcbnew.VECTOR2I(x_offset, y_offset) ]
-    for i in range(len(points) - 1):
-        seg = pcbnew.PCB_SHAPE(board); seg.SetShape(pcbnew.S_SEGMENT); seg.SetStart(points[i]); seg.SetEnd(points[i+1]); seg.SetLayer(pcbnew.Edge_Cuts); seg.SetWidth(pcbnew.FromMM(0.1))
-        board.Add(seg)
+    # Check state file for autoSize preference
+    state_data = {}
+    if os.path.exists(state_file):
+        with open(state_file, 'r') as f:
+            state_data = json.load(f)
+
+    board_outline_settings = state_data.get('board_outline', {})
+    should_auto_resize = board_outline_settings.get('autoSize', False)
+
+    if should_auto_resize:
+        # Clear existing outline and create a new one based on footprint bounding box
+        for drawing in list(board.GetDrawings()):
+            if drawing.GetLayerName() == 'Edge.Cuts': 
+                board.Remove(drawing)
+        
+        footprints_bbox = pcbnew.BOX2I()
+        for fp in board.Footprints(): 
+            footprints_bbox.Merge(fp.GetBoundingBox(True, False))
+        
+        margin_nm = pcbnew.FromMM(5)
+        footprints_bbox.Inflate(margin_nm, margin_nm)
+        x_offset, y_offset, w_nm, h_nm = footprints_bbox.GetX(), footprints_bbox.GetY(), footprints_bbox.GetWidth(), footprints_bbox.GetHeight()
+        
+        if board_outline_settings.get('shape') == 'circle':
+             # For a circle, we take the largest dimension of the bounding box as the diameter
+            diameter_nm = max(w_nm, h_nm)
+            radius_nm = diameter_nm / 2
+            center_x = x_offset + w_nm / 2
+            center_y = y_offset + h_nm / 2
+            center = pcbnew.VECTOR2I(int(center_x), int(center_y))
+
+            circle = pcbnew.PCB_SHAPE(board)
+            circle.SetShape(pcbnew.S_CIRCLE)
+            circle.SetLayer(pcbnew.Edge_Cuts)
+            circle.SetStart(center)
+            circle.SetEnd(pcbnew.VECTOR2I(center.x + int(radius_nm), center.y))
+            board.Add(circle)
+        else: # Default to rectangle
+            points = [ pcbnew.VECTOR2I(x_offset, y_offset), pcbnew.VECTOR2I(x_offset + w_nm, y_offset), pcbnew.VECTOR2I(x_offset + w_nm, y_offset + h_nm), pcbnew.VECTOR2I(x_offset, y_offset + h_nm), pcbnew.VECTOR2I(x_offset, y_offset) ]
+            for i in range(len(points) - 1):
+                seg = pcbnew.PCB_SHAPE(board); seg.SetShape(pcbnew.S_SEGMENT); seg.SetStart(points[i]); seg.SetEnd(points[i+1]); seg.SetLayer(pcbnew.Edge_Cuts); seg.SetWidth(pcbnew.FromMM(0.1))
+                board.Add(seg)
+        
+        message = "Component positions updated and board outline resized."
+    else:
+        message = "Component positions updated. Board outline was not resized as it is fixed."
 
     pcbnew.SaveBoard(pcb_path, board)
-    return {"message": "Component positions updated and board outline resized."}
+    return {"message": message}
 
 def autoroute_pcb(payload):
     _initialize_libraries()

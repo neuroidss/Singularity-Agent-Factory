@@ -228,35 +228,20 @@ export const UI_AGENT_TOOLS: ToolCreatorPayload[] = [
           { name: 'currentUserTask', type: 'object', description: 'The current high-level task for the agent.', required: true },
         ],
         implementationCode: `
-              const getStatusStyles = (status) => {
-                  switch (status) {
-                      case 'working': return { bg: 'bg-blue-900/50', border: 'border-blue-500', text: 'text-blue-300', icon: '🧠' };
-                      case 'succeeded': return { bg: 'bg-green-900/50', border: 'border-green-500', text: 'text-green-300', icon: '✅' };
-                      case 'paused': return { bg: 'bg-orange-900/50', border: 'border-orange-500', text: 'text-orange-300', icon: '⏸️' };
-                      case 'failed': return { bg: 'bg-yellow-900/50', border: 'border-yellow-500', text: 'text-yellow-300', icon: '⚠️' };
-                      case 'terminated': return { bg: 'bg-red-900/50', border: 'border-red-500', text: 'text-red-300', icon: '❌' };
-                      default: return { bg: 'bg-gray-800/50', border: 'border-gray-600', text: 'text-gray-400', icon: '💤' }; // idle
-                  }
-              };
-              
               if (!isSwarmRunning && (!agentSwarm || agentSwarm.length === 0 || agentSwarm.every(a => a.status === 'idle'))) {
                   return (
                       <div className="bg-gray-800/60 border border-gray-700 rounded-xl p-4 h-full flex items-center justify-center">
-                          <p className="text-gray-400">Agent is idle. Assign a task to activate.</p>
+                          <p className="text-gray-400 text-center">Agent is idle. Assign a task to activate.</p>
                       </div>
                   );
               }
-
-              const taskText = typeof currentUserTask === 'string' 
-                ? currentUserTask 
-                : currentUserTask?.userRequest?.text || 'None';
       
               return (
-                  <div className="bg-gray-800/60 border border-gray-700 rounded-xl p-4">
-                       <div className="flex flex-col sm:flex-row justify-between items-center gap-2 mb-4">
+                  <div className="bg-gray-800/60 border border-gray-700 rounded-xl p-4 h-full flex flex-col">
+                     <div className="flex-shrink-0 flex flex-col sm:flex-row justify-between items-center gap-2 mb-4">
                         <div>
                            <h3 className="text-lg font-bold text-indigo-300">Agent Status</h3>
-                           <p className="text-sm text-gray-400">Current Goal: {taskText}</p>
+                           <p className="text-sm text-gray-400 truncate">Goal: {currentUserTask?.userRequest?.text || 'None'}</p>
                         </div>
                         <button
                             onClick={() => handleStopSwarm()}
@@ -265,25 +250,6 @@ export const UI_AGENT_TOOLS: ToolCreatorPayload[] = [
                         >
                             Stop Task
                         </button>
-                      </div>
-      
-                      <div className="space-y-3">
-                          {agentSwarm && agentSwarm.map(agent => {
-                              const styles = getStatusStyles(agent.status);
-                              return (
-                                  <div key={agent.id} className={\`\${styles.bg} border \${styles.border} rounded-lg p-3 transition-all\`} >
-                                      <div className="flex justify-between items-center mb-2">
-                                          <h4 className="font-bold text-white">{agent.id}</h4>
-                                          <span className={\`px-2 py-0.5 rounded-full text-xs font-semibold \${styles.text} \${styles.bg}\`}>{styles.icon} {agent.status}</span>
-                                      </div>
-                                      <div className="text-xs text-slate-300 min-h-[40px] bg-black/20 p-2 rounded-md">
-                                          <p className="font-semibold">Last Action:</p>
-                                          <p className="whitespace-pre-wrap break-words">{agent.lastAction || 'None'}</p>
-                                      </div>
-                                      {agent.error && <p className="text-xs text-red-400 mt-2">Error: {agent.error}</p>}
-                                  </div>
-                              );
-                          })}
                       </div>
                   </div>
               );

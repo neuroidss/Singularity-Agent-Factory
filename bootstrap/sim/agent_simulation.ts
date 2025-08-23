@@ -3,34 +3,38 @@
 // Force and collision logic has been moved to separate files.
 
 export const AgentSimulationCoreString = `
-    constructor(graphData, scale, THREE, mode) {
+    constructor(graphData, scale, THREE, mode, onUpdateLayout) {
         this.THREE = THREE;
         this.graph = graphData; // Initially may have no nodes/edges
         this.SCALE = scale;
         this.mode = mode; // 'pcb' or 'robotics'
+        this.onUpdateLayout = onUpdateLayout; // Callback to update React state
+
         this.nodeMap = new Map();
         this.agents = new Map();
         this.draggedAgentId = null;
         this.step_count = 0;
 
         // --- Simulation Parameters (Heuristics) ---
+        // These defaults are now tuned based on the successful demo configuration.
         this.params = {
             componentSpacing: 200.0,
-            netLengthWeight: 0.01,
-            boardEdgeConstraint: 10.0,
-            settlingSpeed: 0.9,
-            repulsionRampUpTime: 300, // Time in frames (60 frames ~ 1s)
-            distributionStrength: 0.5, // New force to spread components out
+            netLengthWeight: 0.03,
+            boardEdgeConstraint: 2.0,
+            settlingSpeed: 0.99,
+            repulsionRampUpTime: 600,
+            distributionStrength: 0.5,
+            boardPadding: 5.0, // Default padding in mm
             // Rule strengths
-            proximityStrength: 0.2,
-            symmetryStrength: 2.0,
-            alignmentStrength: 2.0,
-            circularStrength: 2.0,
-            symmetricalPairStrength: 5.0,
+            proximityStrength: 1.0,
+            symmetryStrength: 10.0,
+            alignmentStrength: 10.0,
+            circularStrength: 10.0,
+            symmetricalPairStrength: 20.0,
             absolutePositionStrength: 10.0,
-            fixedRotationStrength: 5.0,
-            symmetryRotationStrength: 2.0,
-            circularRotationStrength: 2.0,
+            fixedRotationStrength: 50.0,
+            symmetryRotationStrength: 10.0,
+            circularRotationStrength: 10.0,
         };
         
         if (this.mode === 'robotics') {
@@ -61,6 +65,15 @@ export const AgentSimulationCoreString = `
         this.STABILITY_THRESHOLD = 0.5; // Avg force must be below this to be stable
         this.STABILITY_WINDOW = 100; // Over how many frames to average the force
         this.isStable = false;
+    }
+
+    updateGraph(newGraph) {
+        // This method keeps the simulation's internal reference to the graph object
+        // in sync with the React state. This is crucial for things like auto-sizing
+        // where the simulation reads its own state to make decisions.
+        if (newGraph) {
+            this.graph = newGraph;
+        }
     }
     
     addAgent(node) {
@@ -208,6 +221,54 @@ export const AgentSimulationCoreString = `
         return { drcDims: defaultDims, drcShape: 'rectangle' };
     }
 
+    updateDynamicBoardOutline() {
+        if (this.agents.size === 0) {
+            const initialSize = 1.6;
+            const newOutline = { ...this.graph.board_outline, width: initialSize, height: initialSize, x: -initialSize / 2, y: -initialSize / 2 };
+            if (this.graph.board_outline.width !== initialSize) {
+                this.onUpdateLayout(prev => ({ ...prev, board_outline: newOutline }));
+            }
+            return;
+        }
+    
+        let minX = Infinity, maxX = -Infinity, minZ = Infinity, maxZ = -Infinity;
+        this.agents.forEach((agent, id) => {
+            const node = this.nodeMap.get(id);
+            if (!node) return;
+            const { drcDims } = this.getDrcInfo(node);
+            const corners = this.getRotatedRectCorners(agent, drcDims);
+            corners.forEach(corner => {
+                minX = Math.min(minX, corner.x);
+                maxX = Math.max(maxX, corner.x);
+                minZ = Math.min(minZ, corner.z);
+                maxZ = Math.max(maxZ, corner.z);
+            });
+        });
+    
+        if (minX === Infinity) return;
+    
+        const padding = this.params.boardPadding * this.SCALE;
+        minX -= padding; maxX += padding; minZ -= padding; maxZ += padding;
+        let boardWidth = maxX - minX;
+        let boardHeight = maxZ - minZ;
+    
+        if (this.graph.board_outline.shape === 'square') {
+            const maxSize = Math.max(boardWidth, boardHeight);
+            const centerX = (minX + maxX) / 2;
+            const centerZ = (minZ + maxZ) / 2;
+            minX = centerX - maxSize / 2;
+            minZ = centerZ - maxSize / 2;
+            boardWidth = maxSize;
+            boardHeight = maxSize;
+        }
+    
+        const newOutline = { ...this.graph.board_outline, width: boardWidth / this.SCALE, height: boardHeight / this.SCALE, x: minX / this.SCALE, y: minZ / this.SCALE };
+        const old = this.graph.board_outline;
+        if (Math.abs(old.width - newOutline.width) > 0.1 || Math.abs(old.height - newOutline.height) > 0.1) {
+            this.onUpdateLayout(prev => ({ ...prev, board_outline: newOutline }));
+        }
+    }
+
     step() {
         this.step_count++;
         // Introduce a "settling" phase at the start with high damping to prevent explosions.
@@ -263,6 +324,10 @@ export const AgentSimulationCoreString = `
             for (let i = 0; i < collisionIterations; i++) {
                 this.resolveCollisions();
             }
+        }
+
+        if (this.graph.board_outline && this.graph.board_outline.autoSize && this.onUpdateLayout) {
+            this.updateDynamicBoardOutline();
         }
 
         const totalSystemForce = Array.from(this.agents.values()).reduce((sum, agent) => {

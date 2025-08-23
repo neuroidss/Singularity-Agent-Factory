@@ -1,6 +1,7 @@
+
 import type { AIToolCall } from '../types';
 
-export const DEMO_WORKFLOW: AIToolCall[] = [
+export const WORKFLOW_SCRIPT: AIToolCall[] = [
     // --- Phase 1: Schematic & Rule Definition (Populates the live simulation) ---
     { name: 'Define KiCad Component', arguments: { componentReference: 'U1', componentDescription: '8-Channel ADC', componentValue: 'ADS131M08', footprintIdentifier: 'Package_QFP:LQFP-32_5x5mm_P0.5mm', numberOfPins: 32, side: 'top' } },
     { name: 'Define KiCad Component', arguments: { componentReference: 'U2', componentDescription: '3.3V LDO Voltage Regulator', componentValue: 'LP5907QMFX-3.3Q1', footprintIdentifier: 'Package_TO_SOT_SMD:SOT-23-5', numberOfPins: 5, side: 'top' } },
@@ -29,7 +30,7 @@ export const DEMO_WORKFLOW: AIToolCall[] = [
     { name: 'Define KiCad Net', arguments: { netName: 'AIN6P', pins: ["J7-1", "U1-9"] } },
     { name: 'Define KiCad Net', arguments: { netName: 'AIN7P', pins: ["J8-1", "U1-12"] } },
     { name: 'Define KiCad Net', arguments: { netName: 'AINREF', pins: ["J9-1", "U1-2", "U1-3", "U1-6", "U1-7", "U1-10", "U1-11", "U1-30", "U1-31"] } },
-    { name: 'Define KiCad Net', arguments: { netName: 'GND', pins: ["J10-1", "U1-13", "U1-25", "U1-28", "C1-1", "C2-1", "C3-2", "C4-2", "U2-2", "C5-2", "C6-2", "U3-2", "C7-2", "C8-2", "J_XIAO_2-6", "X1-2"] } },
+    { name: 'Define KiCad Net', arguments: { netName: 'GND', pins: ["J10-1", "U1-13", "U1-25", "U1-28", "C1-1", "C2-1", "C3-2", "C4-2", "U2-2", "C5-2", "C6-1", "C7-1", "C8-2", "J_XIAO_2-6", "X1-2"] } },
     { name: 'Define KiCad Net', arguments: { netName: 'CAP', pins: ["C1-2", "U1-24"] } },
     { name: 'Define KiCad Net', arguments: { netName: 'REFIN', pins: ["C2-2", "U1-14"] } },
     { name: 'Define KiCad Net', arguments: { netName: 'AVDD', pins: ["U2-5", "U1-15", "C3-1", "C5-1"] } },
@@ -42,10 +43,11 @@ export const DEMO_WORKFLOW: AIToolCall[] = [
     { name: 'Define KiCad Net', arguments: { netName: 'DOUT', pins: ["U1-20", "J_XIAO_2-3"] } },
     { name: 'Define KiCad Net', arguments: { netName: 'DIN', pins: ["U1-21", "J_XIAO_2-4"] } },
     { name: 'Define KiCad Net', arguments: { netName: 'XTAL1/CLKIN', pins: ["U1-23", "X1-1"] } },
-    { name: 'Set Simulation Heuristics', arguments: { componentSpacing: 200.0, netLengthWeight: 0.03, boardEdgeConstraint: 2.0, settlingSpeed: 0.99, repulsionRampUpTime: 300, proximityStrength: 1.0, symmetryStrength: 10.0, alignmentStrength: 10.0, circularStrength: 10.0, symmetricalPairStrength: 20.0, absolutePositionStrength: 10.0, fixedRotationStrength: 50.0, symmetryRotationStrength: 10.0, circularRotationStrength: 10.0, distributionStrength: 0.5 } },
+    { name: 'Set Simulation Heuristics', arguments: { componentSpacing: 200.0, netLengthWeight: 0.03, boardEdgeConstraint: 2.0, settlingSpeed: 0.99, repulsionRampUpTime: 600, proximityStrength: 1.0, symmetryStrength: 10.0, alignmentStrength: 10.0, circularStrength: 10.0, symmetricalPairStrength: 20.0, absolutePositionStrength: 10.0, fixedRotationStrength: 50.0, symmetryRotationStrength: 10.0, circularRotationStrength: 10.0, distributionStrength: 0.5 } },
 
     // --- Logical Layout Rules instead of absolute placement ---
     { name: 'Add Absolute Position Constraint', arguments: { componentReference: 'U1', x: 0, y: -6 } },
+    { name: 'Add Fixed Property Constraint', arguments: { componentReference: 'U1', propertiesJSON: '{"rotation": -90}' } },
     { name: 'Add Absolute Position Constraint', arguments: { componentReference: 'X1', x: 0, y: 2 } },
     { name: 'Add Absolute Position Constraint', arguments: { componentReference: 'U2', y: 9 } },
     { name: 'Add Absolute Position Constraint', arguments: { componentReference: 'U3', y: 9 } },
@@ -64,12 +66,12 @@ export const DEMO_WORKFLOW: AIToolCall[] = [
     { name: 'Add Alignment Constraint', arguments: { axis: 'horizontal', componentsJSON: '["J_XIAO_1", "J_XIAO_2"]' } },
 //    { name: 'Add Symmetry Constraint', arguments: { axis: 'horizontal', pairsJSON: '[["U1", "X1"]]' } },
     
-    // --- Phase 2: Create PCB and Arrange (This step pauses the demo) ---
+    // --- Phase 2: Create PCB and Arrange (This step now runs autonomously) ---
     { name: 'Generate KiCad Netlist', arguments: {} },
     { name: 'Create Initial PCB', arguments: {} },
     { name: 'Create Board Outline', arguments: { shape: 'circle', diameterMillimeters: 26 } },
     { name: 'Create Copper Pour', arguments: { layerName: 'In1.Cu', netName: 'GND' } },
-    { name: 'Arrange Components', arguments: { waitForUserInput: true, layoutStrategy: 'agent' } },
+    { name: 'Arrange Components', arguments: { waitForUserInput: false, layoutStrategy: 'agent' } },
 
     // --- Phase 3: Post-Layout Steps (These run after the simulation is committed) ---
     // 'Update KiCad Component Positions' is handled by the commit logic

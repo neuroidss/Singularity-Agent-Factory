@@ -154,3 +154,49 @@ export const generateWithTools = async (
         throw e;
     }
 };
+
+export const generateText = async (
+    userInput: string,
+    systemInstruction: string,
+    modelId: string,
+    apiConfig: APIConfig
+): Promise<string> => {
+    const { openAIAPIKey, openAIBaseUrl } = apiConfig;
+
+    if (!openAIAPIKey) throw new Error("OpenAI API Key is missing.");
+    if (!openAIBaseUrl) throw new Error("OpenAI Base URL is missing.");
+    
+    const body = {
+        model: modelId,
+        messages: [
+            { role: 'system', content: systemInstruction },
+            { role: 'user', content: userInput }
+        ],
+        temperature: 0.0,
+    };
+    
+    try {
+        const response = await fetchWithTimeout(
+            `${openAIBaseUrl.replace(/\/+$/, '')}/chat/completions`,
+            {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${openAIAPIKey}` },
+                body: JSON.stringify(body)
+            },
+            OPENAI_TIMEOUT
+        );
+
+        if (!response.ok) {
+            await handleAPIError(response, openAIBaseUrl);
+            return ""; // Should not be reached
+        }
+
+        const data = await response.json();
+        return data.choices?.[0]?.message?.content || "";
+    } catch (e) {
+        if (e instanceof Error && e.message.toLowerCase().includes('failed to fetch')) {
+             throw new Error(`Network Error: Could not connect to OpenAI-compatible API at ${openAIBaseUrl}. Check the URL and your network connection.`);
+        }
+        throw e;
+    }
+};

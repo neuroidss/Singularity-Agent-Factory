@@ -149,9 +149,12 @@ export interface KnowledgeGraph {
     width: number;
     height: number;
     shape?: 'rectangle' | 'circle';
+    autoSize?: boolean;
   };
   rules?: any[];
+  copper_pours?: any[];
   layoutStrategy?: string;
+  heuristics?: Record<string, any>;
 }
 
 export type KicadSchematic = [string, string[], string][];
@@ -167,3 +170,5 @@ export interface ScoredTool {
   tool: LLMTool;
   score: number;
 }
+
+export type ToolRelevanceMode = 'Embeddings' | 'All' | 'LLM';

@@ -38,6 +38,27 @@ The list of available tools is provided below.
 {{TOOLS_JSON}}
 `;
 
+const LLM_FILTER_SYSTEM_PROMPT = `You are an expert tool selection AI. Your task is to analyze a user's request and a list of available tools, and select ONLY the most relevant tools to accomplish the task.
+
+**Response Requirements:**
+*   Respond ONLY with a single, valid JSON object containing one key: "tool_names".
+*   The value of "tool_names" MUST be an array of strings, where each string is the exact name of a selected tool from the provided list.
+*   Do NOT include any explanations or text outside the JSON structure.
+*   Do NOT wrap the JSON in markdown backticks.
+*   If no tools seem relevant, respond with an empty array: \`{"tool_names": []}\`.
+
+Example Response:
+\`\`\`json
+{
+  "tool_names": [
+    "Tool Creator",
+    "Server File Writer",
+    "Define KiCad Component"
+  ]
+}
+\`\`\`
+`;
+
 
 const parseJsonOrNull = (jsonString: string): any => {
     if (!jsonString) return null;
@@ -114,6 +135,64 @@ export const generateResponse = async (
 
         default:
             throw new Error(`Unsupported model provider: ${model.provider}`);
+    }
+};
+
+export const generateTextResponse = async (
+    prompt: string,
+    systemInstruction: string,
+    model: AIModel,
+    apiConfig: APIConfig,
+    onProgress: (message: string) => void,
+): Promise<string> => {
+    switch (model.provider) {
+        case ModelProvider.GoogleAI:
+            return geminiService.generateText(prompt, systemInstruction, model.id);
+        case ModelProvider.OpenAI_API:
+             return openAIService.generateText(prompt, systemInstruction, model.id, apiConfig);
+        case ModelProvider.Ollama:
+             return ollamaService.generateText(prompt, systemInstruction, model.id, apiConfig);
+        case ModelProvider.Wllama:
+             return wllamaService.generateText(prompt, systemInstruction, model.id, 0.1, apiConfig, onProgress);
+        case ModelProvider.HuggingFace:
+             return huggingFaceService.generateText(prompt, systemInstruction, model.id, 0.1, apiConfig, onProgress);
+        default:
+            throw new Error(`Text generation not supported for model provider: ${model.provider}`);
+    }
+};
+
+export const filterToolsWithLLM = async (
+    userInput: string,
+    model: AIModel,
+    apiConfig: APIConfig,
+    allTools: LLMTool[],
+    onProgress: (message: string) => void,
+): Promise<string[]> => {
+    const toolDescriptions = allTools.map(t => `- ${t.name}: ${t.description}`).join('\\n');
+    const prompt = `User Request: "${userInput}"\\n\\nAvailable Tools:\\n${toolDescriptions}\\n\\nBased on the user request, which of the available tools are most relevant?`;
+    
+    const responseText = await generateTextResponse(
+        prompt,
+        LLM_FILTER_SYSTEM_PROMPT,
+        model,
+        apiConfig,
+        onProgress
+    );
+
+    try {
+        let jsonText = responseText.trim();
+        if (jsonText.startsWith('```') && jsonText.endsWith('```')) {
+            jsonText = jsonText.replace(/^```(?:json)?\s*|```\s*$/g, '');
+        }
+        const parsed = JSON.parse(jsonText);
+        if (parsed.tool_names && Array.isArray(parsed.tool_names)) {
+            const validToolNames = new Set(allTools.map(t => t.name));
+            return parsed.tool_names.filter(t => typeof t === 'string' && validToolNames.has(t));
+        }
+        return [];
+    } catch (e) {
+        console.error("Failed to parse LLM tool filter response:", responseText, e);
+        return []; // Fallback to no tools if parsing fails
     }
 };
 

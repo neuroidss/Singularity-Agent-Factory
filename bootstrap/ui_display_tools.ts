@@ -1,8 +1,9 @@
+
 import type { ToolCreatorPayload } from '../types';
 
 export const UI_DISPLAY_TOOLS: ToolCreatorPayload[] = [
     {
-        name: 'User Input Form',
+        name: 'Mission Command',
         description: 'Renders the main textarea for user input and the submit button.',
         category: 'UI Component',
         executionEnvironment: 'Client',
@@ -12,10 +13,24 @@ export const UI_DISPLAY_TOOLS: ToolCreatorPayload[] = [
             {name: 'setUserInput', type: 'object', description: 'Function to update the input value', required: true},
             {name: 'handleSubmit', type: 'object', description: 'Function to call on submit', required: true},
             {name: 'isSwarmRunning', type: 'boolean', description: 'Whether the swarm is running.', required: true },
+            {name: 'useSearch', type: 'boolean', description: 'Whether web search is enabled.', required: true },
+            {name: 'setUseSearch', type: 'object', description: 'Function to toggle web search.', required: true },
+            {name: 'selectedModel', type: 'object', description: 'The currently selected AI model.', required: true },
+            {name: 'examplePrompts', type: 'array', description: 'A list of example prompts for the user to select.', required: true },
         ],
         implementationCode: `
+          const [selectedPrompt, setSelectedPrompt] = React.useState('');
+
+          const handlePromptSelect = (e) => {
+              const promptText = e.target.value;
+              setSelectedPrompt(promptText);
+              if (promptText) {
+                  setUserInput(promptText);
+              }
+          };
+        
           const Spinner = () => (
-            <svg className="animate-spin -ml-1 mr-3 h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+            <svg className="animate-spin h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
                 <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
                 <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
             </svg>
@@ -25,10 +40,25 @@ export const UI_DISPLAY_TOOLS: ToolCreatorPayload[] = [
           const buttonText = isSwarmRunning ? 'Agent is Active...' : 'Start Task';
           let placeholderText = "Describe a high-level goal for the agent...";
           if(isSwarmRunning) placeholderText = "Agent task is running...";
+
+          const isGoogleModel = selectedModel.provider === 'GoogleAI';
     
           return (
             <div className="w-full bg-gray-800/60 border border-gray-700 rounded-xl p-4">
                 <h3 className="text-lg font-bold text-indigo-300 mb-2">Mission Command</h3>
+                <div className="mb-2">
+                    <select
+                        id="demo-prompt-select"
+                        value={selectedPrompt}
+                        onChange={handlePromptSelect}
+                        className="w-full bg-gray-900 border border-gray-600 rounded-lg p-2 focus:ring-2 focus:ring-indigo-500 text-sm"
+                        disabled={isDisabled}
+                        aria-label="Select an example prompt"
+                    >
+                        <option value="">Select an example prompt...</option>
+                        {(examplePrompts || []).map((p, i) => <option key={i} value={p.prompt}>{p.name}</option>)}
+                    </select>
+                </div>
                 <div className="relative w-full group">
                     <textarea
                         id="userInput"
@@ -44,6 +74,22 @@ export const UI_DISPLAY_TOOLS: ToolCreatorPayload[] = [
                             }
                         }}
                     />
+                </div>
+                <div className="flex items-center gap-2 pt-2">
+                    <input 
+                        type="checkbox" 
+                        id="use-search-main" 
+                        checked={useSearch && isGoogleModel} 
+                        onChange={e => setUseSearch(e.target.checked)} 
+                        disabled={!isGoogleModel}
+                        className="h-4 w-4 rounded border-gray-600 bg-gray-800 text-indigo-600 disabled:opacity-50 disabled:cursor-not-allowed"
+                    />
+                    <label 
+                        htmlFor="use-search-main" 
+                        className={\`text-sm \${isGoogleModel ? 'text-gray-300' : 'text-gray-500'}\`}
+                    >
+                        Enable Web Search (Google AI only)
+                    </label>
                 </div>
                 <button
                     onClick={handleSubmit}
@@ -66,7 +112,9 @@ export const UI_DISPLAY_TOOLS: ToolCreatorPayload[] = [
         parameters: [
           { name: 'logs', type: 'array', description: 'The array of log messages.', required: true },
           { name: 'onReset', type: 'object', description: 'Function to reset all tools and progress.', required: true },
-          { name: 'apiCallCount', type: 'number', description: 'The number of API calls made.', required: true },
+          { name: 'apiCallCounts', type: 'object', description: 'A record of API calls per model.', required: true },
+          { name: 'apiCallLimit', type: 'number', description: 'The limit for API calls.', required: true },
+          { name: 'agentCount', type: 'number', description: 'The number of active agents.', required: true },
         ],
         implementationCode: `// This component is implemented natively in DebugLogView.tsx`,
     },
@@ -244,8 +292,53 @@ export const UI_DISPLAY_TOOLS: ToolCreatorPayload[] = [
         `
     },
     {
+        name: 'UI Component Panel',
+        description: 'A panel on the right sidebar for displaying contextual UI elements like the active tool context.',
+        category: 'UI Component',
+        executionEnvironment: 'Client',
+        purpose: 'To group and display contextual UI tools in the sidebar.',
+        parameters: [
+          { name: 'activeTools', type: 'array', description: 'The array of scored tools currently in the context.', required: true },
+          { name: 'getTool', type: 'object', description: 'Function to retrieve a tool definition by name.', required: true },
+        ],
+        implementationCode: `
+            const [isContextVisible, setContextVisible] = React.useState(true);
+            
+            // A simple chevron icon component
+            const ChevronIcon = ({ open }) => (
+                <svg xmlns="http://www.w3.org/2000/svg" className={\`h-5 w-5 transition-transform duration-200 \${open ? 'rotate-180' : ''}\`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                </svg>
+            );
+
+            return (
+                <div className="bg-gray-800/60 border border-gray-700 rounded-xl p-3 space-y-2">
+                    <div className="flex items-center gap-2">
+                        <span className="text-indigo-400 font-mono">{'</>'}</span>
+                        <h3 className="text-lg font-bold text-indigo-300 flex-grow">UI Component</h3>
+                    </div>
+                    
+                    <div className="bg-gray-900/50 rounded-lg border border-gray-700">
+                        <button 
+                            onClick={() => setContextVisible(!isContextVisible)} 
+                            className="w-full flex justify-between items-center p-2 text-left"
+                        >
+                            <span className="font-semibold text-gray-200">Active Tool Context</span>
+                            <ChevronIcon open={isContextVisible} />
+                        </button>
+                        {isContextVisible && (
+                             <div className="p-2 border-t border-gray-700">
+                                 <UIToolRunner tool={getTool('Active Tool Context')} props={{ activeTools }} />
+                             </div>
+                        )}
+                    </div>
+                </div>
+            )
+        `
+    },
+    {
         name: 'Active Tool Context',
-        description: 'Displays the list of tools that have been selected and provided to the agent for the current task, along with their relevance scores.',
+        description: 'A simple list displaying the tools currently provided to the agent. Designed to be embedded in other UI panels.',
         category: 'UI Component',
         executionEnvironment: 'Client',
         purpose: 'To provide clear, real-time feedback on exactly which tools the agent is considering for its current task.',
@@ -254,121 +347,17 @@ export const UI_DISPLAY_TOOLS: ToolCreatorPayload[] = [
         ],
         implementationCode: `
           if (!activeTools || activeTools.length === 0) {
-            return null; // Don't render if there are no active tools (i.e., task is not running)
+            return <p className="text-sm text-gray-500 text-center py-2">No active context.</p>;
           }
     
-          const ScoreBar = ({ score }) => {
-            const percentage = Math.max(0, Math.min(100, score * 100));
-            let colorClass = 'bg-green-500';
-            if (percentage < 70) colorClass = 'bg-yellow-500';
-            if (percentage < 55) colorClass = 'bg-orange-500';
-    
-            return (
-              <div className="w-full bg-gray-600 rounded-full h-1.5 mt-1">
-                <div className={colorClass + " h-1.5 rounded-full"} style={{ width: percentage + '%' }}></div>
-              </div>
-            );
-          };
-    
           return (
-            <div className="bg-gray-800/60 border border-purple-500/60 rounded-xl p-4 h-full flex flex-col">
-              <h3 className="text-lg font-bold text-purple-300 mb-3">Active Tool Context ({activeTools.length})</h3>
-              <div className="flex-grow overflow-y-auto pr-2 space-y-2">
+              <div className="max-h-48 overflow-y-auto pr-1 space-y-1">
                 {activeTools.map(({ tool, score }) => (
-                  <div key={tool.id} className="bg-gray-900/50 p-2 rounded-lg">
-                    <div className="flex justify-between items-center">
-                      <p className="font-semibold text-white text-sm truncate pr-2">{tool.name}</p>
-                      <p className="text-purple-300 font-mono text-sm">{score.toFixed(3)}</p>
-                    </div>
-                    <ScoreBar score={score} />
+                  <div key={tool.id} className="bg-gray-800/50 p-1.5 rounded-md" title={\`Score: \${score.toFixed(3)}\`}>
+                    <p className="font-semibold text-white text-sm truncate">{tool.name}</p>
                   </div>
                 ))}
               </div>
-            </div>
-          );
-        `
-    },
-    {
-        name: 'Tool List Display',
-        description: 'Displays a searchable and categorized list of all available tools for the agent.',
-        category: 'UI Component',
-        executionEnvironment: 'Client',
-        purpose: 'To provide users with a clear overview of the agent\'s current capabilities.',
-        parameters: [
-          { name: 'tools', type: 'array', description: 'The array of all available LLMTool objects.', required: true },
-          { name: 'isServerConnected', type: 'boolean', description: 'Indicates if the backend server is connected.', required: true },
-        ],
-        implementationCode: `
-          const [filter, setFilter] = React.useState('');
-          const [expandedCategories, setExpandedCategories] = React.useState({ 'UI Component': true, 'Functional': true, 'Automation': true, 'Server': true });
-    
-          const filteredTools = React.useMemo(() => {
-            return tools.filter(tool => tool.name.toLowerCase().includes(filter.toLowerCase()));
-          }, [tools, filter]);
-    
-          const groupedTools = React.useMemo(() => {
-            const groups = { 'UI Component': [], 'Functional': [], 'Automation': [], 'Server': [] };
-            filteredTools.forEach(tool => {
-              if (groups[tool.category]) {
-                groups[tool.category].push(tool);
-              }
-            });
-            return groups;
-          }, [filteredTools]);
-          
-          const toggleCategory = (category) => {
-            setExpandedCategories(prev => ({ ...prev, [category]: !prev[category] }));
-          };
-    
-          const getCategoryIcon = (category) => {
-              if (category === 'UI Component') return <UIIcon className="w-5 h-5 text-indigo-400" />;
-              if (category === 'Functional') return <FunctionalIcon className="w-5 h-5 text-sky-400" />;
-              if (category === 'Automation') return <AutomationIcon className="w-5 h-5 text-purple-400" />;
-              if (category === 'Server') return <GearIcon className="w-5 h-5 text-green-400" />;
-              return null;
-          };
-    
-          return (
-            <div className="bg-gray-800/60 border border-gray-700 rounded-xl p-4 flex flex-col h-full min-h-0">
-              <div className="flex-shrink-0 flex justify-between items-center mb-3">
-                  <h3 className="text-lg font-bold text-indigo-300">Tool List ({tools.length})</h3>
-                  <div className={\`flex items-center gap-2 text-xs px-2 py-1 rounded-full \${isServerConnected ? 'bg-green-900/70 text-green-300' : 'bg-red-900/70 text-red-300'}\`}>
-                      <div className={\`w-2 h-2 rounded-full \${isServerConnected ? 'bg-green-400' : 'bg-red-400'}\`}></div>
-                      <span>{isServerConnected ? 'Server Connected' : 'Server Offline'}</span>
-                  </div>
-              </div>
-              <input
-                type="text"
-                placeholder="Filter tools..."
-                value={filter}
-                onChange={e => setFilter(e.target.value)}
-                className="w-full bg-gray-900 border border-gray-600 rounded-lg p-2 text-sm mb-3 flex-shrink-0"
-              />
-              <div className="flex-grow overflow-y-auto pr-2 space-y-2">
-                {Object.entries(groupedTools).map(([category, toolsInCategory]) => (
-                  toolsInCategory.length > 0 && (
-                    <div key={category}>
-                      <button onClick={() => toggleCategory(category)} className="w-full flex items-center justify-between p-2 bg-gray-700/50 rounded-lg text-left">
-                        <div className="flex items-center gap-2">
-                            {getCategoryIcon(category)}
-                            <span className="font-semibold text-white">{category}</span>
-                        </div>
-                        <span className="text-gray-400 text-sm">({toolsInCategory.length})</span>
-                      </button>
-                      {expandedCategories[category] && (
-                        <div className="pl-4 pt-2 space-y-1">
-                          {toolsInCategory.sort((a,b) => a.name.localeCompare(b.name)).map(tool => (
-                            <div key={tool.id} className="p-2 bg-gray-900/40 rounded-md" title={tool.description}>
-                                <p className="text-sm text-gray-200 truncate">{tool.name} <span className="text-xs text-gray-500">(v{tool.version})</span></p>
-                            </div>
-                          ))}
-                        </div>
-                      )}
-                    </div>
-                  )
-                ))}
-              </div>
-            </div>
           );
         `
     }

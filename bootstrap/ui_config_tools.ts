@@ -3,11 +3,45 @@ import { LOCAL_AI_PANEL_TOOL_PAYLOAD } from './local_ai_tools';
 
 export const UI_CONFIG_TOOLS: ToolCreatorPayload[] = [
     {
-        name: 'Configuration Panel',
-        description: 'A UI panel for selecting the AI model and configuring API keys and service endpoints.',
+        name: 'Visibility',
+        description: 'Controls visibility of different layers in the PCB simulation view.',
         category: 'UI Component',
         executionEnvironment: 'Client',
-        purpose: 'To allow the user to configure the AI model and necessary API credentials, enabling flexibility in choosing the "brain" of the agent.',
+        purpose: 'To allow users to toggle display layers for better inspection of the PCB layout.',
+        parameters: [
+            { name: 'visibility', type: 'object', description: 'An object with boolean flags for different layers.', required: true },
+            { name: 'setVisibility', type: 'object', description: 'Function to update the visibility state.', required: true },
+        ],
+        implementationCode: `
+            return (
+                <div className="bg-gray-800/60 border border-gray-700 rounded-xl p-3 text-white">
+                    <h3 className="text-lg font-bold text-indigo-300 mb-2">Visibility</h3>
+                    <div className="space-y-1 text-sm p-1">
+                        {Object.keys(visibility).map(key => (
+                            <div key={key} className="flex items-center">
+                                <input
+                                    type="checkbox"
+                                    id={\`vis-\${key}\`}
+                                    checked={visibility[key]}
+                                    onChange={() => setVisibility(v => ({...v, [key]: !v[key]}))}
+                                    className="h-4 w-4 rounded border-gray-500 bg-gray-700 text-indigo-500 focus:ring-indigo-600"
+                                />
+                                <label htmlFor={\`vis-\${key}\`} className="ml-2 text-gray-300">
+                                    Show {key.charAt(0).toUpperCase() + key.slice(1)}
+                                </label>
+                            </div>
+                        ))}
+                    </div>
+                </div>
+            );
+        `
+    },
+    {
+        name: 'AI Model',
+        description: 'A UI panel for selecting the AI model.',
+        category: 'UI Component',
+        executionEnvironment: 'Client',
+        purpose: 'To allow the user to configure the AI model, enabling flexibility in choosing the "brain" of the agent.',
         parameters: [
           { name: 'apiConfig', type: 'object', description: 'The current API configuration.', required: true },
           { name: 'setApiConfig', type: 'object', description: 'Function to update the API config.', required: true },
@@ -62,9 +96,9 @@ export const UI_CONFIG_TOOLS: ToolCreatorPayload[] = [
           }
     
           return (
-            <div className="w-full bg-gray-800/60 border border-gray-700 rounded-xl p-4 space-y-4">
+            <div className="w-full bg-gray-800/60 border border-gray-700 rounded-xl p-3 space-y-3">
+              <h3 className="text-lg font-bold text-indigo-300">AI Model</h3>
               <div>
-                <label htmlFor="model-select" className="block text-sm font-medium text-indigo-300 mb-1">AI Model</label>
                 <select
                   id="model-select"
                   value={selectedModel?.id || ''}
@@ -87,7 +121,7 @@ export const UI_CONFIG_TOOLS: ToolCreatorPayload[] = [
               </div>
     
               {provider === 'OpenAI_API' && (
-                <div className="space-y-3">
+                <div className="space-y-3 pt-2 border-t border-gray-700">
                   <div>
                     <label htmlFor="openAIBaseUrl" className="block text-sm font-medium text-gray-300 mb-1">API Base URL</label>
                     <input
@@ -116,7 +150,7 @@ export const UI_CONFIG_TOOLS: ToolCreatorPayload[] = [
               )}
               
               {provider === 'Ollama' && (
-                <div>
+                <div className="pt-2 border-t border-gray-700">
                   <label htmlFor="ollamaHost" className="block text-sm font-medium text-gray-300 mb-1">Ollama Host URL</label>
                   <input
                     type="text"
@@ -135,7 +169,56 @@ export const UI_CONFIG_TOOLS: ToolCreatorPayload[] = [
         `
     },
     {
-        name: 'Tool Relevance Configuration',
+        name: 'Tool Selection Mode',
+        description: 'Selects the method for filtering tools provided to the agent.',
+        category: 'UI Component',
+        executionEnvironment: 'Client',
+        purpose: 'To control the strategy for tool context selection, balancing between performance, cost, and agent capability.',
+        parameters: [
+          { name: 'relevanceMode', type: 'string', description: 'The current relevance mode (Embeddings, All, LLM).', required: true },
+          { name: 'setRelevanceMode', type: 'object', description: 'Function to update the relevance mode.', required: true },
+          { name: 'isSwarmRunning', type: 'boolean', description: 'Whether the swarm is currently active, to disable controls.', required: true },
+        ],
+        implementationCode: `
+            const modes = [
+                { id: 'Embeddings', label: 'Embeddings', description: 'Fast, local semantic search to find relevant tools.' },
+                { id: 'All', label: 'All Tools', description: 'Provides all tools to the agent. Slower, but most capable.' },
+                { id: 'LLM', label: 'LLM Filter', description: 'Uses an extra LLM call to intelligently select tools.' },
+            ];
+            
+            return (
+                <div className="bg-gray-800/60 border border-gray-700 rounded-xl p-3 space-y-3">
+                    <h3 className="text-lg font-bold text-indigo-300">Tool Selection Mode</h3>
+                    <fieldset className="space-y-2">
+                        <legend className="sr-only">Tool Selection Mode</legend>
+                        {modes.map(mode => (
+                            <div key={mode.id} className="relative flex items-start">
+                                <div className="flex items-center h-5">
+                                    <input
+                                        id={mode.id}
+                                        name="relevance-mode"
+                                        type="radio"
+                                        checked={relevanceMode === mode.id}
+                                        onChange={() => setRelevanceMode(mode.id)}
+                                        disabled={isSwarmRunning}
+                                        className="focus:ring-indigo-500 h-4 w-4 text-indigo-600 border-gray-500 bg-gray-700 rounded disabled:opacity-50"
+                                    />
+                                </div>
+                                <div className="ml-3 text-sm">
+                                    <label htmlFor={mode.id} className={\`font-medium \${isSwarmRunning ? 'text-gray-500' : 'text-gray-200'}\`}>
+                                        {mode.label}
+                                    </label>
+                                    <p className="text-gray-400 text-xs">{mode.description}</p>
+                                </div>
+                            </div>
+                        ))}
+                    </fieldset>
+                </div>
+            );
+        `
+    },
+    {
+        name: 'Embedding Filter',
         description: 'A panel for configuring the tool relevance filter used by the agent swarm. Adjust how many tools are selected for a task.',
         category: 'UI Component',
         executionEnvironment: 'Client',
@@ -149,8 +232,8 @@ export const UI_CONFIG_TOOLS: ToolCreatorPayload[] = [
         ],
         implementationCode: `
           return (
-            <div className="bg-gray-800/60 border border-gray-700 rounded-xl p-4 space-y-4">
-              <h3 className="text-lg font-bold text-indigo-300">Tool Context Filter</h3>
+            <div className="bg-gray-800/60 border border-gray-700 rounded-xl p-3 space-y-4">
+              <h3 className="text-lg font-bold text-indigo-300">Embedding Filter</h3>
               <div className="space-y-3">
                 <div>
                   <label htmlFor="topK-slider" className="block text-sm font-medium text-gray-300 mb-1">Max Tools (Top K): <span className="font-bold text-white">{topK}</span></label>

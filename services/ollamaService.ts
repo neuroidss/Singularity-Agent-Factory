@@ -153,3 +153,49 @@ export const generateWithTools = async (
         throw generateDetailedError(e, ollamaHost);
     }
 };
+
+export const generateText = async (
+    userInput: string,
+    systemInstruction: string,
+    modelId: string,
+    apiConfig: APIConfig
+): Promise<string> => {
+    const { ollamaHost } = apiConfig;
+    if (!ollamaHost) {
+        throw new Error("Ollama Host URL is not configured. Please set it in the API Configuration.");
+    }
+
+    const body = {
+        model: modelId,
+        messages: [
+            { role: 'system', content: systemInstruction },
+            { role: 'user', content: userInput }
+        ],
+        stream: false,
+        options: {
+            temperature: 0.0,
+        },
+    };
+
+    try {
+        const response = await fetchWithTimeout(
+            `${ollamaHost.replace(/\/+$/, '')}/api/chat`,
+            {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(body),
+            },
+            OLLAMA_TIMEOUT
+        );
+
+        if (!response.ok) {
+            await handleAPIError(response);
+            return ""; // Should not be reached
+        }
+
+        const data = await response.json();
+        return data.message?.content || "";
+    } catch (e) {
+        throw generateDetailedError(e, ollamaHost);
+    }
+};

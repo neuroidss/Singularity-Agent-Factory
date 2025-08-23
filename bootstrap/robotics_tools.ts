@@ -61,10 +61,10 @@ export const ROBOTICS_TOOLS: ToolCreatorPayload[] = [
     },
     {
         name: 'Move Forward',
-        description: 'Moves the robot one step forward in its current direction.',
+        description: 'A fundamental robotic action for navigation. Moves the specified agent one unit forward in its current direction. Use this as part of a sequence to patrol, explore, or approach a target.',
         category: 'Functional',
         executionEnvironment: 'Client',
-        purpose: 'To provide a primitive action for robot locomotion.',
+        purpose: 'To provide a primitive action for agent locomotion, forming the basis for all higher-level movement skills like pathfinding and exploration.',
         parameters: [
             { name: 'agentId', type: 'string', description: 'The ID of the robot to move.', required: true }
         ],
@@ -75,10 +75,10 @@ export const ROBOTICS_TOOLS: ToolCreatorPayload[] = [
     },
     {
         name: 'Move Backward',
-        description: 'Moves the robot one step backward from its current direction.',
+        description: 'A fundamental robotic action for navigation. Moves the specified agent one unit backward from its current direction. Useful for maneuvering in tight spaces or retreating.',
         category: 'Functional',
         executionEnvironment: 'Client',
-        purpose: 'To provide a primitive action for robot locomotion, allowing for reverse movement.',
+        purpose: 'To provide a primitive action for agent locomotion, allowing for reverse movement as part of complex navigation skills.',
         parameters: [
             { name: 'agentId', type: 'string', description: 'The ID of the robot to move.', required: true }
         ],
@@ -89,10 +89,10 @@ export const ROBOTICS_TOOLS: ToolCreatorPayload[] = [
     },
     {
         name: 'Turn Left',
-        description: 'Turns the robot 90 degrees to its left.',
+        description: 'A fundamental robotic action for orientation. Rotates the specified agent 90 degrees to its left (counter-clockwise). Essential for changing direction during navigation and exploration.',
         category: 'Functional',
         executionEnvironment: 'Client',
-        purpose: 'To provide a primitive action for robot orientation.',
+        purpose: 'To provide a primitive action for changing an agent\'s orientation, enabling pathfinding and target acquisition.',
          parameters: [
             { name: 'agentId', type: 'string', description: 'The ID of the robot to turn.', required: true }
         ],
@@ -103,10 +103,10 @@ export const ROBOTICS_TOOLS: ToolCreatorPayload[] = [
     },
     {
         name: 'Turn Right',
-        description: 'Turns the robot 90 degrees to its right.',
+        description: 'A fundamental robotic action for orientation. Rotates the specified agent 90 degrees to its right (clockwise). Essential for changing direction during navigation and exploration.',
         category: 'Functional',
         executionEnvironment: 'Client',
-        purpose: 'To provide a primitive action for robot orientation.',
+        purpose: 'To provide a primitive action for changing an agent\'s orientation, enabling pathfinding and target acquisition.',
          parameters: [
             { name: 'agentId', type: 'string', description: 'The ID of the robot to turn.', required: true }
         ],

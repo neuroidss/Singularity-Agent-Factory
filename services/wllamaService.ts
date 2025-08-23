@@ -67,6 +67,38 @@ const loadModel = async (modelUrl: string, onProgress: (message: string) => void
     }
 };
 
+const generate = async (
+    userInput: string,
+    systemInstruction: string,
+    modelUrl: string,
+    temperature: number,
+    onProgress: (message: string) => void,
+): Promise<string> => {
+     try {
+        await loadModel(modelUrl, onProgress);
+        const llm = await getWllama(onProgress);
+
+        onProgress('🤖 Generating response with Wllama...');
+
+        const response = await llm.createChatCompletion([
+            { role: 'system', content: systemInstruction },
+            { role: 'user', content: userInput },
+        ], {
+            temp: temperature > 0 ? temperature : 0.1,
+            n_predict: 2048,
+        });
+
+        onProgress('✅ Response generated.');
+        return response.choices[0].message.content || "";
+
+    } catch (e) {
+        const errorMessage = e instanceof Error ? e.message : String(e);
+        onProgress(`[ERROR] ❌ Wllama generation failed: ${errorMessage}`);
+        console.error("Wllama service error:", e);
+        throw e;
+    }
+};
+
 export const generateJsonOutput = async (
     userInput: string,
     systemInstruction: string,
@@ -75,29 +107,18 @@ export const generateJsonOutput = async (
     apiConfig: APIConfig,
     onProgress: (message: string) => void,
 ): Promise<string> => {
-    try {
-        await loadModel(modelUrl, onProgress);
-        const llm = await getWllama(onProgress);
-        
-        const fullSystemInstruction = `${systemInstruction}\n\nYou MUST respond with a single, valid JSON object and nothing else. Do not wrap the JSON in triple backticks.`;
+    const fullSystemInstruction = `${systemInstruction}\n\nYou MUST respond with a single, valid JSON object and nothing else. Do not wrap the JSON in triple backticks.`;
+    const responseText = await generate(userInput, fullSystemInstruction, modelUrl, temperature, onProgress);
+    return responseText || "{}";
+};
 
-        onProgress('🤖 Generating response with Wllama...');
-
-        const response = await llm.createChatCompletion([
-            { role: 'system', content: fullSystemInstruction },
-            { role: 'user', content: userInput },
-        ], {
-            temp: temperature > 0 ? temperature : 0.1,
-            n_predict: 2048,
-        });
-
-        onProgress('✅ Response generated.');
-        return response.choices[0].message.content || "{}";
-
-    } catch (e) {
-        const errorMessage = e instanceof Error ? e.message : String(e);
-        onProgress(`[ERROR] ❌ Wllama generation failed: ${errorMessage}`);
-        console.error("Wllama service error:", e);
-        throw e;
-    }
+export const generateText = async (
+    userInput: string,
+    systemInstruction: string,
+    modelUrl: string,
+    temperature: number,
+    apiConfig: APIConfig,
+    onProgress: (message: string) => void
+): Promise<string> => {
+    return await generate(userInput, systemInstruction, modelUrl, temperature, onProgress);
 };

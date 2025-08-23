@@ -72,33 +72,67 @@ export const ForceSimulationFunctionsString = `
         return Math.max(min, Math.min(max, value));
     }
 
-    applyNetAttractionForAgent(agentId, allPinWorldPos) {
+    applyNetForcesForAgent(agentId, allPinWorldPos) {
         const K_SPRING = this.params.netLengthWeight; 
+        if (!K_SPRING || K_SPRING === 0) return;
         const currentAgent = this.agents.get(agentId);
         if (!currentAgent) return;
     
-        (this.graph.edges || []).forEach(edge => {
-            const [sourceComp, sourcePin] = edge.source.split('-');
-            const [targetComp, targetPin] = edge.target.split('-');
-            let otherCompId = null, thisPinName = null, otherPinName = null;
-            if (sourceComp === agentId) {
-                otherCompId = targetComp; thisPinName = sourcePin; otherPinName = targetPin;
-            } else if (targetComp === agentId) {
-                otherCompId = sourceComp; thisPinName = targetPin; otherPinName = sourcePin;
-            }
+        const hasGndPour = this.graph?.copper_pours?.some(p => p.net && p.net.toLowerCase() === 'gnd');
     
-            if (otherCompId && otherCompId !== agentId) {
-                const thisPinPos = allPinWorldPos[agentId]?.[thisPinName];
-                const otherPinPos = allPinWorldPos[otherCompId]?.[otherPinName];
-                if (thisPinPos && otherPinPos) {
-                    const dx = otherPinPos.x - thisPinPos.x;
-                    const dz = otherPinPos.z - thisPinPos.z;
-                    const fx = dx * K_SPRING;
-                    const fz = dz * K_SPRING;
-                    currentAgent.force.x += fx;
-                    currentAgent.force.z += fz;
-                    const forceMag = Math.hypot(fx, fz);
-                    currentAgent.lastForces['Net Attraction Strength'] = (currentAgent.lastForces['Net Attraction Strength'] || 0) + forceMag;
+        (this.graph.edges || []).forEach(edge => {
+            const isGndEdge = edge.label && edge.label.toLowerCase() === 'gnd';
+    
+            if (isGndEdge && hasGndPour) {
+                // Ground Pour Attraction Logic
+                const K_GROUND_POUR = K_SPRING * 2; // Make it a bit stronger
+                let pinToProcess = null;
+                if (edge.source.startsWith(agentId + '-')) {
+                    pinToProcess = edge.source;
+                } else if (edge.target.startsWith(agentId + '-')) {
+                    pinToProcess = edge.target;
+                }
+    
+                if (pinToProcess) {
+                    const [comp, pin] = pinToProcess.split('-');
+                    const pinPos = allPinWorldPos[comp]?.[pin];
+                    if (pinPos) {
+                        const closestPoint = this.getClosestPointOnBoardOutline(pinPos);
+                        const dx = closestPoint.x - pinPos.x;
+                        const dz = closestPoint.z - pinPos.z;
+                        const fx = dx * K_GROUND_POUR;
+                        const fz = dz * K_GROUND_POUR;
+                        currentAgent.force.x += fx;
+                        currentAgent.force.z += fz;
+                        const forceMag = Math.hypot(fx, fz);
+                        currentAgent.lastForces['Ground Pour Attraction'] = (currentAgent.lastForces['Ground Pour Attraction'] || 0) + forceMag;
+                    }
+                }
+            } else {
+                // Standard Net Attraction Logic (for non-GND nets, or GND nets without a pour)
+                const [sourceComp, sourcePin] = edge.source.split('-');
+                const [targetComp, targetPin] = edge.target.split('-');
+                let otherCompId = null, thisPinName = null, otherPinName = null;
+    
+                if (sourceComp === agentId) {
+                    otherCompId = targetComp; thisPinName = sourcePin; otherPinName = targetPin;
+                } else if (targetComp === agentId) {
+                    otherCompId = sourceComp; thisPinName = targetPin; otherPinName = sourcePin;
+                }
+        
+                if (otherCompId && otherCompId !== agentId) {
+                    const thisPinPos = allPinWorldPos[agentId]?.[thisPinName];
+                    const otherPinPos = allPinWorldPos[otherCompId]?.[otherPinName];
+                    if (thisPinPos && otherPinPos) {
+                        const dx = otherPinPos.x - thisPinPos.x;
+                        const dz = otherPinPos.z - thisPinPos.z;
+                        const fx = dx * K_SPRING;
+                        const fz = dz * K_SPRING;
+                        currentAgent.force.x += fx;
+                        currentAgent.force.z += fz;
+                        const forceMag = Math.hypot(fx, fz);
+                        currentAgent.lastForces['Net Attraction Strength'] = (currentAgent.lastForces['Net Attraction Strength'] || 0) + forceMag;
+                    }
                 }
             }
         });
@@ -145,12 +179,10 @@ export const ForceSimulationFunctionsString = `
         const K_CONTAINMENT = this.params.boardEdgeConstraint;
         const agent = this.agents.get(agentId);
         const node = this.nodeMap.get(agentId);
-        if (!agent || !node || !this.graph.board_outline) return;
+        if (!agent || !node || !this.graph || !this.graph.board_outline || K_CONTAINMENT === 0) return;
 
         const { x, y, width, height, shape } = this.graph.board_outline;
         const { drcDims } = this.getDrcInfo(node);
-        const node_w2 = (drcDims.width / 2) * this.SCALE;
-        const node_h2 = (drcDims.height / 2) * this.SCALE;
 
         if (shape === 'circle') {
             const centerX = (x + width / 2) * this.SCALE;
@@ -159,27 +191,60 @@ export const ForceSimulationFunctionsString = `
             const dx = agent.pos.x - centerX;
             const dz = agent.pos.z - centerZ;
             const dist = Math.hypot(dx, dz);
-            const max_extent = Math.hypot(node_w2, node_h2);
+            
+            const node_w2 = (drcDims.width / 2) * this.SCALE;
+            const node_h2 = (drcDims.height / 2) * this.SCALE;
+            const max_extent = Math.hypot(node_w2, node_h2); // Simple approximation for corner
+            
             if (dist + max_extent > radius) {
                 if (dist < 1e-6) return; // Prevent division by zero if agent is at the center
                 const penetration = (dist + max_extent) - radius;
-                const forceX = -(dx / dist) * penetration * K_CONTAINMENT;
-                const forceZ = -(dz / dist) * penetration * K_CONTAINMENT;
+                const forceMagnitude = penetration * K_CONTAINMENT * 0.5;
+                const forceX = -(dx / dist) * forceMagnitude;
+                const forceZ = -(dz / dist) * forceMagnitude;
                 agent.force.x += forceX;
                 agent.force.z += forceZ;
                 agent.lastForces['Board Edge Force'] = (agent.lastForces['Board Edge Force'] || 0) + Math.hypot(forceX, forceZ);
             }
-        } else {
-            const minX = x * this.SCALE + node_w2;
-            const minZ = y * this.SCALE + node_h2;
-            const maxX = (x + width) * this.SCALE - node_w2;
-            const maxZ = (y + height) * this.SCALE - node_h2;
-            let f = 0;
-            if (agent.pos.x < minX) { agent.force.x += K_CONTAINMENT; f+=K_CONTAINMENT; }
-            if (agent.pos.x > maxX) { agent.force.x -= K_CONTAINMENT; f+=K_CONTAINMENT; }
-            if (agent.pos.z < minZ) { agent.force.z += K_CONTAINMENT; f+=K_CONTAINMENT; }
-            if (agent.pos.z > maxZ) { agent.force.z -= K_CONTAINMENT; f+=K_CONTAINMENT; }
-            if (f > 0) agent.lastForces['Board Edge Force'] = (agent.lastForces['Board Edge Force'] || 0) + f;
+        } else { // Rectangular board
+            const left = x * this.SCALE;
+            const right = (x + width) * this.SCALE;
+            const top = y * this.SCALE; // z-min
+            const bottom = (y + height) * this.SCALE; // z-max
+
+            // We consider the bounding box of the rotated component for simplicity and robustness.
+            const corners = this.getRotatedRectCorners(agent, drcDims);
+            let minCompX = Infinity, maxCompX = -Infinity, minCompZ = Infinity, maxCompZ = -Infinity;
+            corners.forEach(c => {
+                minCompX = Math.min(minCompX, c.x);
+                maxCompX = Math.max(maxCompX, c.x);
+                minCompZ = Math.min(minCompZ, c.z);
+                maxCompZ = Math.max(maxCompZ, c.z);
+            });
+            
+            let fx = 0;
+            let fz = 0;
+            const forceMultiplier = K_CONTAINMENT * 0.5;
+
+            // Use a spring-like force based on penetration. This is more stable and intuitive.
+            if (minCompX < left) {
+                fx += (left - minCompX) * forceMultiplier;
+            }
+            if (maxCompX > right) {
+                fx -= (maxCompX - right) * forceMultiplier;
+            }
+            if (minCompZ < top) {
+                fz += (top - minCompZ) * forceMultiplier;
+            }
+            if (maxCompZ > bottom) {
+                fz -= (maxCompZ - bottom) * forceMultiplier;
+            }
+
+            if (Math.abs(fx) > 0 || Math.abs(fz) > 0) {
+                agent.force.x += fx;
+                agent.force.z += fz;
+                agent.lastForces['Board Edge Force'] = (agent.lastForces['Board Edge Force'] || 0) + Math.hypot(fx, fz);
+            }
         }
     }
 
@@ -466,7 +531,7 @@ export const ForceSimulationFunctionsString = `
             agent.torque = { x: 0, y: 0, z: 0 };
             agent.lastForces = {};
             this.applyContainmentForAgent(id);
-            this.applyNetAttractionForAgent(id, allPinWorldPos);
+            this.applyNetForcesForAgent(id, allPinWorldPos);
             this.applyDistributionForceForAgent(id);
 
             (this.graph.rules || []).filter(rule => rule.enabled !== false).forEach(rule => {

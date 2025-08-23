@@ -1,9 +1,10 @@
+
 // bootstrap/ui_layout_rules_tools.ts
 
 import type { ToolCreatorPayload } from '../types';
 
 export const LAYOUT_RULES_EDITOR_TOOL_PAYLOAD: ToolCreatorPayload = {
-    name: 'Layout Rules Editor',
+    name: 'Layout Rules',
     description: 'A UI panel for interactively viewing, enabling/disabling, and managing PCB layout constraints during a simulation.',
     category: 'UI Component',
     executionEnvironment: 'Client',
@@ -13,8 +14,6 @@ export const LAYOUT_RULES_EDITOR_TOOL_PAYLOAD: ToolCreatorPayload = {
         { name: 'onUpdateRules', type: 'object', description: 'Callback function to update the rules array with the new, complete list of rules.', required: true },
     ],
     implementationCode: `
-console.log('[DEBUG] Layout Rules Editor rendered. Received rules count:', (props.rules || []).length);
-
 const RULE_DEFINITIONS = {
     'ProximityConstraint': [{ name: 'groupsJSON', type: 'textarea', placeholder: '[["U1", "C1"]]' }],
     'AlignmentConstraint': [{ name: 'axis', type: 'select', options: ['vertical', 'horizontal'] }, { name: 'componentsJSON', type: 'textarea', placeholder: '["J1", "J2"]' }],
@@ -26,8 +25,6 @@ const RULE_DEFINITIONS = {
     'SymmetricalPairConstraint': [{ name: 'pairJSON', type: 'textarea', placeholder: '["J_A", "J_B"]' }, { name: 'axis', type: 'select', options: ['vertical', 'horizontal'] }, { name: 'separation', type: 'number', placeholder: '17.78' }],
 };
 
-// By memoizing the form, we prevent it from re-rendering unless its props change.
-// The key is to ensure the \`onAdd\` and \`onCancel\` props are stable function references.
 const AddRuleForm = React.memo(({ onAdd, onCancel }) => {
     const [ruleType, setRuleType] = React.useState('ProximityConstraint');
     const [args, setArgs] = React.useState({});
@@ -53,7 +50,7 @@ const AddRuleForm = React.memo(({ onAdd, onCancel }) => {
             delete newRule.componentReference;
         }
         onAdd(newRule);
-        setArgs({}); // Clear form for next entry
+        setArgs({});
     };
 
     return (
@@ -78,37 +75,27 @@ const AddRuleForm = React.memo(({ onAdd, onCancel }) => {
 
 const [showForm, setShowForm] = React.useState(false);
 
-// *** THE FIX: STABILIZE ALL CALLBACKS ***
-// We use refs to hold the latest version of props that change on every render.
-// This allows our useCallback hooks to have stable identities because they don't
-// need to list the changing props in their dependency arrays.
-const onUpdateRulesRef = React.useRef(props.onUpdateRules);
-onUpdateRulesRef.current = props.onUpdateRules; // Update ref on each render
-
-const rulesRef = React.useRef(props.rules);
-rulesRef.current = props.rules; // Update ref on each render
-
-// These callbacks are now stable (created only once) because their dependency array is empty.
-// They use the refs to access the *current* props when they are called.
 const handleToggle = React.useCallback((index) => {
-    const newRules = [...(rulesRef.current || [])];
-    newRules[index].enabled = !newRules[index].enabled;
-    onUpdateRulesRef.current(newRules);
-}, []); // Empty dependency array means this function reference is stable
+    const newRules = [...(rules || [])];
+    if (newRules[index]) {
+        newRules[index] = { ...newRules[index], enabled: !newRules[index].enabled };
+        onUpdateRules(newRules);
+    }
+}, [rules, onUpdateRules]);
 
 const handleDelete = React.useCallback((index) => {
-    const newRules = (rulesRef.current || []).filter((_, i) => i !== index);
-    onUpdateRulesRef.current(newRules);
-}, []); // Empty dependency array means this function reference is stable
+    const newRules = (rules || []).filter((_, i) => i !== index);
+    onUpdateRules(newRules);
+}, [rules, onUpdateRules]);
 
 const handleAddRule = React.useCallback((newRule) => {
-    onUpdateRulesRef.current([...(rulesRef.current || []), newRule]);
-    setShowForm(false); // Hide form after adding
-}, []); // Empty dependency array means this function reference is stable
+    onUpdateRules([...(rules || []), newRule]);
+    setShowForm(false);
+}, [rules, onUpdateRules]);
 
 const handleCancelForm = React.useCallback(() => {
     setShowForm(false);
-}, []); // Empty dependency array means this function reference is stable
+}, []);
 
 const formatRuleValue = (value) => {
     if (Array.isArray(value)) return \`[\${value.join(', ')}]\`;
@@ -117,16 +104,16 @@ const formatRuleValue = (value) => {
 };
 
 return (
-    <div className="bg-gray-800/70 backdrop-blur-sm border border-gray-700 rounded-xl p-2 flex flex-col h-full text-white">
-        <div className="flex justify-between items-center px-2 mb-2">
+    <div className="bg-gray-800/70 backdrop-blur-sm border border-gray-700 rounded-xl p-3 flex flex-col h-full text-white">
+        <div className="flex justify-between items-center px-1 mb-2">
             <h3 className="text-lg font-bold text-cyan-300">Layout Rules</h3>
-            <button onClick={() => setShowForm(prev => !prev)} className="bg-cyan-600 hover:bg-cyan-500 text-white font-bold py-1 px-2 rounded">{showForm ? '−' : '+'}</button>
+            <button onClick={() => setShowForm(prev => !prev)} className="bg-cyan-600 hover:bg-cyan-500 text-white font-bold py-1 px-2.5 rounded-md text-lg leading-none">{showForm ? '−' : '+'}</button>
         </div>
         
         {showForm && <AddRuleForm onAdd={handleAddRule} onCancel={handleCancelForm} />}
         
         <div className="flex-grow overflow-y-auto pr-1 space-y-2">
-            {(props.rules || []).map((rule, index) => (
+            {(rules || []).map((rule, index) => (
                 <div key={index} className={\`p-2 rounded-lg bg-gray-900/50 border \${rule.enabled ? 'border-cyan-700/80' : 'border-gray-700'} transition-colors\`}>
                    <div className="flex justify-between items-center">
                         <span className="font-semibold text-sm truncate pr-2">{rule.type.replace(/([A-Z])/g, ' $1').trim()}</span>
@@ -144,7 +131,7 @@ return (
                    </div>
                 </div>
             ))}
-            {(!props.rules || props.rules.length === 0) && <p className="text-sm text-gray-500 text-center py-4">No layout rules defined.</p>}
+            {(!rules || rules.length === 0) && <p className="text-sm text-gray-500 text-center py-4">No layout rules defined.</p>}
         </div>
     </div>
 );

@@ -2,7 +2,7 @@
 import type { ToolCreatorPayload } from '../types';
 
 export const LAYOUT_HEURISTICS_TUNER_TOOL_PAYLOAD: ToolCreatorPayload = {
-    name: 'Layout Heuristics Tuner',
+    name: 'Layout Heuristics',
     description: 'A UI panel for interactively tuning the parameters that guide the autonomous PCB layout simulation.',
     category: 'UI Component',
     executionEnvironment: 'Client',
@@ -14,20 +14,40 @@ export const LAYOUT_HEURISTICS_TUNER_TOOL_PAYLOAD: ToolCreatorPayload = {
         { name: 'updateAgent', type: 'object', description: 'Callback to update a specific parameter for an agent.', required: true },
     ],
     implementationCode: `
+        // Provide default values to prevent crashes if params is not fully populated.
+        const defaults = {
+            componentSpacing: 200.0,
+            netLengthWeight: 0.03,
+            boardEdgeConstraint: 2.0,
+            distributionStrength: 0.5,
+            boardPadding: 5.0,
+            proximityStrength: 1.0,
+            symmetryStrength: 10.0,
+            alignmentStrength: 10.0,
+            circularStrength: 10.0,
+            symmetricalPairStrength: 20.0,
+            absolutePositionStrength: 10.0,
+            fixedRotationStrength: 50.0,
+            symmetryRotationStrength: 10.0,
+            circularRotationStrength: 10.0,
+        };
+
+        const currentParams = { ...defaults, ...(params || {}) };
+
         const handleParamChange = (e) => {
             const { name, value } = e.target;
-            setParams(prev => ({ ...prev, [name]: parseFloat(value) }));
+            // This is the corrected state update logic.
+            // It passes an updater function that operates on the heuristics object,
+            // which is what the parent 'setLayoutHeuristics' function expects.
+            setParams(prevHeuristics => ({ ...prevHeuristics, [name]: parseFloat(value) }));
         };
         
-        const handleAgentParamChange = (e) => {
-            if (!selectedAgent) return;
-            const { name, value } = e.target;
-            updateAgent(selectedAgent.id, name, parseFloat(value));
-        };
-        
-        const ParameterSlider = ({ name, label, min, max, step, value, onChange, unit, description, displayTransform }) => (
+        const ParameterSlider = ({ name, label, min, max, step, value, onChange, description }) => (
             <div>
-                <label htmlFor={name} className="block text-sm font-medium text-gray-300">{label}: <span className="font-bold text-white">{displayTransform ? displayTransform(value) : ((typeof value === 'number') ? value.toFixed(name === 'netLengthWeight' ? 3 : 2) : 'N/A')}</span> {unit}</label>
+                <div className="flex justify-between items-baseline">
+                  <label htmlFor={name} className="block text-sm font-medium text-gray-300">{label}</label>
+                  <span className="font-mono text-cyan-300 text-sm">{typeof value === 'number' ? value.toFixed(3) : 'N/A'}</span>
+                </div>
                 <input
                     id={name}
                     name={name}
@@ -35,7 +55,7 @@ export const LAYOUT_HEURISTICS_TUNER_TOOL_PAYLOAD: ToolCreatorPayload = {
                     min={min}
                     max={max}
                     step={step}
-                    value={value || 0}
+                    value={typeof value === 'number' ? value : 0}
                     onChange={onChange}
                     className="w-full h-2 bg-gray-700 rounded-lg appearance-none cursor-pointer mt-1"
                 />
@@ -44,46 +64,28 @@ export const LAYOUT_HEURISTICS_TUNER_TOOL_PAYLOAD: ToolCreatorPayload = {
         );
 
         return (
-            <div className="bg-gray-800/70 backdrop-blur-sm border border-gray-700 rounded-xl p-2 flex flex-col h-full text-white">
-                <h3 className="text-lg font-bold text-cyan-300 mb-2 text-center">Layout Heuristics</h3>
-                <div className="flex-grow overflow-y-auto p-2 space-y-4">
-                    <h4 className="font-semibold text-cyan-400 -mb-2">Global Forces</h4>
-                    <ParameterSlider name="componentSpacing" label="Component Repulsion" min="0" max="200" step="1" value={params.componentSpacing} onChange={handleParamChange} description="Force pushing components apart to prevent overlap." />
-                    <ParameterSlider name="distributionStrength" label="Center Repulsion" min="0" max="2.0" step="0.05" value={params.distributionStrength} onChange={handleParamChange} description="Force pushing all components away from the center." />
-                    <ParameterSlider name="netLengthWeight" label="Net Attraction Strength" min="0" max="0.1" step="0.001" value={params.netLengthWeight} onChange={handleParamChange} description="Force pulling connected components together to shorten net lengths." />
-                    <ParameterSlider name="boardEdgeConstraint" label="Board Edge Force" min="0" max="50" step="0.5" value={params.boardEdgeConstraint} onChange={handleParamChange} description="Force pushing components away from the board edges."/>
-                    
-                    <div className="pt-3 border-t border-gray-600 space-y-4">
-                         <h4 className="font-semibold text-cyan-400 -mb-2">Rule Strengths</h4>
-                         <ParameterSlider name="absolutePositionStrength" label="Absolute Position Strength" min="0" max="50" step="0.5" value={params.absolutePositionStrength} onChange={handleParamChange} description="Force pulling a component to its fixed X, Y coordinates." />
-                         <ParameterSlider name="fixedRotationStrength" label="Fixed Rotation Strength" min="0" max="50" step="0.5" value={params.fixedRotationStrength} onChange={handleParamChange} description="Torque twisting a component to its fixed rotation." />
-                         <ParameterSlider name="proximityStrength" label="Proximity Strength" min="0" max="5" step="0.1" value={params.proximityStrength} onChange={handleParamChange} description="Force pulling components in proximity groups together." />
-                         <ParameterSlider name="alignmentStrength" label="Alignment Strength" min="0" max="10" step="0.1" value={params.alignmentStrength} onChange={handleParamChange} description="Force aligning components along an axis." />
-                         <ParameterSlider name="symmetryStrength" label="Symmetry Strength" min="0" max="10" step="0.1" value={params.symmetryStrength} onChange={handleParamChange} description="Force mirroring component pairs across an axis." />
-                         <ParameterSlider name="symmetryRotationStrength" label="Symmetry Rotation Strength" min="0" max="10" step="0.1" value={params.symmetryRotationStrength} onChange={handleParamChange} description="Torque twisting components into symmetrical alignment." />
-                         <ParameterSlider name="circularStrength" label="Circular Strength" min="0" max="10" step="0.1" value={params.circularStrength} onChange={handleParamChange} description="Force arranging components in a circle." />
-                         <ParameterSlider name="circularRotationStrength" label="Circular Rotation Strength" min="0" max="10" step="0.1" value={params.circularRotationStrength} onChange={handleParamChange} description="Torque orienting components in a circular pattern." />
-                         <ParameterSlider name="symmetricalPairStrength" label="Symmetrical Pair Strength" min="0" max="20" step="0.5" value={params.symmetricalPairStrength} onChange={handleParamChange} description="Force maintaining separation for symmetrical pairs." />
+            <div className="bg-gray-800/70 backdrop-blur-sm border border-gray-700 rounded-xl p-3 flex flex-col h-full text-white">
+                <h3 className="text-lg font-bold text-cyan-300 mb-2 text-center">Global Forces</h3>
+                <div className="flex-grow overflow-y-auto px-1 space-y-4">
+                    <div className="space-y-3">
+                        <ParameterSlider name="componentSpacing" label="Component Repulsion" min="0" max="500" step="1" value={currentParams.componentSpacing} onChange={handleParamChange} description="Force pushing components apart to prevent overlap." />
+                        <ParameterSlider name="distributionStrength" label="Center Repulsion" min="0" max="2.0" step="0.05" value={currentParams.distributionStrength} onChange={handleParamChange} description="Force pushing all components away from the center." />
+                        <ParameterSlider name="netLengthWeight" label="Net Attraction Strength" min="0" max="0.2" step="0.001" value={currentParams.netLengthWeight} onChange={handleParamChange} description="Force pulling connected components together to shorten net lengths." />
+                        <ParameterSlider name="boardEdgeConstraint" label="Board Edge Force" min="0" max="50" step="0.5" value={currentParams.boardEdgeConstraint} onChange={handleParamChange} description="Force pushing components away from the board edges."/>
+                        <ParameterSlider name="boardPadding" label="Board Padding" min="0" max="20" step="0.5" value={currentParams.boardPadding} onChange={handleParamChange} description="Margin (mm) for auto-sized board outlines."/>
                     </div>
-
-                    <div className="pt-3 border-t border-gray-600 space-y-4">
-                        <h4 className="font-semibold text-cyan-400 -mb-2">Simulation Physics</h4>
-                        <ParameterSlider name="settlingSpeed" label="Settling Speed (Damping)" min="0.8" max="0.99" step="0.01" value={params.settlingSpeed} onChange={handleParamChange} description="How quickly the simulation stabilizes. Higher is slower." />
-                        <ParameterSlider 
-                            name="repulsionRampUpTime" 
-                            label="Repulsion Ramp-Up Time" 
-                            min="60" max="600" step="10" 
-                            value={params.repulsionRampUpTime} 
-                            onChange={handleParamChange} 
-                            description="Time for repulsion force to reach full strength."
-                            displayTransform={(v) => \`\${(v/60).toFixed(1)}s\`} 
-                        />
-                        {selectedAgent && (
-                             <div>
-                                <h4 className="font-semibold text-indigo-300 mt-4 mb-2">Selected: {selectedAgent.id}</h4>
-                                <ParameterSlider name="placementInertia" label="Placement Inertia (Mass)" min="0.1" max="20" step="0.1" value={selectedAgent.placementInertia} onChange={handleAgentParamChange} description="Resistance of this component to being moved by forces."/>
-                             </div>
-                        )}
+                    
+                    <div className="pt-3 border-t border-gray-600 space-y-3">
+                         <h4 className="font-semibold text-cyan-400 text-base">Rule Strengths</h4>
+                         <ParameterSlider name="absolutePositionStrength" label="Absolute Position" min="0" max="50" step="0.5" value={currentParams.absolutePositionStrength} onChange={handleParamChange} description="Force locking a component to a fixed coordinate." />
+                         <ParameterSlider name="proximityStrength" label="Proximity" min="0" max="50" step="0.5" value={currentParams.proximityStrength} onChange={handleParamChange} description="Force pulling components in a group together." />
+                         <ParameterSlider name="alignmentStrength" label="Alignment" min="0" max="50" step="0.5" value={currentParams.alignmentStrength} onChange={handleParamChange} description="Force aligning components along an axis." />
+                         <ParameterSlider name="symmetryStrength" label="Symmetry" min="0" max="50" step="0.5" value={currentParams.symmetryStrength} onChange={handleParamChange} description="Force mirroring component pairs." />
+                         <ParameterSlider name="symmetricalPairStrength" label="Symmetrical Pair" min="0" max="50" step="0.5" value={currentParams.symmetricalPairStrength} onChange={handleParamChange} description="Force for symmetrical pairs with fixed separation." />
+                         <ParameterSlider name="circularStrength" label="Circular" min="0" max="50" step="0.5" value={currentParams.circularStrength} onChange={handleParamChange} description="Force arranging components in a circle." />
+                         <ParameterSlider name="fixedRotationStrength" label="Fixed Rotation Torque" min="0" max="100" step="1" value={currentParams.fixedRotationStrength} onChange={handleParamChange} description="Torque twisting a component to a fixed rotation." />
+                         <ParameterSlider name="symmetryRotationStrength" label="Symmetry Rotation Torque" min="0" max="100" step="1" value={currentParams.symmetryRotationStrength} onChange={handleParamChange} description="Torque for symmetrical rotation." />
+                         <ParameterSlider name="circularRotationStrength" label="Circular Rotation Torque" min="0" max="100" step="1" value={currentParams.circularRotationStrength} onChange={handleParamChange} description="Torque for circular rotation pattern." />
                     </div>
                 </div>
             </div>

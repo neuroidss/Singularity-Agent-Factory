@@ -9,6 +9,7 @@ export const useAppStateManager = () => {
     const [eventLog, setEventLog] = useState<string[]>([]);
     const [mainView, setMainView] = useState<MainView>('KICAD');
     const [apiCallCount, setApiCallCount] = useState<Record<string, number>>({});
+    const [useSearch, setUseSearch] = useState<boolean>(false);
 
     const [selectedModel, setSelectedModel] = useState<AIModel>(AI_MODELS[0]);
     const [apiConfig, setApiConfig] = useState<APIConfig>(() => {
@@ -37,6 +38,7 @@ export const useAppStateManager = () => {
             apiCallCount,
             selectedModel,
             apiConfig,
+            useSearch,
         },
         setters: {
             setUserInput,
@@ -45,6 +47,7 @@ export const useAppStateManager = () => {
             setApiCallCount,
             setSelectedModel,
             setApiConfig,
+            setUseSearch,
         },
         logEvent,
     };

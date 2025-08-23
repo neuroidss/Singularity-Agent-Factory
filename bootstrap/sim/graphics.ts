@@ -52,9 +52,17 @@ class Graphics {
         this.meshes = new Map();
         this.simulation = null;
         this.boardY = 0;
-        this.visibility = { placeholders: true, courtyards: true, svg: true, glb: true };
+        this.visibility = { placeholders: true, courtyards: true, svg: true, glb: true, nets: true };
+        this.boardMesh = null;
         
-        if (boardOutline) this.addBoardMesh(boardOutline, scale);
+        this.netLinesGroup = new this.THREE.Group();
+        this.scene.add(this.netLinesGroup);
+        this.netLines = new Map();
+        this.netLineMaterial = new this.THREE.LineBasicMaterial({ color: 0xffff00, transparent: true, opacity: 0.7 });
+        this.gndLineMaterial = new this.THREE.LineBasicMaterial({ color: 0x00ffff, transparent: true, opacity: 0.5 });
+        this.boardOutlineData = null;
+
+        if (boardOutline) this.updateBoardMesh(boardOutline, scale);
         
         this.raycaster = new this.THREE.Raycaster();
         this.mouse = new this.THREE.Vector2();
@@ -69,10 +77,105 @@ class Graphics {
         this.renderer.domElement.addEventListener('pointermove', this.boundPointerMove);
         this.renderer.domElement.addEventListener('pointerup', this.boundPointerUp);
 
-
         this.boundDoubleClick = this.handleDoubleClick.bind(this);
         this.renderer.domElement.addEventListener('dblclick', this.boundDoubleClick);
-        window.addEventListener('resize', this.onWindowResize.bind(this));
+        
+        // Use a ResizeObserver to handle canvas resizing dynamically.
+        this.resizeObserver = new ResizeObserver(() => {
+            this.onWindowResize();
+        });
+        this.resizeObserver.observe(mountNode);
+    }
+    
+    getClosestPointOnBoard(worldPos) {
+        if (!this.boardOutlineData) return worldPos;
+
+        const { x, y, width, height, shape } = this.boardOutlineData;
+        const scale = this.simulation.SCALE;
+
+        const boardMinX = x * scale;
+        const boardMaxX = (x + width) * scale;
+        const boardMinZ = y * scale;
+        const boardMaxZ = (y + height) * scale;
+        const boardY = this.boardY;
+
+        if (shape === 'circle') {
+            const centerX = (boardMinX + boardMaxX) / 2;
+            const centerZ = (boardMinZ + boardMaxZ) / 2;
+            const radius = (boardMaxX - boardMinX) / 2;
+            
+            const vecToCenter = new this.THREE.Vector3(worldPos.x - centerX, 0, worldPos.z - centerZ);
+            if (vecToCenter.lengthSq() < 1e-9) { // If point is at the center
+                 return new this.THREE.Vector3(centerX + radius, boardY, centerZ);
+            }
+            vecToCenter.normalize().multiplyScalar(radius);
+            
+            return new this.THREE.Vector3(centerX + vecToCenter.x, worldPos.y, centerZ + vecToCenter.z);
+
+        } else { // rectangle
+            const closestX = Math.max(boardMinX, Math.min(worldPos.x, boardMaxX));
+            const closestZ = Math.max(boardMinZ, Math.min(worldPos.z, boardMaxZ));
+            
+            const distToMinX = Math.abs(worldPos.x - boardMinX);
+            const distToMaxX = Math.abs(worldPos.x - boardMaxX);
+            const distToMinZ = Math.abs(worldPos.z - boardMinZ);
+            const distToMaxZ = Math.abs(worldPos.z - boardMaxZ);
+
+            const minDist = Math.min(distToMinX, distToMaxX, distToMinZ, distToMaxZ);
+
+            if (minDist === distToMinX) return new this.THREE.Vector3(boardMinX, worldPos.y, closestZ);
+            if (minDist === distToMaxX) return new this.THREE.Vector3(boardMaxX, worldPos.y, closestZ);
+            if (minDist === distToMinZ) return new this.THREE.Vector3(closestX, worldPos.y, boardMinZ);
+            return new this.THREE.Vector3(closestX, worldPos.y, boardMaxZ);
+        }
+    }
+    
+    updateNetVisuals(graph) {
+        if (!graph || !this.netLinesGroup) return;
+
+        this.netLinesGroup.clear();
+        this.netLines.clear();
+
+        const hasGndPour = graph.copper_pours?.some(p => p.net && p.net.toLowerCase() === 'gnd');
+        
+        // If a ground pour exists, create individual lines for each GND pin.
+        if (hasGndPour) {
+            const gndPins = new Set();
+            (graph.edges || []).forEach(edge => {
+                if (edge.label && edge.label.toLowerCase() === 'gnd') {
+                    gndPins.add(edge.source);
+                    gndPins.add(edge.target);
+                }
+            });
+
+            gndPins.forEach(pinId => {
+                const key = \`gnd_pour-\\\${pinId}\`;
+                const geometry = new this.THREE.BufferGeometry().setFromPoints([new this.THREE.Vector3(), new this.THREE.Vector3()]);
+                const line = new this.THREE.Line(geometry, this.gndLineMaterial);
+                line.userData = { type: 'gnd_pour', pin: pinId };
+                this.netLines.set(key, line);
+                this.netLinesGroup.add(line);
+            });
+        }
+
+        // Process all edges. If a GND pour exists, GND edges are skipped here.
+        // Otherwise, GND edges are created just like any other net.
+        (graph.edges || []).forEach(edge => {
+            const isGnd = edge.label && edge.label.toLowerCase() === 'gnd';
+            if (isGnd && hasGndPour) {
+                return; // Handled by the 'gnd_pour' lines above
+            }
+            
+            const key = [edge.source, edge.target].sort().join('-');
+            if (!this.netLines.has(key)) {
+                const geometry = new this.THREE.BufferGeometry().setFromPoints([new this.THREE.Vector3(), new this.THREE.Vector3()]);
+                const material = isGnd ? this.gndLineMaterial : this.netLineMaterial;
+                const line = new this.THREE.Line(geometry, material);
+                line.userData = { type: 'net', source: edge.source, target: edge.target };
+                this.netLines.set(key, line);
+                this.netLinesGroup.add(line);
+            }
+        });
     }
 
     updateConnectionStatus(isConnected) {
@@ -81,6 +184,9 @@ class Graphics {
 
     updateVisibility(newVisibility) {
         this.visibility = newVisibility;
+        if (this.netLinesGroup) {
+            this.netLinesGroup.visible = this.visibility.nets;
+        }
     }
 
     updateMouse(event) {
@@ -162,9 +268,19 @@ class Graphics {
         }
     }
 
-    addBoardMesh(outline, scale) {
+    updateBoardMesh(outline, scale) {
+        this.boardOutlineData = outline;
+        if (this.boardMesh) {
+            this.scene.remove(this.boardMesh);
+            this.boardMesh.geometry.dispose();
+            if (this.boardMesh.material.dispose) this.boardMesh.material.dispose();
+            this.boardMesh = null;
+        }
+
+        if (!outline || !outline.width || !outline.height) return;
+
         const boardMaterial = new this.THREE.MeshStandardMaterial({ color: 0x004d00, metalness: 0.2, roughness: 0.8, side: this.THREE.DoubleSide });
-        const boardHeight = 1.6 * scale; // Scale the thickness too
+        const boardHeight = 1.6 * scale;
         this.boardY = boardHeight / 2;
         let boardGeom;
 
@@ -176,12 +292,11 @@ class Graphics {
             const depth = outline.height * scale;
             boardGeom = new this.THREE.BoxGeometry(width, boardHeight, depth);
         }
-        const boardMesh = new this.THREE.Mesh(boardGeom, boardMaterial);
+        this.boardMesh = new this.THREE.Mesh(boardGeom, boardMaterial);
         const centerX = (outline.x + outline.width / 2) * scale;
         const centerZ = (outline.y + outline.height / 2) * scale;
-        // Position the board so its center is at Y=0.
-        boardMesh.position.set(centerX, 0, centerZ);
-        this.scene.add(boardMesh);
+        this.boardMesh.position.set(centerX, 0, centerZ);
+        this.scene.add(this.boardMesh);
     }
 
     onWindowResize() {
@@ -336,11 +451,11 @@ class Graphics {
                                 .then(res => {
                                     if (res.ok) return res.text();
                                     if (!isFallback && this.isServerConnected) {
-                                        console.warn(\`[SVG] Failed to load from server '\${url}'. Falling back to local path.\`);
+                                        console.warn(\`[SVG] Failed to load from server '\\\${url}'. Falling back to local path.\`);
                                         attemptLoadSvg(node.svgPath, true);
                                         return null;
                                     }
-                                    return Promise.reject(new Error(\`HTTP \${res.status} for \${url}\`));
+                                    return Promise.reject(new Error(\`HTTP \\\${res.status} for \\\${url}\`));
                                 })
                                 .then(svgText => {
                                     if (svgText) {
@@ -350,7 +465,7 @@ class Graphics {
                                 })
                                 .catch(err => {
                                     if (isFallback || !this.isServerConnected) {
-                                        console.error(\`[SVG] Final attempt to load '\${url}' failed:\`, err);
+                                        console.error(\`[SVG] Final attempt to load '\\\${url}' failed:\`, err);
                                     }
                                 });
                         }
@@ -373,7 +488,7 @@ class Graphics {
                 const url = URL.createObjectURL(blob);
                 this.loader.load(url, (gltf) => {
                     if (!gltf || !gltf.scene) {
-                        console.error(\`[GLB] GLTF object for ID \${id} loaded, but it has no scene.\`);
+                        console.error(\`[GLB] GLTF object for ID \\\${id} loaded, but it has no scene.\`);
                         URL.revokeObjectURL(url);
                         return;
                     }
@@ -384,7 +499,7 @@ class Graphics {
                     if (mode === 'pcb') {
                         const componentNode = originalScene.getObjectByName('REF**');
                         if (!componentNode) {
-                            console.warn(\`[GLB] KiCad mode: Could not find component node 'REF**' in GLB for ID: \${id}. The 3D model might be missing. Proceeding with placeholder.\`);
+                            console.warn(\`[GLB] KiCad mode: Could not find component node 'REF**' in GLB for ID: \\\${id}. The 3D model might be missing. Proceeding with placeholder.\`);
                             URL.revokeObjectURL(url);
                             return;
                         }
@@ -436,7 +551,7 @@ class Graphics {
                     this.scene.add(modelRoot);
                     
                     URL.revokeObjectURL(url);
-                }, undefined, (error) => console.error(\`[GLB] Error loading model from blob for \${id}:\`, error));
+                }, undefined, (error) => console.error(\`[GLB] Error loading model from blob for \\\${id}:\`, error));
             };
 
             const attemptLoadGlb = (url, isFallback = false) => {
@@ -450,11 +565,11 @@ class Graphics {
                                 .then(res => {
                                     if (res.ok) return res.blob();
                                     if (!isFallback && this.isServerConnected) {
-                                        console.warn(\`[GLB] Failed to load from server '\${url}'. Falling back to local path.\`);
+                                        console.warn(\`[GLB] Failed to load from server '\\\${url}'. Falling back to local path.\`);
                                         attemptLoadGlb(assetPath, true);
                                         return null;
                                     }
-                                    return Promise.reject(new Error(\`HTTP \${res.status} for \${url}\`));
+                                    return Promise.reject(new Error(\`HTTP \\\${res.status} for \\\${url}\`));
                                 })
                                 .then(blob => {
                                     if (blob) {
@@ -464,7 +579,7 @@ class Graphics {
                                 })
                                 .catch(err => {
                                     if (isFallback || !this.isServerConnected) {
-                                        console.error(\`[GLB] Final attempt to load '\${url}' failed:\`, err);
+                                        console.error(\`[GLB] Final attempt to load '\\\${url}' failed:\`, err);
                                     }
                                 });
                         }
@@ -592,13 +707,46 @@ class Graphics {
                 });
             }
         });
+
+        if (this.visibility.nets && this.simulation && this.netLines.size > 0) {
+            this.netLines.forEach(line => {
+                const positions = line.geometry.attributes.position.array;
+                let p1, p2;
+    
+                if (line.userData.type === 'gnd_pour') {
+                    const [comp, pin] = line.userData.pin.split('-');
+                    p1 = this.simulation.getPinWorldPos(comp)?.[pin];
+                    if (!p1) p1 = this.simulation.getPosition(comp);
+                    p2 = p1 ? this.getClosestPointOnBoard(p1) : null;
+                } else if (line.userData.type === 'net') {
+                    const [sComp, sPin] = line.userData.source.split('-');
+                    const [tComp, tPin] = line.userData.target.split('-');
+                    p1 = this.simulation.getPinWorldPos(sComp)?.[sPin];
+                    p2 = this.simulation.getPinWorldPos(tComp)?.[tPin];
+                    if (!p1) p1 = this.simulation.getPosition(sComp);
+                    if (!p2) p2 = this.simulation.getPosition(tComp);
+                }
+    
+                if (p1 && p2) {
+                    const yOffset = p1.y || 0; // Use the component's y-level for the line
+                    positions[0] = p1.x; positions[1] = yOffset; positions[2] = p1.z;
+                    positions[3] = p2.x; positions[4] = yOffset; positions[5] = p2.z;
+                    line.geometry.attributes.position.needsUpdate = true;
+                    line.visible = true;
+                } else {
+                    line.visible = false;
+                }
+            });
+        }
         
         this.controls.update();
         this.renderer.render(this.scene, this.camera);
     }
 
     cleanup() {
-        window.removeEventListener('resize', this.onWindowResize);
+        if (this.resizeObserver) {
+            this.resizeObserver.disconnect();
+        }
         this.renderer.domElement.removeEventListener('dblclick', this.boundDoubleClick);
         this.renderer.domElement.removeEventListener('pointerdown', this.boundPointerDown);
         this.renderer.domElement.removeEventListener('pointermove', this.boundPointerMove);

@@ -1,4 +1,7 @@
 
+
+
+
 import React, { useCallback, useRef, useEffect, useMemo } from 'react';
 import * as aiService from '../services/aiService';
 import { getMcpCache, setMcpCache } from '../services/cacheService';
@@ -25,7 +28,7 @@ type UseAppRuntimeProps = {
     updateWorkflowChecklist: (stepName: string, items: string[]) => void;
     kicadSimulators: any;
     setLayoutHeuristics: React.Dispatch<React.SetStateAction<any>>;
-    addLayoutRule: (rule: any) => void;
+    updateLayout: React.Dispatch<React.SetStateAction<KnowledgeGraph | null>>;
     // Robot props
     getRobotStateForRuntime: (agentId: string) => { robot: RobotState; environment: EnvironmentObject[], personalities: AgentPersonality[] };
     setRobotStates: React.Dispatch<React.SetStateAction<RobotState[]>>;
@@ -44,7 +47,7 @@ export const useAppRuntime = (props: UseAppRuntimeProps) => {
         // Kicad
         setPcbArtifacts, kicadLogEvent, setCurrentKicadArtifact,
         updateWorkflowChecklist, kicadSimulators,
-        setLayoutHeuristics, addLayoutRule,
+        setLayoutHeuristics, updateLayout,
         // Robot
         getRobotStateForRuntime, setRobotStates, setObservationHistory, setAgentPersonalities,
         // Knowledge Graph
@@ -152,7 +155,7 @@ export const useAppRuntime = (props: UseAppRuntimeProps) => {
                     delete rule.componentReference;
                  }
                 
-                 addLayoutRule(rule);
+                 // NOTE: The direct call to addLayoutRule is removed from here. The caller is responsible.
                  enrichedResult.executionResult = { success: true, message: `Rule '${rule.type}' added to simulation.`, rule: rule };
                  return enrichedResult;
             }
@@ -426,11 +429,33 @@ export const useAppRuntime = (props: UseAppRuntimeProps) => {
                 if (finalKicadResult.message) kicadLogEvent(`✔️ ${finalKicadResult.message}`);
                 
                 if (finalKicadResult.rule) {
-                    console.log('[DEBUG] KICAD POST-PROCESSING: Found "rule" property. Calling addLayoutRule.');
+                    console.log('[DEBUG] KICAD POST-PROCESSING: Found "rule" property.');
                     logEvent(`[RUNTIME] Propagating rule from server to client state: ${finalKicadResult.rule.type}`);
-                    addLayoutRule(finalKicadResult.rule);
                 } else {
                      console.log('[DEBUG] KICAD POST-PROCESSING: "rule" property NOT found in final result.');
+                }
+
+                if (finalKicadResult.outline) {
+                    kicadLogEvent(`[SIM] Board outline defined. Updating view.`);
+                    const { shape, boardWidthMillimeters, boardHeightMillimeters, diameterMillimeters } = finalKicadResult.outline;
+                    const isAutoSize = !boardWidthMillimeters && !boardHeightMillimeters && !diameterMillimeters;
+
+                    const width = boardWidthMillimeters || diameterMillimeters || (isAutoSize ? 1.6 : 50);
+                    const height = boardHeightMillimeters || diameterMillimeters || (isAutoSize ? 1.6 : 50);
+                    
+                    const newOutline = {
+                        shape: shape || 'rectangle',
+                        width: width,
+                        height: height,
+                        x: -width / 2,
+                        y: -height / 2,
+                        autoSize: isAutoSize,
+                    };
+
+                    updateLayout(prev => ({
+                        ...(prev || { nodes: [], edges: [], rules: [] }),
+                        board_outline: newOutline
+                    }));
                 }
                 
                 if (finalKicadResult.artifacts) {
@@ -455,7 +480,7 @@ export const useAppRuntime = (props: UseAppRuntimeProps) => {
         }
 
         return enrichedResult;
-    }, [getRuntimeApiForAgent, runToolImplementation, logEvent, kicadLogEvent, setPcbArtifacts, setCurrentKicadArtifact, updateWorkflowChecklist, getRobotStateForRuntime, setRobotStates, setAgentPersonalities, kicadSimulators, getKnowledgeGraphState, setKnowledgeGraphState, isServerConnected, setLayoutHeuristics, addLayoutRule]);
+    }, [getRuntimeApiForAgent, runToolImplementation, logEvent, kicadLogEvent, setPcbArtifacts, setCurrentKicadArtifact, updateWorkflowChecklist, getRobotStateForRuntime, setRobotStates, setAgentPersonalities, kicadSimulators, getKnowledgeGraphState, setKnowledgeGraphState, isServerConnected, setLayoutHeuristics, updateLayout]);
     
     const runtimeApi = useMemo(() => {
         const api: ExecuteActionFunction = async (...args) => executeAction(...args);

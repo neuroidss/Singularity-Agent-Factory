@@ -289,4 +289,4 @@ export const CollisionSimulationFunctionsString = `
             });
         }
     }
-`;
+`

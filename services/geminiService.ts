@@ -152,6 +152,29 @@ export const generateWithNativeTools = async (
     }
 };
 
+export const generateText = async (
+    prompt: string,
+    systemInstruction: string,
+    modelId: string,
+): Promise<string> => {
+    const ai = getAIClient();
+    const requestPayload = {
+        model: modelId,
+        contents: { parts: [{ text: prompt }] },
+        config: {
+            systemInstruction: systemInstruction,
+            temperature: 0.0,
+        },
+    };
+
+    try {
+        const response = await ai.models.generateContent(requestPayload);
+        return response.text;
+    } catch (error) {
+        throw handleAPIError(error, requestPayload);
+    }
+};
+
 export const generateWithGoogleSearch = async (
     prompt: string,
     files: { name: string; type: string; data: string }[] = []
