@@ -27,10 +27,13 @@ export const SIMULATION_TOOLS: ToolCreatorPayload[] = [
             { name: 'boardPadding', type: 'number', description: 'The margin in millimeters to add around components when auto-sizing the board outline.', required: false },
         ],
         implementationCode: `
-            // This is a special client-side tool. Its logic is handled inside useAppRuntime
-            // to directly update the state in useKicadManager for the simulation.
-            const updatedValues = Object.entries(args).filter(([, value]) => value !== undefined && value !== null).length;
-            return { success: true, message: \`Updated \${updatedValues} simulation heuristics.\` };
+            const updatedValues = Object.keys(args).length;
+            // The runtime will detect the 'heuristics' key in the return value and update the simulation state.
+            return { 
+                success: true, 
+                message: \`Updated \${updatedValues} simulation heuristics.\`,
+                heuristics: args 
+            };
         `
     }
 ];

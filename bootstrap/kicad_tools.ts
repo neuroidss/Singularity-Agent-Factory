@@ -1,4 +1,3 @@
-
 // bootstrap/kicad_tools.ts
 
 import type { ToolCreatorPayload } from '../types';
@@ -148,6 +147,7 @@ const KICAD_TOOL_DEFINITIONS: ToolCreatorPayload[] = [
             { name: 'componentValue', type: 'string', description: `The value of the component (e.g., "ESP32-S3-WROOM-1", "10k"). For components from a library, use the format 'LibraryName:PartName'.`, required: true },
             { name: 'footprintIdentifier', type: 'string', description: `The KiCad footprint identifier for the component's physical package (e.g., "Resistor_SMD:R_0805_2012Metric").`, required: true },
             { name: 'numberOfPins', type: 'number', description: 'The total number of pins for this component. Used for creating generic parts. Set to 0 if this is a pre-defined library part specified in componentValue.', required: true },
+            { name: 'pinConnections', type: 'string', description: "Optional: A JSON string of an array of objects mapping pin numbers to net names for validation. E.g., '[{\"pin\": 1, \"net\": \"VCC\"}, {\"pin\": 2, \"net\": \"GND\"}]'.", required: false },
             { name: 'side', type: 'string', description: "The initial side of the board for the component ('top' or 'bottom'). Defaults to 'top'.", required: false },
             { name: 'exportSVG', type: 'boolean', description: "Generate an SVG footprint of the component. (Used for demo visualization)", required: false },
             { name: 'exportGLB', type: 'boolean', description: "Generate a 3D GLB model of the component. (Used for demo visualization)", required: false }

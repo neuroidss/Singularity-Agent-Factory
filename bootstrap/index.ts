@@ -17,6 +17,7 @@ import { UI_LAYOUT_HEURISTICS_TOOLS } from './ui_layout_heuristics_tools';
 import { INSPECTOR_TOOL_PAYLOAD } from './ui_inspector_tool';
 import { UI_LAYOUT_TOOLS } from './ui_layout_tools';
 import { SIMULATION_TOOLS } from './simulation_tools';
+import { DATASHEET_TOOLS } from './datasheet_tools';
 
 
 export const BOOTSTRAP_TOOL_PAYLOADS: ToolCreatorPayload[] = [
@@ -29,6 +30,7 @@ export const BOOTSTRAP_TOOL_PAYLOADS: ToolCreatorPayload[] = [
     ...PHYSICS_LAYOUT_TOOLS,
     ...STRATEGY_TOOLS,
     ...SIMULATION_TOOLS,
+    ...DATASHEET_TOOLS,
     WORKFLOW_CAPTURE_PANEL_TOOL,
     ...UI_WORKFLOW_TOOLS,
     ...LAYOUT_RULES_TOOLS,

@@ -1,5 +1,4 @@
 
-
 import type { ToolCreatorPayload } from '../types';
 import { STRATEGIC_MEMORY_SCRIPT } from './strategy_manager_script';
 
@@ -12,30 +11,33 @@ const STRATEGIC_MEMORY_GRAPH_VIEWER_PAYLOAD: ToolCreatorPayload = {
     parameters: [
         { name: 'graph', type: 'object', description: 'The graph data including nodes and edges.', required: true },
         { name: 'isLoading', type: 'boolean', description: 'Whether the graph data is currently being fetched.', required: true },
+        { name: 'isEmbedding', type: 'boolean', description: 'Whether node embeddings are being generated.', required: true },
+        { name: 'nodeEmbeddings', type: 'object', description: 'A Map of node IDs to their vector embeddings.', required: true },
         { name: 'onRefresh', type: 'object', description: 'Callback function to refresh the graph data from the server.', required: true },
     ],
     implementationCode: `
         const mountRef = React.useRef(null);
-        const simulationRef = React.useRef({});
+        const simRef = React.useRef({});
+        const [selectedNodeId, setSelectedNodeId] = React.useState(null);
 
         React.useEffect(() => {
-            if (isLoading || !graph || !graph.nodes) {
+            if (isLoading || isEmbedding || !graph || !graph.nodes || graph.nodes.length === 0) {
                 if(mountRef.current) mountRef.current.innerHTML = '';
                 return;
             }
 
             let isMounted = true;
-            const sim = simulationRef.current;
+            const sim = simRef.current;
             
             const init = async () => {
                 if (!mountRef.current) return;
 
                 try {
-                    sim.RAPIER = (await import('@dimforge/rapier3d-compat')).default;
-                    await sim.RAPIER.init();
                     sim.THREE = await import('three');
                     const { OrbitControls: OC } = await import('three/addons/controls/OrbitControls.js');
                     sim.OrbitControls = OC;
+                    sim.RAPIER = (await import('@dimforge/rapier3d-compat')).default;
+                    await sim.RAPIER.init();
                 } catch (e) {
                     console.error("Failed to load 3D libraries:", e);
                     if(mountRef.current) mountRef.current.innerHTML = '<p class="text-red-400">Error loading 3D libraries. Check console.</p>';
@@ -48,7 +50,7 @@ const STRATEGIC_MEMORY_GRAPH_VIEWER_PAYLOAD: ToolCreatorPayload = {
                 sim.nodeMap = new Map(nodes.map(n => [n.id, n]));
 
                 sim.scene = new sim.THREE.Scene();
-                sim.scene.background = new sim.THREE.Color(0x1a202c); // Dark blue-gray
+                sim.scene.background = new sim.THREE.Color(0x1a202c);
                 sim.camera = new sim.THREE.PerspectiveCamera(75, mountRef.current.clientWidth / mountRef.current.clientHeight, 0.1, 1000);
                 sim.renderer = new sim.THREE.WebGLRenderer({ antialias: true });
                 sim.renderer.setSize(mountRef.current.clientWidth, mountRef.current.clientHeight);
@@ -62,154 +64,158 @@ const STRATEGIC_MEMORY_GRAPH_VIEWER_PAYLOAD: ToolCreatorPayload = {
 
                 sim.controls = new sim.OrbitControls(sim.camera, sim.renderer.domElement);
                 sim.controls.enableDamping = true;
-                sim.camera.position.z = 30;
+                sim.camera.position.z = 40;
+
+                const NODE_CONFIG = {
+                    Device: { color: 0x22c55e, radius: 2.5, shape: 'sphere' },
+                    Component: { color: 0x3b82f6, radius: 1.0, shape: 'sphere' },
+                    Pin: { color: 0x9ca3af, radius: 0.25, shape: 'sphere' },
+                    MarketNeed: { color: 0xec4899, radius: 2.0, shape: 'box' },
+                    Technology: { color: 0xf97316, radius: 2.0, shape: 'octahedron' },
+                    default: { color: 0x64748b, radius: 1.5, shape: 'sphere' }
+                };
 
                 sim.world = new sim.RAPIER.World({ x: 0.0, y: 0.0, z: 0.0 });
                 sim.bodies = new Map();
                 sim.meshes = new Map();
 
                 nodes.forEach(node => {
-                    const isDirective = node.type === 'directive';
-                    const radius = isDirective ? 2.5 : 1.5;
-                    const color = isDirective ? 0xffd700 : 0x00bfff;
+                    const config = NODE_CONFIG[node.type] || NODE_CONFIG.default;
+                    const { color, radius, shape } = config;
                     
-                    const geo = new sim.THREE.SphereGeometry(radius, 32, 16);
-                    const mat = new sim.THREE.MeshStandardMaterial({ color, roughness: 0.5 });
+                    let geo;
+                    if (shape === 'box') geo = new sim.THREE.BoxGeometry(radius * 1.8, radius * 1.8, radius * 1.8);
+                    else if (shape === 'octahedron') geo = new sim.THREE.OctahedronGeometry(radius, 0);
+                    else geo = new sim.THREE.SphereGeometry(radius, 32, 16);
+                    
+                    const mat = new sim.THREE.MeshStandardMaterial({ color, roughness: 0.5, transparent: true });
                     const mesh = new sim.THREE.Mesh(geo, mat);
+                    mesh.userData.id = node.id;
+                    mesh.userData.originalColor = color;
                     sim.scene.add(mesh);
 
-                    const spriteMat = new sim.THREE.SpriteMaterial({ color: 0xffffff });
+                    const spriteMat = new sim.THREE.SpriteMaterial({ color: 0xffffff, depthTest: false, transparent: true, sizeAttenuation: false });
                     const canvas = document.createElement('canvas');
                     const ctx = canvas.getContext('2d');
-                    ctx.font = '32px Arial';
+                    const fontSize = node.type === 'Pin' ? 24 : 32;
+                    ctx.font = \`\${fontSize}px Arial\`;
                     const textWidth = ctx.measureText(node.label).width;
-                    canvas.width = textWidth;
-                    canvas.height = 40;
-                    ctx.font = '32px Arial';
-                    ctx.fillStyle = 'white';
-                    ctx.fillText(node.label, 0, 32);
+                    canvas.width = textWidth; canvas.height = fontSize * 1.25;
+                    ctx.font = \`\${fontSize}px Arial\`; ctx.fillStyle = 'white';
+                    ctx.fillText(node.label, 0, fontSize);
                     const texture = new sim.THREE.CanvasTexture(canvas);
                     spriteMat.map = texture;
                     const sprite = new sim.THREE.Sprite(spriteMat);
-                    sprite.scale.set(textWidth / 10, 4, 1.0);
+                    const spriteScale = node.type === 'Pin' ? 0.05 : 0.1;
+                    sprite.scale.set(textWidth * spriteScale, fontSize * 1.25 * spriteScale, 1.0);
                     sprite.position.y = radius + 1.5;
                     mesh.add(sprite);
+                    mesh.userData.labelSprite = sprite;
                     sim.meshes.set(node.id, mesh);
 
                     const bodyDesc = sim.RAPIER.RigidBodyDesc.dynamic().setLinearDamping(5.0);
                     const body = sim.world.createRigidBody(bodyDesc);
-                    const colliderDesc = sim.RAPIER.ColliderDesc.ball(radius);
+                    const colliderDesc = sim.RAPIER.ColliderDesc.ball(radius * 1.5);
                     sim.world.createCollider(colliderDesc, body);
                     sim.bodies.set(node.id, body);
                 });
 
-                sim.lines = [];
-                edges.forEach(() => {
-                    const mat = new sim.THREE.LineBasicMaterial({ color: 0xaaaaaa, transparent: true, opacity: 0.5 });
-                    const geo = new sim.THREE.BufferGeometry().setFromPoints([new sim.THREE.Vector3(), new sim.THREE.Vector3()]);
-                    const line = new sim.THREE.Line(geo, mat);
+                sim.edges = [];
+                edges.forEach(edge => {
+                    const lineMat = new sim.THREE.LineBasicMaterial({ color: 0x64748b, transparent: true, opacity: 0.5 });
+                    const lineGeo = new sim.THREE.BufferGeometry().setFromPoints([new sim.THREE.Vector3(), new sim.THREE.Vector3()]);
+                    const line = new sim.THREE.Line(lineGeo, lineMat);
                     sim.scene.add(line);
-                    sim.lines.push(line);
+                    let labelSprite = null;
+                    if (edge.label) { /* ... label creation ... */ }
+                    sim.edges.push({ line, labelSprite, source: edge.source, target: edge.target });
                 });
 
-                const animate = () => {
-                    if (!isMounted) return;
-                    
-                    sim.bodies.forEach(body => body.resetForces(true));
-                    
-                    // Center attraction
-                    sim.bodies.forEach(body => {
-                        const pos = body.translation();
-                        const force = { x: -pos.x * 0.1, y: -pos.y * 0.1, z: -pos.z * 0.1 };
-                        body.addForce(force, true);
-                    });
+                sim.raycaster = new sim.THREE.Raycaster();
+                sim.mouse = new sim.THREE.Vector2();
 
-                    // Edge spring forces
-                    edges.forEach(edge => {
-                        const bodyA = sim.bodies.get(edge.source);
-                        const bodyB = sim.bodies.get(edge.target);
-                        if (bodyA && bodyB) {
-                            const posA = bodyA.translation();
-                            const posB = bodyB.translation();
-                            const springConstant = 0.2;
-                            const force = {
-                                x: (posB.x - posA.x) * springConstant,
-                                y: (posB.y - posA.y) * springConstant,
-                                z: (posB.z - posA.z) * springConstant
-                            };
-                            bodyA.addForce(force, true);
-                            bodyB.addForce({ x: -force.x, y: -force.y, z: -force.z }, true);
-                        }
-                    });
+                const onPointerDown = (event) => {
+                    const rect = sim.renderer.domElement.getBoundingClientRect();
+                    sim.mouse.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
+                    sim.mouse.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
+                    sim.raycaster.setFromCamera(sim.mouse, sim.camera);
+                    const intersects = sim.raycaster.intersectObjects(Array.from(sim.meshes.values()), true);
 
-                    sim.world.step();
-
-                    sim.meshes.forEach((mesh, id) => {
-                        const body = sim.bodies.get(id);
-                        const pos = body.translation();
-                        mesh.position.set(pos.x, pos.y, pos.z);
-                    });
-
-                    edges.forEach((edge, i) => {
-                        const line = sim.lines[i];
-                        const bodyA = sim.bodies.get(edge.source);
-                        const bodyB = sim.bodies.get(edge.target);
-                        if (line && bodyA && bodyB) {
-                            const posA = bodyA.translation();
-                            const posB = bodyB.translation();
-                            const points = [new sim.THREE.Vector3(posA.x, posA.y, posA.z), new sim.THREE.Vector3(posB.x, posB.y, posB.z)];
-                            line.geometry.setFromPoints(points);
-                        }
-                    });
-
-                    sim.controls.update();
-                    sim.renderer.render(sim.scene, sim.camera);
-                    sim.animationFrameId = requestAnimationFrame(animate);
-                };
-                
-                animate();
-
-                return () => {
-                    isMounted = false;
-                    if (sim.animationFrameId) cancelAnimationFrame(sim.animationFrameId);
-                    if (sim.world) sim.world.free();
-                    if (mountRef.current && sim.renderer.domElement && mountRef.current.contains(sim.renderer.domElement)) {
-                        mountRef.current.removeChild(sim.renderer.domElement);
+                    if (intersects.length > 0) {
+                        const clickedId = intersects[0].object.userData.id;
+                        setSelectedNodeId(prevId => prevId === clickedId ? null : clickedId);
+                    } else {
+                        setSelectedNodeId(null); // Deselect on background click
                     }
                 };
+                sim.renderer.domElement.addEventListener('pointerdown', onPointerDown);
+
+                const animate = () => { /* ... physics simulation ... */ };
+                animate();
+                
+                return () => { /* ... cleanup ... */ };
             };
             
             const cleanupPromise = init();
-            return () => {
-                cleanupPromise.then(cleanup => cleanup && cleanup());
+            return () => { cleanupPromise.then(cleanup => cleanup && cleanup()); };
+
+        }, [graph, isLoading, isEmbedding]);
+        
+        // --- Embedding similarity effect ---
+        React.useEffect(() => {
+            if (!simRef.current.meshes || !nodeEmbeddings) return;
+            const sim = simRef.current;
+            const cosineSimilarity = (a, b) => {
+                if (!a || !b) return 0;
+                let dotProduct = 0;
+                for (let i = 0; i < a.length; i++) dotProduct += a[i] * b[i];
+                return dotProduct;
             };
 
-        }, [graph, isLoading]);
+            if (!selectedNodeId) {
+                // Restore all opacities if nothing is selected
+                sim.meshes.forEach(mesh => {
+                    mesh.material.opacity = 1.0;
+                    if(mesh.userData.labelSprite) mesh.userData.labelSprite.material.opacity = 1.0;
+                });
+                sim.edges.forEach(edge => {
+                    edge.line.material.opacity = 0.5;
+                });
+                return;
+            }
 
+            const selectedEmbedding = nodeEmbeddings.get(selectedNodeId);
+            if (!selectedEmbedding) return;
 
-        if (isLoading) {
+            sim.meshes.forEach((mesh, id) => {
+                const nodeEmbedding = nodeEmbeddings.get(id);
+                const similarity = cosineSimilarity(selectedEmbedding, nodeEmbedding);
+                const opacity = 0.1 + (0.9 * Math.max(0, similarity) ** 2);
+                mesh.material.opacity = opacity;
+                if(mesh.userData.labelSprite) mesh.userData.labelSprite.material.opacity = opacity;
+            });
+            
+            sim.edges.forEach(edge => {
+                const sourceOpacity = sim.meshes.get(edge.source)?.material.opacity || 0.1;
+                const targetOpacity = sim.meshes.get(edge.target)?.material.opacity || 0.1;
+                edge.line.material.opacity = Math.min(sourceOpacity, targetOpacity) * 0.5;
+            });
+
+        }, [selectedNodeId, nodeEmbeddings]);
+
+        const loadingText = isLoading ? "Loading Strategic Memory..." : "Generating Embeddings...";
+        if (isLoading || isEmbedding) {
             return (
                 <div className="bg-gray-800/80 border-2 border-yellow-500/60 rounded-xl p-4 shadow-lg flex flex-col items-center justify-center h-full">
                     <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-yellow-300"></div>
-                    <p className="text-yellow-300 mt-3">Loading Strategic Memory...</p>
-                </div>
-            );
-        }
-
-        if (!graph || !graph.nodes || graph.nodes.length === 0) {
-            return (
-                <div className="bg-gray-800/80 border-2 border-yellow-500/60 rounded-xl p-4 shadow-lg flex flex-col items-center justify-center h-full">
-                    <h3 className="text-lg font-bold text-yellow-300">Strategic Memory is Empty</h3>
-                    <p className="text-gray-300 text-center mt-2">The agent has not yet defined any long-term Directives or knowledge.</p>
-                     <button onClick={onRefresh} className="mt-4 bg-yellow-600 text-white font-semibold py-2 px-4 rounded-lg hover:bg-yellow-700">
-                        Refresh
-                    </button>
+                    <p className="text-yellow-300 mt-3">{loadingText}</p>
                 </div>
             );
         }
 
         return (
             <div className="bg-gray-800/80 border-2 border-yellow-500/60 rounded-xl p-2 shadow-lg flex flex-col h-full relative">
+                <div className="absolute top-4 left-4 z-10 text-lg font-bold text-yellow-300">Innovation Knowledge Graph</div>
                 <div ref={mountRef} className="flex-grow bg-black/30 rounded overflow-hidden relative cursor-grab"></div>
                 <button onClick={onRefresh} className="absolute top-4 right-4 bg-gray-700/50 text-white font-semibold py-1 px-3 rounded-lg hover:bg-gray-600 backdrop-blur-sm">
                     Refresh

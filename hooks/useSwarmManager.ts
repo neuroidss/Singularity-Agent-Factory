@@ -220,17 +220,59 @@ export const useSwarmManager = (props: UseSwarmManagerProps) => {
                 if (!isRunningRef.current) return;
                 
                 if (toolCalls && toolCalls.length > 0) {
-                    const executionPromises = toolCalls.map(toolCall => executeActionRef.current!(toolCall, agent.id));
-                    const executionResults = await Promise.all(executionPromises);
-                    if (!isRunningRef.current) return;
-                    swarmHistoryRef.current.push(...executionResults);
+                    let executionResults: EnrichedAIResponse[] = [];
+                    let hasError = false;
 
-                    const hasError = executionResults.some(r => r.executionError);
-                    if (executionResults.find(r => r.toolCall?.name === 'Task Complete' && !r.executionError)) {
-                        handleStopSwarm("Task completed successfully"); return;
+                    if (isSequential) {
+                        // Execute tool calls sequentially for tasks that require it
+                        for (const toolCall of toolCalls) {
+                            if (!isRunningRef.current) break; // Stop if swarm was halted externally
+
+                            const result = await executeActionRef.current!(toolCall, agent.id);
+                            swarmHistoryRef.current.push(result); // Add to history immediately
+                            executionResults.push(result);
+
+                            if (result.executionError) {
+                                hasError = true;
+                                logEvent(`[ERROR] 🛑 Halting sequential task due to error in '${toolCall.name}': ${result.executionError}`);
+                                break; // Stop processing further steps on error
+                            }
+                            if (result.toolCall?.name === 'Task Complete') {
+                                break; // Stop after task is marked complete
+                            }
+                            if (result.toolCall?.name === 'Arrange Components' && result.executionResult?.layout_data) {
+                                setPauseState({
+                                    type: 'KICAD_LAYOUT',
+                                    data: result.executionResult.layout_data,
+                                    isInteractive: result.executionResult.waitForUserInput === true,
+                                    projectName: result.toolCall.arguments.projectName,
+                                });
+                                handleStopSwarm('Pausing for layout.', true);
+                                hasError = true; // Set flag to prevent stopping swarm again below
+                                break;
+                            }
+                        }
+                    } else {
+                        // Original parallel execution logic
+                        const executionPromises = toolCalls.map(toolCall => executeActionRef.current!(toolCall, agent.id));
+                        executionResults = await Promise.all(executionPromises);
+                        if (!isRunningRef.current) return;
+                        swarmHistoryRef.current.push(...executionResults);
+                        hasError = executionResults.some(r => r.executionError);
                     }
-                    if (isSequential && hasError) {
-                        handleStopSwarm("Error during sequential task execution."); return;
+                    
+                    if (!isRunningRef.current) return;
+
+                    const taskComplete = executionResults.find(r => r.toolCall?.name === 'Task Complete' && !r.executionError);
+                    if (taskComplete) {
+                        handleStopSwarm("Task completed successfully");
+                        return;
+                    }
+
+                    // hasError could be true because of a pause, so we check pauseState
+                    if (hasError && !pauseState) {
+                        handleStopSwarm("Error during task execution.");
+                        return;
                     }
                 }
             }
@@ -249,7 +291,7 @@ export const useSwarmManager = (props: UseSwarmManagerProps) => {
         findRelevantTools, relevanceMode, relevanceTopK, relevanceThreshold, 
         mainView, currentSystemPrompt, isSequential, setApiCallCount, 
         setActiveToolsForTask, processRequest, executeActionRef, allTools,
-        selectedModel, apiConfig
+        selectedModel, apiConfig, pauseState
     ]);
     
     // Store the cycle function globally so it can be called from the pause handler

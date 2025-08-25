@@ -14,6 +14,7 @@ export const AgentSimulationCoreString = `
         this.agents = new Map();
         this.draggedAgentId = null;
         this.step_count = 0;
+        this.satelliteToAnchorMap = new Map();
 
         // --- Simulation Parameters (Heuristics) ---
         // These defaults are now tuned based on the successful demo configuration.
@@ -155,6 +156,21 @@ export const AgentSimulationCoreString = `
             this.isStable = false; // Rules changed, layout is no longer stable
             this.totalForceHistory = [];
             this.step_count = 0; // Restart ramp when rules change
+            
+            // Rebuild the satellite-to-anchor map
+            this.satelliteToAnchorMap.clear();
+            (newRules || []).forEach(rule => {
+                if (rule.type === 'ProximityConstraint' && rule.groups) {
+                    rule.groups.forEach(group => {
+                        if (Array.isArray(group) && group.length > 1) {
+                            const anchorId = group[0];
+                            for (let i = 1; i < group.length; i++) {
+                                this.satelliteToAnchorMap.set(group[i], anchorId);
+                            }
+                        }
+                    });
+                }
+            });
         }
     }
 
@@ -222,6 +238,11 @@ export const AgentSimulationCoreString = `
     }
 
     updateDynamicBoardOutline() {
+        // Definitive check to prevent race condition. This is the gatekeeper.
+        if (!this.graph.board_outline || !this.graph.board_outline.autoSize) {
+            return;
+        }
+
         if (this.agents.size === 0) {
             const initialSize = 1.6;
             const newOutline = { ...this.graph.board_outline, width: initialSize, height: initialSize, x: -initialSize / 2, y: -initialSize / 2 };
@@ -252,17 +273,29 @@ export const AgentSimulationCoreString = `
         let boardWidth = maxX - minX;
         let boardHeight = maxZ - minZ;
     
-        if (this.graph.board_outline.shape === 'square') {
-            const maxSize = Math.max(boardWidth, boardHeight);
-            const centerX = (minX + maxX) / 2;
-            const centerZ = (minZ + maxZ) / 2;
-            minX = centerX - maxSize / 2;
-            minZ = centerZ - maxSize / 2;
-            boardWidth = maxSize;
-            boardHeight = maxSize;
+        let newOutline;
+        // This new block correctly handles auto-sizing for different shapes
+        if (this.graph.board_outline.shape === 'circle') {
+            const diameter = Math.max(boardWidth, boardHeight);
+            const centerX = minX + boardWidth / 2;
+            const centerZ = minZ + boardHeight / 2;
+            newOutline = {
+                ...this.graph.board_outline,
+                width: diameter / this.SCALE,
+                height: diameter / this.SCALE,
+                x: (centerX - diameter / 2) / this.SCALE,
+                y: (centerZ - diameter / 2) / this.SCALE,
+            };
+        } else { // 'rectangle' or default
+            newOutline = {
+                ...this.graph.board_outline,
+                width: boardWidth / this.SCALE,
+                height: boardHeight / this.SCALE,
+                x: minX / this.SCALE,
+                y: minZ / this.SCALE,
+            };
         }
-    
-        const newOutline = { ...this.graph.board_outline, width: boardWidth / this.SCALE, height: boardHeight / this.SCALE, x: minX / this.SCALE, y: minZ / this.SCALE };
+
         const old = this.graph.board_outline;
         if (Math.abs(old.width - newOutline.width) > 0.1 || Math.abs(old.height - newOutline.height) > 0.1) {
             this.onUpdateLayout(prev => ({ ...prev, board_outline: newOutline }));
@@ -374,7 +407,7 @@ export const AgentSimulationCoreString = `
             positions[id] = { 
                 x: agent.pos.x / this.SCALE, 
                 y: agent.pos.z / this.SCALE, 
-                rotation: finalRotationDegrees, 
+                rotation: Math.round(finalRotationDegrees * 100) / 100, // Round to 2 decimal places
                 side: node?.side || 'top' 
             };
         });

@@ -71,6 +71,69 @@ export const CollisionSimulationFunctionsString = `
         return mtv;
     }
 
+    checkCollisionAndGetMTV(agentA, drcDimsA, drcShapeA, agentB, drcDimsB, drcShapeB) {
+        let mtv = null;
+        
+        // --- Collision Checks ---
+        if (drcShapeA === 'rectangle' && drcShapeB === 'rectangle') {
+            const cornersA = this.getRotatedRectCorners(agentA, drcDimsA);
+            const cornersB = this.getRotatedRectCorners(agentB, drcDimsB);
+            mtv = this.checkSAT(cornersA, cornersB);
+        } else if (drcShapeA === 'circle' && drcShapeB === 'circle') {
+            const rA = drcDimsA.width / 2 * this.SCALE;
+            const rB = drcDimsB.width / 2 * this.SCALE;
+            const dx = agentA.pos.x - agentB.pos.x;
+            const dz = agentA.pos.z - agentB.pos.z;
+            const dist = Math.hypot(dx, dz);
+            const overlap = (rA + rB) - dist;
+            if (overlap > 0 && dist > 1e-6) {
+                mtv = { x: (dx / dist) * overlap, z: (dz / dist) * overlap };
+            }
+        } else { // Circle-Rect
+            const circleAgent = drcShapeA === 'circle' ? agentA : agentB;
+            const circleDims = drcShapeA === 'circle' ? drcDimsA : drcDimsB;
+            const rectAgent = drcShapeA === 'rectangle' ? agentA : agentB;
+            const rectDims = drcShapeA === 'rectangle' ? drcDimsA : drcDimsB;
+            const rectCorners = this.getRotatedRectCorners(rectAgent, rectDims);
+            const circleCenter = circleAgent.pos;
+            const radius = circleDims.width / 2 * this.SCALE;
+
+            let closestPoint = { x: rectCorners[0].x, z: rectCorners[0].z };
+            let min_dist_sq = Infinity;
+            
+            for (let k = 0; k < 4; k++) {
+                const p1 = rectCorners[k];
+                const p2 = rectCorners[(k + 1) % 4];
+                const dx_edge = p2.x - p1.x, dz_edge = p2.z - p1.z;
+                const len_sq = dx_edge * dx_edge + dz_edge * dz_edge;
+                let t = len_sq > 0 ? ((circleCenter.x - p1.x) * dx_edge + (circleCenter.z - p1.z) * dz_edge) / len_sq : 0;
+                t = Math.max(0, Math.min(1, t));
+                const proj = { x: p1.x + t * dx_edge, z: p1.z + t * dz_edge };
+                const dist_sq = Math.hypot(circleCenter.x - proj.x, circleCenter.z - proj.z);
+                if(dist_sq < min_dist_sq) {
+                    min_dist_sq = dist_sq;
+                    closestPoint = proj;
+                }
+            }
+
+            const dist_vec = { x: circleCenter.x - closestPoint.x, z: circleCenter.z - closestPoint.z };
+            const dist = Math.sqrt(min_dist_sq);
+            const overlap = radius - dist;
+
+            if (overlap > 0) {
+                const direction = dist > 1e-6 ? { x: dist_vec.x / dist, z: dist_vec.z / dist } : { x: 1, z: 0 };
+                mtv = { x: direction.x * overlap, z: direction.z * overlap };
+                // Ensure MTV pushes B away from A
+                if (drcShapeA === 'rectangle') { // A is rect, B is circle, so MTV is from B to A. Correct.
+                     // No change needed.
+                } else { // A is circle, B is rect. MTV should be from B to A.
+                    mtv = { x: -mtv.x, z: -mtv.z };
+                }
+            }
+        }
+        return mtv;
+    }
+
     resolveCollisions() {
         const agentIds = Array.from(this.agents.keys());
 
@@ -84,120 +147,63 @@ export const CollisionSimulationFunctionsString = `
                 const { drcDims: drcDimsA, drcShape: drcShapeA } = this.getDrcInfo(nodeA);
                 const { drcDims: drcDimsB, drcShape: drcShapeB } = this.getDrcInfo(nodeB);
 
-                let mtv = null;
-
-                // --- Collision Checks ---
-                if (drcShapeA === 'rectangle' && drcShapeB === 'rectangle') {
-                    const cornersA = this.getRotatedRectCorners(agentA, drcDimsA);
-                    const cornersB = this.getRotatedRectCorners(agentB, drcDimsB);
-                    mtv = this.checkSAT(cornersA, cornersB);
-                } else if (drcShapeA === 'circle' && drcShapeB === 'circle') {
-                    const rA = drcDimsA.width / 2 * this.SCALE;
-                    const rB = drcDimsB.width / 2 * this.SCALE;
-                    const dx = agentA.pos.x - agentB.pos.x;
-                    const dz = agentA.pos.z - agentB.pos.z;
-                    const dist = Math.hypot(dx, dz);
-                    const overlap = (rA + rB) - dist;
-                    if (overlap > 0 && dist > 1e-6) {
-                        mtv = { x: (dx / dist) * overlap, z: (dz / dist) * overlap };
-                    }
-                } else { // Circle-Rect
-                    const circleAgent = drcShapeA === 'circle' ? agentA : agentB;
-                    const circleDims = drcShapeA === 'circle' ? drcDimsA : drcDimsB;
-                    const rectAgent = drcShapeA === 'rectangle' ? agentA : agentB;
-                    const rectDims = drcShapeA === 'rectangle' ? drcDimsA : drcDimsB;
-                    const rectCorners = this.getRotatedRectCorners(rectAgent, rectDims);
-                    const circleCenter = circleAgent.pos;
-                    const radius = circleDims.width / 2 * this.SCALE;
-
-                    let closestPoint = { x: rectCorners[0].x, z: rectCorners[0].z };
-                    let min_dist_sq = Infinity;
-                    
-                    for (let k = 0; k < 4; k++) {
-                        const p1 = rectCorners[k];
-                        const p2 = rectCorners[(k + 1) % 4];
-                        const dx_edge = p2.x - p1.x, dz_edge = p2.z - p1.z;
-                        const len_sq = dx_edge * dx_edge + dz_edge * dz_edge;
-                        let t = len_sq > 0 ? ((circleCenter.x - p1.x) * dx_edge + (circleCenter.z - p1.z) * dz_edge) / len_sq : 0;
-                        t = Math.max(0, Math.min(1, t));
-                        const proj = { x: p1.x + t * dx_edge, z: p1.z + t * dz_edge };
-                        const dist_sq = Math.hypot(circleCenter.x - proj.x, circleCenter.z - proj.z);
-                        if(dist_sq < min_dist_sq) {
-                            min_dist_sq = dist_sq;
-                            closestPoint = proj;
-                        }
-                    }
-
-                    const dist_vec = { x: circleCenter.x - closestPoint.x, z: circleCenter.z - closestPoint.z };
-                    const dist = Math.sqrt(min_dist_sq);
-                    const overlap = radius - dist;
-
-                    if (overlap > 0) {
-                        const direction = dist > 1e-6 ? { x: dist_vec.x / dist, z: dist_vec.z / dist } : { x: 1, z: 0 };
-                        mtv = { x: direction.x * overlap, z: direction.z * overlap };
-                        if (drcShapeA === 'rectangle') { mtv = { x: -mtv.x, z: -mtv.z }; }
-                    }
-                }
+                const mtv = this.checkCollisionAndGetMTV(agentA, drcDimsA, drcShapeA, agentB, drcDimsB, drcShapeB);
 
                 if (mtv) {
-                    const isAStatic = agentA.placementInertia > 1e6;
-                    const isBStatic = agentB.placementInertia > 1e6;
-                
-                    // Skip collision resolution between two static objects to prevent them from moving.
-                    if (isAStatic && isBStatic) continue;
-                
+                    const anchorOfA = this.satelliteToAnchorMap.get(idA);
+                    const anchorOfB = this.satelliteToAnchorMap.get(idB);
+    
+                    let canMoveA = true;
+                    let canMoveB = true;
+    
+                    if (anchorOfA === idB) canMoveB = false;
+                    if (anchorOfB === idA) canMoveA = false;
+                    
+                    if (agentA.placementInertia > 1e6) canMoveA = false;
+                    if (agentB.placementInertia > 1e6) canMoveB = false;
+
                     // --- Positional Correction ---
-                    if (isAStatic) {
-                        // A is static, so only B moves
-                        agentB.pos.x -= mtv.x;
-                        agentB.pos.z -= mtv.z;
-                    } else if (isBStatic) {
-                        // B is static, so only A moves
-                        agentA.pos.x += mtv.x;
-                        agentA.pos.z += mtv.z;
-                    } else {
-                        // Both are dynamic, so move them based on their mass ratio
+                    let ratioA = 0.5, ratioB = 0.5;
+                    if (canMoveA && !canMoveB) {
+                        ratioA = 1.0; ratioB = 0.0;
+                    } else if (!canMoveA && canMoveB) {
+                        ratioA = 0.0; ratioB = 1.0;
+                    } else if (!canMoveA && !canMoveB) {
+                        ratioA = 0.0; ratioB = 0.0;
+                    } else { // Both are movable
                         const totalInertia = agentA.placementInertia + agentB.placementInertia;
-                        const ratioA = totalInertia > 0 ? agentB.placementInertia / totalInertia : 0.5;
-                        const ratioB = totalInertia > 0 ? agentA.placementInertia / totalInertia : 0.5;
-                        agentA.pos.x += mtv.x * ratioA;
-                        agentA.pos.z += mtv.z * ratioA;
-                        agentB.pos.x -= mtv.x * ratioB;
-                        agentB.pos.z -= mtv.z * ratioB;
+                        ratioA = totalInertia > 0 ? agentB.placementInertia / totalInertia : 0.5;
+                        ratioB = totalInertia > 0 ? agentA.placementInertia / totalInertia : 0.5;
                     }
-                
-                    // --- Velocity Correction (simplified impulse) ---
+                    
+                    agentA.pos.x += mtv.x * ratioA;
+                    agentA.pos.z += mtv.z * ratioA;
+                    agentB.pos.x -= mtv.x * ratioB;
+                    agentB.pos.z -= mtv.z * ratioB;
+
+                    // --- Velocity Correction ---
                     const mtvNorm = Math.hypot(mtv.x, mtv.z);
                     if (mtvNorm > 1e-6) {
                         const normal = { x: mtv.x / mtvNorm, z: mtv.z / mtvNorm };
                         const relVel = { x: agentA.vel.x - agentB.vel.x, z: agentA.vel.z - agentB.vel.z };
                         const velAlongNormal = relVel.x * normal.x + relVel.z * normal.z;
-                
+
                         if (velAlongNormal < 0) { // Only resolve if they are moving towards each other
                             const restitution = 0.05; // Low bounciness for stability
                             const impulseMag = -(1 + restitution) * velAlongNormal;
-                            
-                            if (isAStatic) {
-                                // Agent A is static, all impulse affects B
-                                const impulse = { x: normal.x * impulseMag, z: normal.z * impulseMag };
-                                agentB.vel.x -= impulse.x;
-                                agentB.vel.z -= impulse.z;
-                            } else if (isBStatic) {
-                                // Agent B is static, all impulse affects A
-                                const impulse = { x: normal.x * impulseMag, z: normal.z * impulseMag };
-                                agentA.vel.x += impulse.x;
-                                agentA.vel.z += impulse.z;
-                            } else {
-                                // Both are dynamic
-                                const totalInertia = agentA.placementInertia + agentB.placementInertia;
-                                if (totalInertia > 0) {
-                                    const impulseDistributed = impulseMag / (1/agentA.placementInertia + 1/agentB.placementInertia);
-                                    const impulse = { x: normal.x * impulseDistributed, z: normal.z * impulseDistributed };
-                                    agentA.vel.x += impulse.x / agentA.placementInertia;
-                                    agentA.vel.z += impulse.z / agentA.placementInertia;
-                                    agentB.vel.x -= impulse.x / agentB.placementInertia;
-                                    agentB.vel.z -= impulse.z / agentB.placementInertia;
-                                }
+
+                            const invInertiaA = canMoveA ? 1 / agentA.placementInertia : 0;
+                            const invInertiaB = canMoveB ? 1 / agentB.placementInertia : 0;
+                            const totalInvInertia = invInertiaA + invInertiaB;
+
+                            if (totalInvInertia > 0) {
+                                const impulseDistributed = impulseMag / totalInvInertia;
+                                const impulse = { x: normal.x * impulseDistributed, z: normal.z * impulseDistributed };
+                                
+                                agentA.vel.x += impulse.x * invInertiaA;
+                                agentA.vel.z += impulse.z * invInertiaA;
+                                agentB.vel.x -= impulse.x * invInertiaB;
+                                agentB.vel.z -= impulse.z * invInertiaB;
                             }
                         }
                     }
@@ -220,44 +226,8 @@ export const CollisionSimulationFunctionsString = `
                 const { drcDims: drcDimsA, drcShape: drcShapeA } = this.getDrcInfo(nodeA);
                 const { drcDims: drcDimsB, drcShape: drcShapeB } = this.getDrcInfo(nodeB);
 
-                let hasOverlap = false;
-
-                if (drcShapeA === 'circle' && drcShapeB === 'circle') {
-                    const radiusA = (drcDimsA.width / 2) * this.SCALE;
-                    const radiusB = (drcDimsB.width / 2) * this.SCALE;
-                    const dx = agentA.pos.x - agentB.pos.x;
-                    const dz = agentA.pos.z - agentB.pos.z;
-                    const distSq = dx * dx + dz * dz;
-                    const radiiSum = radiusA + radiusB;
-                    if (distSq < (radiiSum * radiiSum)) hasOverlap = true;
-                }
-                else if (drcShapeA === 'rectangle' && drcShapeB === 'rectangle') {
-                     const cornersA = this.getRotatedRectCorners(agentA, drcDimsA);
-                     const cornersB = this.getRotatedRectCorners(agentB, drcDimsB);
-                     if (this.checkSAT(cornersA, cornersB)) hasOverlap = true;
-                }
-                else {
-                    const circleAgent = (drcShapeA === 'circle') ? agentA : agentB;
-                    const circleDims = (drcShapeA === 'circle') ? drcDimsA : drcDimsB;
-                    const rectAgent = (drcShapeA === 'rectangle') ? agentA : agentB;
-                    const rectDims = (drcShapeA === 'rectangle') ? drcDimsA : drcDimsB;
-                    const radius = (circleDims.width / 2) * this.SCALE;
-                    const rectCorners = this.getRotatedRectCorners(rectAgent, rectDims);
-                    let min_dist_sq = Infinity;
-                    for (let k = 0; k < 4; k++) {
-                        const p1 = rectCorners[k];
-                        const p2 = rectCorners[(k + 1) % 4];
-                        const dx_edge = p2.x - p1.x, dz_edge = p2.z - p1.z;
-                        const len_sq = dx_edge * dx_edge + dz_edge * dz_edge;
-                        let t = len_sq > 0 ? ((circleAgent.pos.x - p1.x) * dx_edge + (circleAgent.pos.z - p1.z) * dz_edge) / len_sq : 0;
-                        t = Math.max(0, Math.min(1, t));
-                        const proj = { x: p1.x + t * dx_edge, z: p1.z + t * dz_edge };
-                        const dist_sq = Math.hypot(circleAgent.pos.x - proj.x, circleAgent.pos.z - proj.z);
-                        if(dist_sq < min_dist_sq) min_dist_sq = dist_sq;
-                    }
-                    if (min_dist_sq < (radius * radius)) hasOverlap = true;
-                }
-
+                const hasOverlap = this.checkCollisionAndGetMTV(agentA, drcDimsA, drcShapeA, agentB, drcDimsB, drcShapeB) !== null;
+                
                 if (hasOverlap) {
                     agentA.drcStatus = 'overlap';
                     agentB.drcStatus = 'overlap';

@@ -1,7 +1,5 @@
 
 
-
-
 import React, { useCallback, useRef, useEffect, useMemo } from 'react';
 import * as aiService from '../services/aiService';
 import { getMcpCache, setMcpCache } from '../services/cacheService';
@@ -10,6 +8,7 @@ import type {
     RobotState, EnvironmentObject, AIModel, APIConfig, ExecuteActionFunction,
     AgentPersonality, KnowledgeGraph
 } from '../types';
+import { INITIAL_LAYOUT_DATA } from './useKicadManager';
 
 type UseAppRuntimeProps = {
     allToolsRef: React.MutableRefObject<LLMTool[]>;
@@ -39,7 +38,17 @@ type UseAppRuntimeProps = {
     setKnowledgeGraphState: React.Dispatch<React.SetStateAction<KnowledgeGraph | null>>;
 };
 
-export const useAppRuntime = (props: UseAppRuntimeProps) => {
+type UseAppRuntimeReturn = {
+    executeActionRef: React.MutableRefObject<ExecuteActionFunction | null>;
+    processRequest: (
+        prompt: { text: string; files: any[] },
+        systemInstruction: string,
+        agentId: string,
+        relevantTools: LLMTool[],
+    ) => Promise<AIToolCall[] | null>;
+};
+
+export const useAppRuntime = (props: UseAppRuntimeProps): UseAppRuntimeReturn => {
     const {
         allToolsRef, logEvent, generateMachineReadableId,
         apiConfig, selectedModel, setApiCallCount, isServerConnected, setTools,
@@ -116,6 +125,12 @@ export const useAppRuntime = (props: UseAppRuntimeProps) => {
             },
             list: (): LLMTool[] => allToolsRef.current,
         },
+        ai: {
+            generateText: (prompt: string, systemInstruction: string) => {
+                logEvent(`[AI SUB-CALL] Tool is calling LLM for analysis...`);
+                return aiService.generateTextResponse(prompt, systemInstruction, selectedModelRef.current, apiConfigRef.current, (progress) => logEvent(`[AI-PROGRESS] ${progress}`));
+            }
+        },
         isServerConnected: () => isServerConnectedRef.current,
         forceRefreshServerTools,
         updatePcbArtifacts: setPcbArtifacts,
@@ -143,182 +158,31 @@ export const useAppRuntime = (props: UseAppRuntimeProps) => {
         enrichedResult.tool = toolToExecute;
         const runtime = getRuntimeApiForAgent(agentId);
 
-        // --- SPECIAL DEMO-MODE CLIENT TOOLS ---
-        if (toolToExecute.name.startsWith('Demo: ')) {
-            if (toolToExecute.name.startsWith('Demo: Add')) {
-                 const ruleType = toolToExecute.name.replace('Demo: Add ', '');
-                 const rule: any = { type: ruleType, ...toolCall.arguments, enabled: true };
-                 
-                 // The python script expects 'componentReference' but the simulation uses 'component'.
-                 if(rule.componentReference) {
-                    rule.component = rule.componentReference;
-                    delete rule.componentReference;
-                 }
+        try {
+             if (toolToExecute.category === 'Server') {
+                const sortedArgs = Object.keys(toolCall.arguments).sort().reduce((obj: Record<string, any>, key: string) => {
+                    obj[key] = toolCall.arguments[key];
+                    return obj;
+                }, {});
                 
-                 // NOTE: The direct call to addLayoutRule is removed from here. The caller is responsible.
-                 enrichedResult.executionResult = { success: true, message: `Rule '${rule.type}' added to simulation.`, rule: rule };
-                 return enrichedResult;
-            }
-            if (toolToExecute.name === 'Demo: Set Simulation Heuristics') {
-                setLayoutHeuristics(prev => ({ ...prev, ...toolCall.arguments }));
-                enrichedResult.executionResult = { success: true, message: 'Simulation heuristics updated.' };
-                return enrichedResult;
-            }
-        }
-        
-        // --- ROBOTICS PRIMITIVE ACTIONS ---
-        if (toolToExecute.category === 'Functional' && (toolToExecute.name.startsWith('Move') || toolToExecute.name.startsWith('Turn'))) {
-            try {
-                const { robot, environment } = getRobotStateForRuntime(toolCall.arguments.agentId);
-                let { x, y, rotation, powerLevel } = robot;
-                let message = `Robot ${toolCall.arguments.agentId} is blocked. Cannot move further.`;
-                let moved = false;
-        
-                if (toolToExecute.name === 'Move Forward') {
-                    let nextX = x, nextY = y;
-                    if (rotation === 0) nextY -= 1; // Up
-                    else if (rotation === 90) nextX += 1; // Right
-                    else if (rotation === 180) nextY += 1; // Down
-                    else if (rotation === 270) nextX -= 1; // Left
-        
-                    if (!environment.some(e => e.x === nextX && e.y === nextY && (e.type === 'wall' || e.type === 'tree' || e.type === 'rough_terrain'))) {
-                        x = nextX; y = nextY;
-                        message = `Robot ${toolCall.arguments.agentId} moved forward to (${x}, ${y}).`;
-                        moved = true;
-                    }
-                } else if (toolToExecute.name === 'Move Backward') {
-                    let nextX = x, nextY = y;
-                    if (rotation === 0) nextY += 1; // Down
-                    else if (rotation === 90) nextX -= 1; // Left
-                    else if (rotation === 180) nextY -= 1; // Up
-                    else if (rotation === 270) nextX += 1; // Right
-        
-                    if (!environment.some(e => e.x === nextX && e.y === nextY && (e.type === 'wall' || e.type === 'tree' || e.type === 'rough_terrain'))) {
-                        x = nextX; y = nextY;
-                        message = `Robot ${toolCall.arguments.agentId} moved backward to (${x}, ${y}).`;
-                        moved = true;
-                    }
-                } else if (toolToExecute.name === 'Turn Left') {
-                    rotation = (rotation - 90 + 360) % 360;
-                    message = `Robot ${toolCall.arguments.agentId} turned left. New rotation: ${rotation} degrees.`;
-                    moved = true;
-                } else if (toolToExecute.name === 'Turn Right') {
-                    rotation = (rotation + 90) % 360;
-                    message = `Robot ${toolCall.arguments.agentId} turned right. New rotation: ${rotation} degrees.`;
-                     moved = true;
-                }
-        
-                if (moved) {
-                    // All actions consume power
-                    powerLevel = Math.max(0, powerLevel - 2); // Movement is costly
-                    setRobotStates(prev => prev.map(r => r.id === toolCall.arguments.agentId ? { ...r, x, y, rotation, powerLevel } : r));
-                }
-                enrichedResult.executionResult = { success: moved, message };
-                // Do not log manual control spam
-                // logEvent(`[ROBOTICS] ${message}`);
-            } catch (e) {
-                enrichedResult.executionError = e instanceof Error ? e.message : String(e);
-            }
-            return enrichedResult;
-        }
-
-        // --- ROBOTICS SIMULATION CONTROL ---
-        if (toolToExecute.name.includes('Robot Simulation')) {
-             if (toolToExecute.name === 'Start Robot Simulation') {
-                setRobotStates(prev => {
-                    const personalities = runtime.getRobotSimState().personalities;
-                    const newStates = personalities.map(p => ({ id: p.id, x: p.startX, y: p.startY, rotation: 0, hasResource: false, powerLevel: 100 }));
-                    return newStates;
-                });
-                enrichedResult.executionResult = { success: true, message: 'Robotics simulation started.' };
-            } else if (toolToExecute.name === 'Stop Robot Simulation') {
-                setRobotStates([]);
-                setAgentPersonalities([]);
-                enrichedResult.executionResult = { success: true, message: 'Robotics simulation stopped and reset.' };
-            } else if (toolToExecute.name === 'Step Robot Simulation') {
-                enrichedResult.executionResult = { success: true, message: 'Simulated one step for all agents.' };
-                logEvent(`[ROBOTICS] Stepped simulation forward.`);
-            }
-            return enrichedResult;
-        }
-
-        // --- ROBOTICS AGENT DEFINITION ---
-        if (toolToExecute.name === 'Define Robot Agent') {
-             const newPersonality: AgentPersonality = toolCall.arguments as any;
-             setAgentPersonalities(prev => [...prev.filter(p => p.id !== newPersonality.id), newPersonality]);
-             enrichedResult.executionResult = { success: true, message: `Defined personality for agent ${newPersonality.id}` };
-             return enrichedResult;
-        }
-
-        // --- KICAD SIMULATION HEURISTICS ---
-        if (toolToExecute.name === 'Set Simulation Heuristics') {
-            try {
-                setLayoutHeuristics(prev => ({ ...prev, ...toolCall.arguments }));
-                enrichedResult.executionResult = { success: true, message: 'Simulation heuristics updated.', heuristics: toolCall.arguments };
-                return enrichedResult;
-            } catch (e) {
-                enrichedResult.executionError = e instanceof Error ? e.message : String(e);
-                return enrichedResult;
-            }
-        }
-        
-        // --- KICAD WORKFLOW CHECKLIST ---
-        if (toolToExecute.name === 'Update Workflow Checklist') {
-             try {
-                const { workflowStepName, checklistItems } = toolCall.arguments;
-                // The AI returns array parameters as a JSON string. We must parse it.
-                const itemsArray = typeof checklistItems === 'string' ? JSON.parse(checklistItems) : checklistItems;
-
-                if (!Array.isArray(itemsArray)) {
-                    throw new Error(`'checklistItems' for '${workflowStepName}' is not a valid array.`);
-                }
-
-                updateWorkflowChecklist(workflowStepName, itemsArray);
-                enrichedResult.executionResult = { success: true, message: `Checklist updated for '${workflowStepName}'.`};
-                logEvent(`[INFO] ✅ Agent provided a plan for '${workflowStepName}' with ${itemsArray.length} items.`);
-                return enrichedResult;
-             } catch (e) {
-                enrichedResult.executionError = e instanceof Error ? e.message : String(e);
-                logEvent(`[ERROR] ❌ Failed to update workflow checklist: ${enrichedResult.executionError}`);
-                return enrichedResult;
-             }
-        }
-        
-        // --- SERVER TOOL EXECUTION (REAL & SIMULATED) ---
-        if (toolToExecute.category === 'Server') {
-            const sortedArgs = Object.keys(toolCall.arguments).sort().reduce((obj: Record<string, any>, key: string) => {
-                obj[key] = toolCall.arguments[key];
-                return obj;
-            }, {});
-            
-            // Caching strategy: By default, cache keys include all arguments.
-            // For project-specific KiCad tools, this is correct as 'projectName' is part of the arguments.
-            // For project-agnostic tools (like component asset generation), we must explicitly
-            // remove 'projectName' from the arguments before creating the cache key.
-            const projectAgnosticKicadTools = new Set([
-                'Define KiCad Component'
-            ]);
-            
-            let cacheKey: string;
-
-            if (projectAgnosticKicadTools.has(toolCall.name)) {
-                // For these tools, the cache key should NOT include the project name.
-                const { projectName, ...argsForCache } = sortedArgs;
-                cacheKey = `${toolCall.name}::${JSON.stringify(argsForCache)}`;
-            } else {
-                // For all other tools, the cache key is based on the full arguments.
-                // If 'projectName' is present, it will be included, ensuring project-specific caching.
-                cacheKey = `${toolCall.name}::${JSON.stringify(sortedArgs)}`;
-            }
-
-            const cachedResult = await getMcpCache(cacheKey);
-
-            if (isServerConnectedRef.current) { // REAL SERVER
-                if (cachedResult) {
-                    logEvent(`[CACHE HIT] ✅ [SERVER] Using cached result for '${toolToExecute.name}'.`);
-                    enrichedResult.executionResult = cachedResult;
+                const projectAgnosticKicadTools = new Set(['Define KiCad Component']);
+                
+                let cacheKey: string;
+    
+                if (projectAgnosticKicadTools.has(toolCall.name)) {
+                    const { projectName, ...argsForCache } = sortedArgs;
+                    cacheKey = `${toolCall.name}::${JSON.stringify(argsForCache)}`;
                 } else {
-                    try {
+                    cacheKey = `${toolCall.name}::${JSON.stringify(sortedArgs)}`;
+                }
+    
+                const cachedResult = await getMcpCache(cacheKey);
+    
+                if (isServerConnectedRef.current) { // REAL SERVER
+                    if (cachedResult) {
+                        logEvent(`[CACHE HIT] ✅ [SERVER] Using cached result for '${toolToExecute.name}'.`);
+                        enrichedResult.executionResult = cachedResult;
+                    } else {
                         const response = await fetch('http://localhost:3001/api/execute', {
                             method: 'POST',
                             headers: { 'Content-Type': 'application/json' },
@@ -331,19 +195,11 @@ export const useAppRuntime = (props: UseAppRuntimeProps) => {
                         enrichedResult.executionResult = result;
                         await setMcpCache(cacheKey, result);
                         logEvent(`[INFO] ✅ [SERVER] ${result.message || `Tool '${toolToExecute.name}' executed.`}`);
-                    } catch (execError) {
-                        enrichedResult.executionError = execError instanceof Error ? execError.message : String(execError);
-                        logEvent(`[ERROR] ❌ [SERVER] ${enrichedResult.executionError}`);
                     }
-                }
-            } else { // SIMULATION FALLBACK
-                try {
-                    // Always run the simulator to update ephemeral React state (like kicadProjectState).
-                    // This is crucial for workflows to function correctly across page reloads when using the cache.
+                } else { // SIMULATION FALLBACK
                     let simResult;
                     const simKey = toolToExecute.name.replace(/KiCad /g, '').replace(/\s/g, '_').toLowerCase();
                     if (toolToExecute.name.toLowerCase().includes('kicad') && kicadSimulators[simKey]) {
-                         // Pass the full sorted arguments to the simulator.
                          simResult = await kicadSimulators[simKey](sortedArgs);
                     } else if (toolToExecute.name.toLowerCase().includes('strategic')) {
                         if (toolToExecute.name === 'Read Strategic Memory') {
@@ -352,7 +208,7 @@ export const useAppRuntime = (props: UseAppRuntimeProps) => {
                         } else if (toolToExecute.name === 'Define Strategic Directive') {
                             const graph = getKnowledgeGraphState() || { nodes: [], edges: [] };
                             const newGraph = JSON.parse(JSON.stringify(graph));
-                            const { id, label, parent } = sortedArgs; // Use sorted args
+                            const { id, label, parent } = sortedArgs;
                             if (newGraph.nodes.some(n => n.id === id)) throw new Error(`Directive '${id}' already exists.`);
                             newGraph.nodes.push({ id, label, type: 'directive' });
                             if (parent) newGraph.edges.push({ source: parent, target: id });
@@ -366,26 +222,20 @@ export const useAppRuntime = (props: UseAppRuntimeProps) => {
                     } else {
                          throw new Error(`Server tool '${toolToExecute.name}' cannot be simulated. Please start the server.`);
                     }
-
+    
                     if (cachedResult) {
                         logEvent(`[CACHE HIT] ✅ [SIM] Using cached result for '${toolToExecute.name}'.`);
                         enrichedResult.executionResult = cachedResult;
                     } else {
-                        // First run: use the simulator's result and cache it.
                         enrichedResult.executionResult = simResult;
                         await setMcpCache(cacheKey, simResult);
                         const logMsg = simResult.stdout ? (JSON.parse(simResult.stdout).message || `Simulated '${toolToExecute.name}' executed.`) : (simResult.message || `Simulated '${toolToExecute.name}' executed.`);
                         logEvent(`[INFO] ✅ [SIM] ${logMsg}`);
                     }
-                } catch (execError) {
-                     enrichedResult.executionError = execError instanceof Error ? execError.message : String(execError);
-                     logEvent(`[ERROR] ❌ [SIM] ${enrichedResult.executionError}`);
                 }
-            }
-        } else if (toolToExecute.category === 'UI Component') {
-             enrichedResult.executionResult = { success: true, summary: `Displayed UI tool '${toolToExecute.name}'.` };
-        } else { // Client-side Functional or Automation
-            try {
+            } else if (toolToExecute.category === 'UI Component') {
+                 enrichedResult.executionResult = { success: true, summary: `Displayed UI tool '${toolToExecute.name}'.` };
+            } else { // Client-side Functional or Automation
                 const finalArgs = { ...toolCall.arguments };
                 for (const param of toolToExecute.parameters) {
                     if ((param.type === 'array' || param.type === 'object') && typeof finalArgs[param.name] === 'string') {
@@ -400,63 +250,62 @@ export const useAppRuntime = (props: UseAppRuntimeProps) => {
                 const result = await runToolImplementation(toolToExecute.implementationCode, finalArgs, runtime);
                 enrichedResult.executionResult = result;
                 logEvent(`[INFO] ✅ ${result?.message || `Tool "${toolToExecute.name}" executed by ${agentId}.`}`);
-            } catch (execError) {
-                enrichedResult.executionError = execError instanceof Error ? execError.message : String(execError);
-                logEvent(`[ERROR] ❌ ${enrichedResult.executionError}`);
+            }
+        } catch (execError) {
+            enrichedResult.executionError = execError instanceof Error ? execError.message : String(execError);
+            logEvent(`[ERROR] ❌ ${enrichedResult.executionError}`);
+        }
+
+        const result = enrichedResult.executionResult;
+        if (result) {
+            // Atomically update layout state to prevent race conditions
+            const layoutUpdates: Partial<KnowledgeGraph> = {};
+            if (result.newNode) layoutUpdates.nodes = [result.newNode];
+            if (result.edges) layoutUpdates.edges = result.edges;
+            if (result.rule) layoutUpdates.rules = [result.rule];
+            if (result.board_outline) layoutUpdates.board_outline = result.board_outline;
+
+            if (Object.keys(layoutUpdates).length > 0) {
+                updateLayout(prev => {
+                    const newState = { ...(prev || INITIAL_LAYOUT_DATA) };
+                    if (layoutUpdates.nodes) {
+                        const prevNodes = Array.isArray(newState.nodes) ? newState.nodes : [];
+                        const newNode = layoutUpdates.nodes[0];
+                        newState.nodes = [...prevNodes.filter(n => n.id !== newNode.id), newNode];
+                    }
+                    if (layoutUpdates.edges) {
+                        const prevEdges = Array.isArray(newState.edges) ? newState.edges : [];
+                        newState.edges = [...prevEdges, ...layoutUpdates.edges];
+                    }
+                    if (layoutUpdates.rules) {
+                        const prevRules = Array.isArray(newState.rules) ? newState.rules : [];
+                        newState.rules = [...prevRules, ...layoutUpdates.rules];
+                    }
+                    if (layoutUpdates.board_outline) {
+                        newState.board_outline = layoutUpdates.board_outline;
+                    }
+                    return newState;
+                });
+            }
+
+            if (result.heuristics) {
+                setLayoutHeuristics(prev => ({ ...prev, ...result.heuristics }));
             }
         }
 
-        // --- KICAD POST-PROCESSING ---
+        // --- KICAD-specific post-processing ---
         if (enrichedResult.toolCall?.name?.toLowerCase().includes('kicad')) {
-            const kicadResult = enrichedResult.executionResult;
-            console.log('[DEBUG] KICAD POST-PROCESSING: Raw result from tool execution:', JSON.stringify(kicadResult, null, 2));
-
-            if (kicadResult && typeof kicadResult.stdout === 'string') {
-                console.log('[DEBUG] KICAD POST-PROCESSING: Found stdout string. Attempting to parse.');
+            if (result && typeof result.stdout === 'string') {
                 try {
-                    const parsedStdout = JSON.parse(kicadResult.stdout);
-                    console.log('[DEBUG] KICAD POST-PROCESSING: Parsed stdout:', JSON.stringify(parsedStdout, null, 2));
-                    enrichedResult.executionResult = { ...kicadResult, ...parsedStdout };
-                } catch (e) {
-                    console.log('[DEBUG] KICAD POST-PROCESSING: Failed to parse stdout as JSON.', e);
-                }
+                    const parsedStdout = JSON.parse(result.stdout);
+                    enrichedResult.executionResult = { ...result, ...parsedStdout };
+                } catch (e) { /* ignore if not json */ }
             }
             
             const finalKicadResult = enrichedResult.executionResult;
-            console.log('[DEBUG] KICAD POST-PROCESSING: Final result object:', JSON.stringify(finalKicadResult, null, 2));
 
             if (finalKicadResult) {
                 if (finalKicadResult.message) kicadLogEvent(`✔️ ${finalKicadResult.message}`);
-                
-                if (finalKicadResult.rule) {
-                    console.log('[DEBUG] KICAD POST-PROCESSING: Found "rule" property.');
-                    logEvent(`[RUNTIME] Propagating rule from server to client state: ${finalKicadResult.rule.type}`);
-                } else {
-                     console.log('[DEBUG] KICAD POST-PROCESSING: "rule" property NOT found in final result.');
-                }
-
-                if (finalKicadResult.outline) {
-                    kicadLogEvent(`[SIM] Board outline defined. Updating view.`);
-                    const { shape, boardWidthMillimeters, boardHeightMillimeters, diameterMillimeters } = finalKicadResult.outline;
-                    const isAutoSize = !boardWidthMillimeters && !boardHeightMillimeters && !diameterMillimeters;
-
-                    const width = boardWidthMillimeters || diameterMillimeters || (isAutoSize ? 1.6 : 50);
-                    const height = boardHeightMillimeters || diameterMillimeters || (isAutoSize ? 1.6 : 50);
-                    
-                    const newOutline = {
-                        shape: shape || 'rectangle',
-                        width: width,
-                        height: height,
-                        x: -width / 2,
-                        y: -height / 2,
-                        autoSize: isAutoSize,
-                    };
-
-                    updateLayout(prev => ({
-                        ...(prev || { nodes: [], edges: [], rules: [] }),
-                        board_outline: newOutline
-                    }));
-                }
                 
                 if (finalKicadResult.artifacts) {
                     if (finalKicadResult.artifacts.fabZipPath && finalKicadResult.artifacts.glbPath) {

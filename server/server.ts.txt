@@ -4,6 +4,7 @@ import cors from 'cors';
 import fs from 'fs/promises';
 import path from 'path';
 import { exec, spawn, ChildProcess } from 'child_process';
+import { createServer, type Server } from 'net';
 import type { LLMTool, NewToolPayload, AIToolCall } from '../types';
 import { fileURLToPath } from 'url';
 
@@ -20,8 +21,9 @@ const ASSETS_DIR = path.join(__dirname, 'assets');
 let serverToolsCache: LLMTool[] = [];
 let gemmaProcess: ChildProcess | null = null;
 let kicadServiceProcess: ChildProcess | null = null;
-const KICAD_SERVICE_PORT = 8000;
+const KICAD_SERVICE_BASE_PORT = 8000;
 const KICAD_SERVICE_TIMEOUT = 600000; // 10 minutes for long-running tasks like autorouting
+let currentKicadServicePort: number | null = null;
 let gemmaLogs: string[] = [];
 const MAX_LOGS = 100;
 
@@ -70,12 +72,25 @@ const addLog = (log: string) => {
     }
 };
 
-const isKicadServiceHealthy = async (): Promise<boolean> => {
+const isPortFree = (port: number): Promise<boolean> => {
+    return new Promise((resolve) => {
+        const server: Server = createServer();
+        server.once('error', (err: any) => {
+            resolve(err.code !== 'EADDRINUSE');
+        });
+        server.once('listening', () => {
+            server.close(() => resolve(true));
+        });
+        server.listen(port, '127.0.0.1');
+    });
+};
+
+
+const isKicadServiceHealthy = async (port: number): Promise<boolean> => {
     try {
-        // Use native fetch's AbortSignal for timeouts
         const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 1000); // 1-second timeout
-        const response = await fetch(`http://127.0.0.1:${KICAD_SERVICE_PORT}/health`, {
+        const timeoutId = setTimeout(() => controller.abort(), 1000);
+        const response = await fetch(`http://127.0.0.1:${port}/health`, {
             method: 'GET',
             signal: controller.signal,
         });
@@ -86,66 +101,64 @@ const isKicadServiceHealthy = async (): Promise<boolean> => {
     }
 };
 
-const startKicadService = async (): Promise<{ success: boolean; message: string; error?: string }> => {
-    // 1. Check if service is already running and healthy
-    if (await isKicadServiceHealthy()) {
-        if (!kicadServiceProcess) {
-            console.log('[INFO] KiCad Service is responsive but not managed by this server process (likely an orphan). Continuing without a process handle.');
-        }
-        return { success: true, message: 'KiCad Service is already running and responsive.' };
+const ensureKicadServiceIsReady = async (): Promise<{ success: boolean; message: string; error?: string }> => {
+    // 1. Check if the currently known service is healthy.
+    if (currentKicadServicePort && await isKicadServiceHealthy(currentKicadServicePort)) {
+        return { success: true, message: `KiCad Service is healthy on port ${currentKicadServicePort}.` };
     }
     
-    // 2. If not healthy, and we think we have a process handle, it might be stuck.
+    // 2. If not healthy or not running, find a new free port.
+    let newPort = KICAD_SERVICE_BASE_PORT;
+    while (!(await isPortFree(newPort))) {
+        newPort++;
+    }
+    console.log(`[INFO] Found free port for KiCad Service: ${newPort}`);
+
+    // 3. Clean up any old process handles we might have.
     if (kicadServiceProcess) {
-        console.warn('[WARN] KiCad Service process handle exists but service is unresponsive. Killing old process...');
-        kicadServiceProcess.kill('SIGKILL'); // Use SIGKILL for unresponsive processes
+        console.warn('[WARN] Killing previous (likely unresponsive) KiCad Service process handle...');
+        kicadServiceProcess.kill('SIGKILL');
         kicadServiceProcess = null;
-        await new Promise(resolve => setTimeout(resolve, 500)); // Give OS time to release port
     }
 
     try {
-        // 3. Spawn a new process
-        console.log('[INFO] Spawning new KiCad Service process...');
+        // 4. Spawn a new process on the new free port.
+        console.log(`[INFO] Spawning new KiCad Service process on port ${newPort}...`);
         const pythonExecutable = path.join(__dirname, '..', 'venv', 'bin', 'python');
         const scriptPath = path.join(SCRIPTS_DIR, 'kicad_service.py');
         
         const newProcess = spawn(pythonExecutable, [scriptPath], {
-            env: { ...process.env, KICAD_SERVICE_PORT: KICAD_SERVICE_PORT.toString() }
+            env: { ...process.env, KICAD_SERVICE_PORT: newPort.toString() }
         });
-        kicadServiceProcess = newProcess; // Assign immediately
+        kicadServiceProcess = newProcess;
         
-        newProcess.stdout?.on('data', (data) => console.log(`[KiCad Service]: ${data.toString().trim()}`));
-        newProcess.stderr?.on('data', (data) => console.error(`[KiCad Service ERR]: ${data.toString().trim()}`));
+        newProcess.stdout?.on('data', (data) => console.log(`[KiCad Service @ ${newPort}]: ${data.toString().trim()}`));
+        newProcess.stderr?.on('data', (data) => console.error(`[KiCad Service ERR @ ${newPort}]: ${data.toString().trim()}`));
         
         newProcess.on('close', (code) => {
-            console.log(`KiCad Service process exited with code ${code}`);
-            // Check if the current process is the one that closed
-            if (kicadServiceProcess === newProcess) {
-                kicadServiceProcess = null;
-            }
-        });
-        newProcess.on('error', (err) => {
-            console.error(`[FATAL] Failed to start KiCad Service process: ${err.message}`);
-            if (kicadServiceProcess === newProcess) {
+            console.log(`KiCad Service process on port ${newPort} exited with code ${code}`);
+            if (currentKicadServicePort === newPort) {
+                currentKicadServicePort = null;
                 kicadServiceProcess = null;
             }
         });
 
-        // 4. Poll for healthiness
+        // 5. Poll for healthiness on the new port.
         const startTime = Date.now();
         const timeout = 15000; // 15 seconds
         while (Date.now() - startTime < timeout) {
-            if (await isKicadServiceHealthy()) {
-                console.log('[INFO] New KiCad Service is now healthy.');
-                return { success: true, message: 'KiCad Service started successfully.' };
+            if (await isKicadServiceHealthy(newPort)) {
+                console.log(`[INFO] New KiCad Service is now healthy on port ${newPort}.`);
+                currentKicadServicePort = newPort;
+                return { success: true, message: `KiCad Service started successfully on port ${newPort}.` };
             }
-            if (!kicadServiceProcess) { // Process crashed during startup
+            if (!newProcess.pid) { // Process crashed during startup
                  throw new Error("KiCad Service process exited prematurely during startup. Check service logs for errors.");
             }
             await new Promise(resolve => setTimeout(resolve, 500));
         }
 
-        throw new Error(`KiCad Service failed to become healthy within ${timeout / 1000} seconds.`);
+        throw new Error(`KiCad Service failed to become healthy on port ${newPort} within ${timeout / 1000} seconds.`);
 
     } catch (e) {
         const err = e as Error;
@@ -153,9 +166,11 @@ const startKicadService = async (): Promise<{ success: boolean; message: string;
             kicadServiceProcess.kill('SIGKILL');
             kicadServiceProcess = null;
         }
+        currentKicadServicePort = null;
         return { success: false, message: `Failed to start KiCad Service: ${err.message}`, error: err.message };
     }
 };
+
 
 // --- API Endpoints ---
 
@@ -308,6 +323,7 @@ app.post('/api/execute', async (req: express.Request, res: express.Response) => 
                 console.log('[COMMAND] Stopping KiCad service as part of reset...');
                 kicadServiceProcess.kill('SIGTERM');
                 kicadServiceProcess = null;
+                currentKicadServicePort = null;
             }
             await writeTools([]); // Write an empty array to the file
             serverToolsCache = []; // Clear the in-memory cache
@@ -321,7 +337,7 @@ app.post('/api/execute', async (req: express.Request, res: express.Response) => 
     
     // --- KiCad Service Management ---
     if (name === 'Start KiCad Service') {
-        const result = await startKicadService();
+        const result = await ensureKicadServiceIsReady();
         if (!result.success) {
             return res.status(500).json({ error: result.error });
         }
@@ -329,14 +345,11 @@ app.post('/api/execute', async (req: express.Request, res: express.Response) => 
     }
     if (name === 'Stop KiCad Service') {
         if (!kicadServiceProcess) {
-             // Check if it's running but unmanaged
-            if (await isKicadServiceHealthy()) {
-                return res.status(400).json({ error: 'KiCad Service is running but not managed by this server process. It cannot be stopped from here.' });
-            }
-            return res.status(400).json({ error: 'KiCad Service is not running.' });
+             return res.status(400).json({ error: 'KiCad Service is not running or is unmanaged.' });
         }
         kicadServiceProcess.kill('SIGTERM');
         kicadServiceProcess = null;
+        currentKicadServicePort = null;
         return res.json({ success: true, message: 'KiCad Service stopped.' });
     }
 
@@ -346,14 +359,11 @@ app.post('/api/execute', async (req: express.Request, res: express.Response) => 
     // --- KiCad Command Proxying ---
     const PROXY_PREFIX = 'kicad_service_proxy::';
     if (toolToExecute.implementationCode && String(toolToExecute.implementationCode).trim().startsWith(PROXY_PREFIX)) {
-        if (!(await isKicadServiceHealthy())) {
-            console.log('[INFO] KiCad service not responsive. Attempting to start it automatically...');
-            const startResult = await startKicadService();
-            if (!startResult.success) {
-                console.error(`[ERROR] Failed to auto-start KiCad service: ${startResult.error}`);
-                return res.status(500).json({ error: `Failed to automatically start the required KiCad Service: ${startResult.error}` });
-            }
-            console.log('[SUCCESS] KiCad service auto-started successfully.');
+        // This function now handles finding a port and starting the service if needed.
+        const startResult = await ensureKicadServiceIsReady();
+        if (!startResult.success || !currentKicadServicePort) {
+            console.error(`[ERROR] Failed to ensure KiCad service is ready: ${startResult.error}`);
+            return res.status(500).json({ error: `Failed to start or connect to the required KiCad Service: ${startResult.error}` });
         }
         
         const commandName = toolToExecute.implementationCode.trim().substring(PROXY_PREFIX.length);
@@ -362,7 +372,7 @@ app.post('/api/execute', async (req: express.Request, res: express.Response) => 
         }
 
         try {
-            const serviceResponse = await fetch(`http://127.0.0.1:${KICAD_SERVICE_PORT}/command/${commandName}`, {
+            const serviceResponse = await fetch(`http://127.0.0.1:${currentKicadServicePort}/command/${commandName}`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
                 body: JSON.stringify(args),
@@ -377,19 +387,16 @@ app.post('/api/execute', async (req: express.Request, res: express.Response) => 
                 return res.status(serviceResponse.status).json({ error: errorMessage });
             }
             
-            // The result from the Python service is the definitive result.
-            // We merge it with our standard success flag. The python result may already have a message.
             const responseToClient = { success: true, ...result };
-            
-            // Add a detailed log to show exactly what is being sent back to the client.
             console.log(`[PROXY SUCCESS] Sending response to client for '${commandName}':`, JSON.stringify(responseToClient));
-            
             return res.json(responseToClient);
 
         } catch (fetchError) {
             const err = fetchError as Error;
-            console.error(`Error proxying to KiCad Service:`, err);
-            return res.status(502).json({ error: `Could not connect to the KiCad Service. Is it running? Details: ${err.message}` });
+            console.error(`Error proxying to KiCad Service on port ${currentKicadServicePort}:`, err);
+            // Invalidate the current service port since it failed
+            currentKicadServicePort = null;
+            return res.status(502).json({ error: `Could not connect to the KiCad Service. It may have crashed. Details: ${err.message}` });
         }
     }
 
@@ -416,17 +423,14 @@ app.post('/api/execute', async (req: express.Request, res: express.Response) => 
     if (args) {
         for (const key in args) {
             let value = args[key];
-            // If the value is an object or array, stringify it as JSON.
             if (typeof value === 'object' && value !== null) {
                 value = JSON.stringify(value);
             }
-            // Escape single quotes for shell safety: ' -> '\''
             const escapedValue = String(value).replace(/'/g, "'\\''");
             command += ` --${key} '${escapedValue}'`;
         }
     }
 
-    // Use the python from the virtual environment for reliability
     if (command.startsWith('python ')) {
         command = path.join('venv', 'bin', 'python') + command.substring('python'.length);
     }
@@ -434,23 +438,19 @@ app.post('/api/execute', async (req: express.Request, res: express.Response) => 
     exec(command, { timeout: 300000, cwd: __dirname }, (error, stdout, stderr) => { // 5 minute timeout
         if (error) {
             console.error(`Exec error for tool '${name}':`, { command, error: error.message, stdout, stderr });
-
-            // Prioritize the script's controlled JSON output from stdout as the error source.
             let detailedError = `Tool execution failed: ${error.message}`;
             if (stdout && stdout.trim()) {
                 try {
                     const parsedStdout = JSON.parse(stdout);
                     if (parsedStdout.error) {
-                        detailedError = parsedStdout.error; // Use the specific error from the script
+                        detailedError = parsedStdout.error;
                     } else {
-                        detailedError = stdout.trim(); // Fallback to raw stdout
+                        detailedError = stdout.trim();
                     }
                 } catch (e) {
-                    // If stdout isn't valid JSON, use it as a raw string.
                     detailedError = stdout.trim();
                 }
             } else if (stderr && stderr.trim()) {
-                // Fallback to stderr if stdout is empty
                 detailedError = stderr.trim();
             }
             
@@ -467,14 +467,12 @@ app.post('/api/files/write', async (req: express.Request, res: express.Response)
         if (!filePath || typeof content !== 'string') {
             return res.status(400).json({ error: "Missing 'filePath' or 'content'." });
         }
-        // Security: Ensure the path is clean and does not traverse up directories
         const safeFileName = path.normalize(filePath).replace(/^(\.\.(\/|\\|$))+/, '');
         if (safeFileName.includes('..')) {
            return res.status(400).json({ error: "Invalid file path (directory traversal detected)." });
         }
         const fullPath = path.join(SCRIPTS_DIR, safeFileName);
         
-        // Security: double-check it's still within the intended directory
         if (!fullPath.startsWith(SCRIPTS_DIR)) {
             return res.status(400).json({ error: "Invalid file path (resolved outside scripts directory)." });
         }
@@ -492,10 +490,9 @@ app.listen(PORT, async () => {
     console.log(`Singularity Agent Factory Backend Server listening on http://localhost:${PORT}`);
     console.log('This server allows the AI to execute local commands and write files.');
     
-    // Ensure directories exist before any operations that might need them
     await fs.mkdir(SCRIPTS_DIR, { recursive: true });
     await fs.mkdir(ASSETS_DIR, { recursive: true });
     
-    await readToolsAndLoadCache(); // Initial load of tools into memory
+    await readToolsAndLoadCache();
     console.warn('SECURITY WARNING: This server can execute arbitrary code. Do not expose it to the internet.');
 });

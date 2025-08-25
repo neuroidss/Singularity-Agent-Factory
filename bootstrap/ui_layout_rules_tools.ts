@@ -1,4 +1,3 @@
-
 // bootstrap/ui_layout_rules_tools.ts
 
 import type { ToolCreatorPayload } from '../types';

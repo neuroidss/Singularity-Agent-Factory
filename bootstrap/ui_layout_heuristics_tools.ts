@@ -78,7 +78,7 @@ export const LAYOUT_HEURISTICS_TUNER_TOOL_PAYLOAD: ToolCreatorPayload = {
                     <div className="pt-3 border-t border-gray-600 space-y-3">
                          <h4 className="font-semibold text-cyan-400 text-base">Rule Strengths</h4>
                          <ParameterSlider name="absolutePositionStrength" label="Absolute Position" min="0" max="50" step="0.5" value={currentParams.absolutePositionStrength} onChange={handleParamChange} description="Force locking a component to a fixed coordinate." />
-                         <ParameterSlider name="proximityStrength" label="Proximity" min="0" max="50" step="0.5" value={currentParams.proximityStrength} onChange={handleParamChange} description="Force pulling components in a group together." />
+                         <ParameterSlider name="proximityStrength" label="Proximity" min="0" max="200" step="1" value={currentParams.proximityStrength} onChange={handleParamChange} description="Force pulling satellite components towards their anchor." />
                          <ParameterSlider name="alignmentStrength" label="Alignment" min="0" max="50" step="0.5" value={currentParams.alignmentStrength} onChange={handleParamChange} description="Force aligning components along an axis." />
                          <ParameterSlider name="symmetryStrength" label="Symmetry" min="0" max="50" step="0.5" value={currentParams.symmetryStrength} onChange={handleParamChange} description="Force mirroring component pairs." />
                          <ParameterSlider name="symmetricalPairStrength" label="Symmetrical Pair" min="0" max="50" step="0.5" value={currentParams.symmetricalPairStrength} onChange={handleParamChange} description="Force for symmetrical pairs with fixed separation." />

@@ -1,4 +1,5 @@
 
+
 import React, { useState, useCallback, useRef, useEffect, useMemo } from 'react';
 import type { WorkflowStep, AIToolCall, EnrichedAIResponse, LLMTool, KnowledgeGraphNode, KnowledgeGraphEdge, MainView, KnowledgeGraph, ExecuteActionFunction } from '../types';
 import { WORKFLOW_SCRIPT } from '../bootstrap/demo_workflow';
@@ -108,15 +109,20 @@ export const useKicadManager = (props: UseKicadManagerProps) => {
     const [kicadProjectState, setKicadProjectState] = useState<KicadProjectState>({});
     const [workflowSteps, setWorkflowSteps] = useState<WorkflowStepState[]>(INITIAL_WORKFLOW_STEPS);
     
+    const layoutDataRef = useRef(currentLayoutData);
+    layoutDataRef.current = currentLayoutData;
+    
     const layoutHeuristics = currentLayoutData?.heuristics || {};
     
     const setLayoutHeuristics = useCallback((update: React.SetStateAction<any>) => {
         setCurrentLayoutData(prevData => {
             const prevHeuristics = prevData?.heuristics || {};
             const newHeuristics = typeof update === 'function' ? update(prevHeuristics) : update;
+            // The previous implementation was slightly redundant.
+            // This simplified version directly uses the new, complete heuristics object.
             return {
                 ...(prevData || INITIAL_LAYOUT_DATA),
-                heuristics: { ...prevHeuristics, ...newHeuristics },
+                heuristics: newHeuristics,
             };
         });
     }, []);
@@ -306,9 +312,55 @@ export const useKicadManager = (props: UseKicadManagerProps) => {
         simulators.set_simulation_heuristics = (args: any) => ({ success: true, message: 'Simulation heuristics updated.', heuristics: args });
         simulators.generate_netlist = (args: any) => ({ success: true, message: '[SIM] Netlist generated.' });
         simulators.create_initial_pcb = (args: any) => ({ success: true, message: '[SIM] Initial PCB created.' });
-        simulators.create_board_outline = (args: any) => ({ success: true, message: '[SIM] Board outline created.', outline: args });
+        simulators.create_board_outline = (args: any) => {
+            const { shape, boardWidthMillimeters, boardHeightMillimeters, diameterMillimeters } = args;
+            const hasFixedWidth = boardWidthMillimeters !== undefined && boardWidthMillimeters !== null && boardWidthMillimeters > 0;
+            const hasFixedHeight = boardHeightMillimeters !== undefined && boardHeightMillimeters !== null && boardHeightMillimeters > 0;
+            const hasFixedDiameter = diameterMillimeters !== undefined && diameterMillimeters !== null && diameterMillimeters > 0;
+            const isAutoSize = !(hasFixedWidth || hasFixedHeight || hasFixedDiameter);
+
+            const width = boardWidthMillimeters || diameterMillimeters || (isAutoSize ? 1.6 : 50);
+            const height = boardHeightMillimeters || diameterMillimeters || (isAutoSize ? 1.6 : 50);
+
+            const newOutline = {
+                shape: shape || 'rectangle',
+                width: width,
+                height: height,
+                x: -width / 2,
+                y: -height / 2,
+                autoSize: isAutoSize,
+            };
+            
+            return { 
+                success: true, 
+                message: `[SIM] Board outline created. Shape: ${newOutline.shape}, Size: ${width}x${height}, AutoSize: ${isAutoSize}`,
+                board_outline: newOutline 
+            };
+        };
         simulators.create_copper_pour = (args: any) => ({ success: true, message: `[SIM] Copper pour for '${args.netName}' created.`, pour: { net: args.netName, layer: args.layerName } });
-        simulators.arrange_components = (args: any) => ({ success: true, message: '[SIM] Layout simulation triggered.' });
+        simulators.arrange_components = (args: any) => {
+            const currentData = layoutDataRef.current;
+            if (!currentData) {
+                throw new Error("[SIM] arrange_components failed: currentLayoutData is null.");
+            }
+            // Construct the data object that will be sent to the UI for the pause state.
+            // Crucially, this object does NOT include the 'heuristics' key, so it won't
+            // overwrite the existing heuristics when the state is updated.
+            const layout_data_for_pause = {
+                nodes: currentData.nodes,
+                edges: currentData.edges,
+                rules: currentData.rules,
+                copper_pours: currentData.copper_pours,
+                board_outline: currentData.board_outline,
+                layoutStrategy: args.layoutStrategy || 'agent',
+            };
+            return {
+                success: true,
+                message: '[SIM] Layout data extracted for arrangement.',
+                layout_data: layout_data_for_pause,
+                waitForUserInput: args.waitForUserInput === true,
+            };
+        };
         simulators.update_component_positions = (args: any) => ({ success: true, message: '[SIM] Component positions updated.' });
         simulators.autoroute_pcb = (args: any) => ({ success: true, message: '[SIM] Autorouting complete.', current_artifact: {title: "Routed PCB (Simulated)", path: 'assets/demo_routed.svg', svgPath: 'assets/demo_routed.svg'} });
         simulators.export_fabrication_files = (args: any) => ({ success: true, message: "[SIM] Fabrication files exported.", artifacts: { boardName: args.projectName, glbPath: `assets/demo_board.glb`, fabZipPath: `assets/demo_fab.zip` }});

@@ -15,7 +15,6 @@ export const ForceSimulationFunctionsString = `
                 const nodeA = this.nodeMap.get(idA), nodeB = this.nodeMap.get(idB);
                 if (!agentA || !agentB || !nodeA || !nodeB || nodeA.side !== nodeB.side) continue;
 
-                // --- THIS IS THE KEY CHANGE: Use DRC dimensions for soft repulsion ---
                 const { drcDims: dimsA } = this.getDrcInfo(nodeA);
                 const { drcDims: dimsB } = this.getDrcInfo(nodeB);
 
@@ -27,6 +26,14 @@ export const ForceSimulationFunctionsString = `
                 const distSq = dx * dx + dz * dz;
                 const radiiSum = radiusA + radiusB;
 
+                const anchorOfA = this.satelliteToAnchorMap.get(idA);
+                const anchorOfB = this.satelliteToAnchorMap.get(idB);
+                
+                let pushA = true;
+                let pushB = true;
+                if (anchorOfA === idB) pushB = false;
+                if (anchorOfB === idA) pushA = false;
+
                 if (distSq < (radiiSum * radiiSum) && distSq > 1e-6) {
                     const dist = Math.sqrt(distSq);
                     const overlap = radiiSum - dist;
@@ -35,10 +42,14 @@ export const ForceSimulationFunctionsString = `
                     const fx = (dx / dist) * forceMag;
                     const fz = (dz / dist) * forceMag;
                     
-                    agentA.force.x += fx;
-                    agentA.force.z += fz;
-                    agentB.force.x -= fx;
-                    agentB.force.z -= fz;
+                    if (pushA) {
+                        agentA.force.x += fx;
+                        agentA.force.z += fz;
+                    }
+                    if (pushB) {
+                        agentB.force.x -= fx;
+                        agentB.force.z -= fz;
+                    }
                 }
             }
         }
@@ -53,17 +64,27 @@ export const ForceSimulationFunctionsString = `
 
         const worldPositions = {};
         
-        const agentRotation = new this.THREE.Euler().setFromQuaternion(agent.rot, 'YXZ');
-        const angleRad = agentRotation.y;
-        
-        const cosA = Math.cos(angleRad);
-        const sinA = Math.sin(angleRad);
+        // The agent's rotation quaternion and position vector from the simulation state
+        const agentQuaternion = new this.THREE.Quaternion(agent.rot.x, agent.rot.y, agent.rot.z, agent.rot.w);
+        const agentPosition = new this.THREE.Vector3(agent.pos.x, agent.pos.y, agent.pos.z);
+
         pinMap.forEach((pin, pinName) => {
-            const localX = pin.x * this.SCALE;
-            const localZ = pin.y * this.SCALE;
-            const rotatedX = localX * cosA - localZ * sinA;
-            const rotatedZ = localX * sinA + localZ * cosA;
-            worldPositions[pinName] = { x: agent.pos.x + rotatedX, z: agent.pos.z + rotatedZ };
+            // Create a vector for the pin's local position.
+            // KiCad's Y-axis (down) maps to the simulation's negative Z-axis.
+            const localPinVector = new this.THREE.Vector3(
+                pin.x * this.SCALE,
+                0, // Pins are on the X-Z plane relative to the component center
+                -pin.y * this.SCALE 
+            );
+
+            // Apply the agent's rotation to the local pin position.
+            localPinVector.applyQuaternion(agentQuaternion);
+
+            // Add the agent's world position to get the pin's final world position.
+            const worldPinVector = localPinVector.add(agentPosition);
+            
+            // We only care about the X and Z for 2D layout forces.
+            worldPositions[pinName] = { x: worldPinVector.x, z: worldPinVector.z };
         });
         return worldPositions;
     }
@@ -76,63 +97,43 @@ export const ForceSimulationFunctionsString = `
         const K_SPRING = this.params.netLengthWeight; 
         if (!K_SPRING || K_SPRING === 0) return;
         const currentAgent = this.agents.get(agentId);
-        if (!currentAgent) return;
-    
-        const hasGndPour = this.graph?.copper_pours?.some(p => p.net && p.net.toLowerCase() === 'gnd');
+        const currentNode = this.nodeMap.get(agentId);
+        if (!currentAgent || !currentNode) return;
     
         (this.graph.edges || []).forEach(edge => {
-            const isGndEdge = edge.label && edge.label.toLowerCase() === 'gnd';
+            const [sourceComp, sourcePin] = edge.source.split('-');
+            const [targetComp, targetPin] = edge.target.split('-');
+            
+            let otherCompId = null, thisPinName = null, otherPinName = null;
+            if (sourceComp === agentId) {
+                otherCompId = targetComp; thisPinName = sourcePin; otherPinName = targetPin;
+            } else if (targetComp === agentId) {
+                otherCompId = sourceComp; thisPinName = targetPin; otherPinName = sourcePin;
+            }
     
-            if (isGndEdge && hasGndPour) {
-                // Ground Pour Attraction Logic
-                const K_GROUND_POUR = K_SPRING * 2; // Make it a bit stronger
-                let pinToProcess = null;
-                if (edge.source.startsWith(agentId + '-')) {
-                    pinToProcess = edge.source;
-                } else if (edge.target.startsWith(agentId + '-')) {
-                    pinToProcess = edge.target;
+            if (otherCompId && otherCompId !== agentId) {
+                const otherNode = this.nodeMap.get(otherCompId);
+                if (!otherNode) return;
+
+                // Asymmetrical force: only the smaller component is pulled.
+                const mySize = (currentNode.placeholder_dimensions?.width ?? 0) * (currentNode.placeholder_dimensions?.height ?? 0);
+                const otherSize = (otherNode.placeholder_dimensions?.width ?? 0) * (otherNode.placeholder_dimensions?.height ?? 0);
+
+                if (mySize > otherSize) {
+                    return; // This component is larger, so it acts as an anchor and is not pulled.
                 }
-    
-                if (pinToProcess) {
-                    const [comp, pin] = pinToProcess.split('-');
-                    const pinPos = allPinWorldPos[comp]?.[pin];
-                    if (pinPos) {
-                        const closestPoint = this.getClosestPointOnBoardOutline(pinPos);
-                        const dx = closestPoint.x - pinPos.x;
-                        const dz = closestPoint.z - pinPos.z;
-                        const fx = dx * K_GROUND_POUR;
-                        const fz = dz * K_GROUND_POUR;
-                        currentAgent.force.x += fx;
-                        currentAgent.force.z += fz;
-                        const forceMag = Math.hypot(fx, fz);
-                        currentAgent.lastForces['Ground Pour Attraction'] = (currentAgent.lastForces['Ground Pour Attraction'] || 0) + forceMag;
-                    }
-                }
-            } else {
-                // Standard Net Attraction Logic (for non-GND nets, or GND nets without a pour)
-                const [sourceComp, sourcePin] = edge.source.split('-');
-                const [targetComp, targetPin] = edge.target.split('-');
-                let otherCompId = null, thisPinName = null, otherPinName = null;
-    
-                if (sourceComp === agentId) {
-                    otherCompId = targetComp; thisPinName = sourcePin; otherPinName = targetPin;
-                } else if (targetComp === agentId) {
-                    otherCompId = sourceComp; thisPinName = targetPin; otherPinName = sourcePin;
-                }
-        
-                if (otherCompId && otherCompId !== agentId) {
-                    const thisPinPos = allPinWorldPos[agentId]?.[thisPinName];
-                    const otherPinPos = allPinWorldPos[otherCompId]?.[otherPinName];
-                    if (thisPinPos && otherPinPos) {
-                        const dx = otherPinPos.x - thisPinPos.x;
-                        const dz = otherPinPos.z - thisPinPos.z;
-                        const fx = dx * K_SPRING;
-                        const fz = dz * K_SPRING;
-                        currentAgent.force.x += fx;
-                        currentAgent.force.z += fz;
-                        const forceMag = Math.hypot(fx, fz);
-                        currentAgent.lastForces['Net Attraction Strength'] = (currentAgent.lastForces['Net Attraction Strength'] || 0) + forceMag;
-                    }
+
+                const thisPinPos = allPinWorldPos[agentId]?.[thisPinName];
+                const otherPinPos = allPinWorldPos[otherCompId]?.[otherPinName];
+                if (thisPinPos && otherPinPos) {
+                    const dx = otherPinPos.x - thisPinPos.x;
+                    const dz = otherPinPos.z - thisPinPos.z;
+                    const fx = dx * K_SPRING;
+                    const fz = dz * K_SPRING;
+                    currentAgent.force.x += fx;
+                    currentAgent.force.z += fz;
+                    const forceMag = Math.hypot(fx, fz);
+                    currentAgent.lastForces['Net Attraction'] = (currentAgent.lastForces['Net Attraction'] || 0) + forceMag;
                 }
             }
         });
@@ -276,16 +277,15 @@ export const ForceSimulationFunctionsString = `
         const nodeA = this.nodeMap.get(agentId);
         const nodeB = this.nodeMap.get(otherId);
         if (nodeA && nodeB) {
+            // Rotational part: Align rotations to be the same, not mirrored.
             const Kp_rot = this.params.symmetryRotationStrength * 100;
             const Kd_rot = Kp_rot / 10;
             const currentRotA = new this.THREE.Euler().setFromQuaternion(agentA.rot, 'YXZ').y;
             const currentRotB = new this.THREE.Euler().setFromQuaternion(agentB.rot, 'YXZ').y;
-            let targetAngleA;
-            if (axis === 'vertical') {
-                targetAngleA = Math.PI - currentRotB;
-            } else {
-                targetAngleA = -currentRotB;
-            }
+            
+            // The new logic: make their rotations equal.
+            const targetAngleA = currentRotB;
+
             let error = targetAngleA - currentRotA;
             while (error < -Math.PI) error += 2 * Math.PI;
             while (error > Math.PI) error -= 2 * Math.PI;
@@ -369,67 +369,70 @@ export const ForceSimulationFunctionsString = `
     }
 
     applyProximityForAgent(agentId, rule, allPinWorldPos) {
-        const K_PROXIMITY = this.params.proximityStrength;
-        const currentAgent = this.agents.get(agentId);
-        if (!currentAgent) return;
-
+        const K_PROXIMITY = this.params.proximityStrength * 10.0;
+        if (K_PROXIMITY === 0) return;
+    
+        const satelliteAgent = this.agents.get(agentId);
+        if (!satelliteAgent) return;
+    
         rule.groups.forEach(group => {
-            if (!group.includes(agentId)) return;
-
-            // New logic for simple pairs, e.g., ["U1", "C1"]
-            if (group.length === 2) {
-                const otherId = group[0] === agentId ? group[1] : group[0];
-                const otherAgent = this.agents.get(otherId);
-                if (!otherAgent) return;
-
-                let targetPos = null;
-                let foundConnection = false;
-
-                // Find a net that connects this agent to the other agent in the group
-                for (const edge of (this.graph.edges || [])) {
-                    const [sourceComp, sourcePin] = edge.source.split('-');
-                    const [targetComp, targetPin] = edge.target.split('-');
-
-                    if ((sourceComp === agentId && targetComp === otherId)) {
-                        targetPos = allPinWorldPos[otherId]?.[targetPin];
-                        foundConnection = true;
-                        break;
-                    }
-                    if ((targetComp === agentId && sourceComp === otherId)) {
-                        targetPos = allPinWorldPos[otherId]?.[sourcePin];
-                        foundConnection = true;
-                        break;
+            if (!Array.isArray(group) || group.length < 2 || !group.includes(agentId)) {
+                return;
+            }
+    
+            const anchorId = group[0];
+            // CRITICAL FIX: The force is only calculated for satellites. If the current agent is the anchor, do nothing.
+            if (agentId === anchorId) {
+                return;
+            }
+    
+            const anchorAgent = this.agents.get(anchorId);
+            if (!anchorAgent) return;
+    
+            let targetPoint, sourcePoint;
+            
+            // --- Pin-to-Pin Attraction (Primary) ---
+            const anchorPins = allPinWorldPos[anchorId] || {};
+            const satellitePins = allPinWorldPos[agentId] || {};
+            const sharedPinPairs = [];
+            (this.graph.edges || []).forEach(edge => {
+                const [sComp, sPin] = edge.source.split('-');
+                const [tComp, tPin] = edge.target.split('-');
+                if ((sComp === anchorId && tComp === agentId) || (sComp === agentId && tComp === anchorId)) {
+                    const anchorPinPos = (sComp === anchorId) ? anchorPins[sPin] : anchorPins[tPin];
+                    const satellitePinPos = (sComp === agentId) ? satellitePins[sPin] : satellitePins[tPin];
+                    if (anchorPinPos && satellitePinPos) {
+                        sharedPinPairs.push({ anchor: anchorPinPos, satellite: satellitePinPos });
                     }
                 }
-                
-                // If a specific pin connection is found, attract to that pin.
-                // Otherwise, fall back to attracting to the component center.
-                const finalTargetPos = foundConnection && targetPos ? targetPos : otherAgent.pos;
-
-                const dx = finalTargetPos.x - currentAgent.pos.x;
-                const dz = finalTargetPos.z - currentAgent.pos.z;
-                
-                const fx = dx * K_PROXIMITY;
-                const fz = dz * K_PROXIMITY;
-                currentAgent.force.x += fx;
-                currentAgent.force.z += fz;
-                currentAgent.lastForces['Proximity Strength'] = (currentAgent.lastForces['Proximity Strength'] || 0) + Math.hypot(fx, fz);
+            });
+    
+            if (sharedPinPairs.length > 0) {
+                // Average the positions of all connected pins to find a centroid target.
+                targetPoint = sharedPinPairs.reduce((acc, p) => ({ x: acc.x + p.anchor.x, z: acc.z + p.anchor.z }), { x: 0, z: 0 });
+                targetPoint.x /= sharedPinPairs.length;
+                targetPoint.z /= sharedPinPairs.length;
+                sourcePoint = sharedPinPairs.reduce((acc, p) => ({ x: acc.x + p.satellite.x, z: acc.z + p.satellite.z }), { x: 0, z: 0 });
+                sourcePoint.x /= sharedPinPairs.length;
+                sourcePoint.z /= sharedPinPairs.length;
             } else {
-                // Fallback for groups with more than 2 components (original logic)
-                group.forEach(otherId => {
-                    if (otherId === agentId) return;
-                    const otherAgent = this.agents.get(otherId);
-                    if (otherAgent) {
-                        const dx = otherAgent.pos.x - currentAgent.pos.x;
-                        const dz = otherAgent.pos.z - currentAgent.pos.z;
-                        const fx = dx * K_PROXIMITY;
-                        const fz = dz * K_PROXIMITY;
-                        currentAgent.force.x += fx;
-                        currentAgent.force.z += fz;
-                        currentAgent.lastForces['Proximity Strength'] = (currentAgent.lastForces['Proximity Strength'] || 0) + Math.hypot(fx, fz);
-                    }
-                });
+                // --- Center-to-Center Attraction (Fallback) ---
+                targetPoint = { x: anchorAgent.pos.x, z: anchorAgent.pos.z };
+                sourcePoint = { x: satelliteAgent.pos.x, z: satelliteAgent.pos.z };
             }
+    
+            const dx = targetPoint.x - sourcePoint.x;
+            const dz = targetPoint.z - sourcePoint.z;
+            
+            // Apply a simple spring-like force.
+            const fx = dx * K_PROXIMITY;
+            const fz = dz * K_PROXIMITY;
+            
+            // The force is ONLY applied to the satellite, ensuring the anchor is not pushed.
+            satelliteAgent.force.x += fx;
+            satelliteAgent.force.z += fz;
+            
+            satelliteAgent.lastForces['Proximity'] = (satelliteAgent.lastForces['Proximity'] || 0) + Math.hypot(fx, fz);
         });
     }
 

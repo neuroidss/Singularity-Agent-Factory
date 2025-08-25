@@ -1,8 +1,13 @@
 
+
 import React, { useMemo } from 'react';
 import type { LLMTool, UIToolRunnerProps } from '../types';
 import DebugLogView from './ui_tools/DebugLogView';
 import * as Icons from './icons';
+import { ALL_DATASHEETS } from '../bootstrap/datasheets';
+
+// Destructure the imported datasheets for use in the new Function scope
+const { ADS131M08_DATASHEET, LP5907_DATASHEET, XIAO_DATASHEET, ECS2520MV_DATASHEET } = ALL_DATASHEETS;
 
 // Tell TypeScript about the global Babel object from the script tag in index.html
 declare var Babel: any;
@@ -43,7 +48,7 @@ class ErrorBoundary extends React.Component<{ fallback: React.ReactNode, childre
   }
 }
 
-export const UIToolRunner: React.FC<UIToolRunnerComponentProps> = ({ tool, props }) => {
+const UIToolRunner: React.FC<UIToolRunnerComponentProps> = ({ tool, props }) => {
   // Memoize the compiled component to prevent re-compiling and re-mounting on every render,
   // which was causing the flickering and state loss in complex components like the interactive graph.
   const CompiledComponent = useMemo(() => {
@@ -77,8 +82,13 @@ export const UIToolRunner: React.FC<UIToolRunnerComponentProps> = ({ tool, props
       const iconNames = Object.keys(Icons);
       const iconComponents = Object.values(Icons);
       
-      const componentFactory = new Function('React', 'UIToolRunner', ...iconNames, `return ${transformedCode}`);
-      return componentFactory(React, UIToolRunner, ...iconComponents);
+      // Add datasheets to the function scope
+      const datasheets = { ADS131M08_DATASHEET, LP5907_DATASHEET, XIAO_DATASHEET, ECS2520MV_DATASHEET };
+      const datasheetNames = Object.keys(datasheets);
+      const datasheetValues = Object.values(datasheets);
+      
+      const componentFactory = new Function('React', 'UIToolRunner', ...iconNames, ...datasheetNames, `return ${transformedCode}`);
+      return componentFactory(React, UIToolRunner, ...iconComponents, ...datasheetValues);
 
     } catch (e) {
       console.error(`Error compiling UI tool '${tool.name}':`, e);
@@ -108,3 +118,5 @@ export const UIToolRunner: React.FC<UIToolRunnerComponentProps> = ({ tool, props
     </ErrorBoundary>
   );
 };
+
+export default UIToolRunner;

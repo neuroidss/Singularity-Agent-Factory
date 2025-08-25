@@ -1,0 +1,7 @@
+
+{
+  "componentName": "ECS-2520MV",
+  "question": "Provide a JSON object of all pin functions.",
+  "answer": "{\n  \"pinout\": [\n    {\"pin\": 1, \"name\": \"Tri-state\", \"type\": \"Input\", \"description\": \"Tri-state function control. Active when high or NC, High Impedance when low.\"},\n    {\"pin\": 2, \"name\": \"Gnd\", \"type\": \"Ground\", \"description\": \"Ground connection.\"},\n    {\"pin\": 3, \"name\": \"Output\", \"type\": \"Output\", \"description\": \"Clock signal output.\"},\n    {\"pin\": 4, \"name\": \"Vdd\", \"type\": \"Power\", \"description\": \"Power supply voltage.\"}\n  ]\n}",
+  "timestamp": "2024-07-28T12:00:02.000Z"
+}

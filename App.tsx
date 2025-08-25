@@ -1,7 +1,8 @@
 
+
 import React, { useState, useCallback, useMemo, useEffect, useRef } from 'react';
 import { CORE_TOOLS, AI_MODELS } from './constants';
-import { UIToolRunner } from './components/UIToolRunner';
+import UIToolRunner from './components/UIToolRunner';
 import { loadStateFromStorage, saveStateToStorage } from './versioning';
 import { EXAMPLE_PROMPTS, WORKFLOW_SCRIPTS } from './bootstrap/demo_presets';
 import { clearAllCaches, getAssetBlob, setAssetBlob } from './services/cacheService';
@@ -140,7 +141,13 @@ const App: React.FC = () => {
     useEffect(() => {
         if (swarmState.pauseState?.type === 'KICAD_LAYOUT') {
             const { data, isInteractive, projectName } = swarmState.pauseState;
-            kicadSetters.setCurrentLayoutData(data);
+            // When pausing for layout, the 'data' object from the tool does not contain
+            // the heuristics. We must use a functional update to merge the new layout data
+            // (nodes, edges) while preserving the existing heuristics from the previous state.
+            kicadSetters.setCurrentLayoutData(prevData => ({
+                ...(prevData || {}), // Preserve existing state like heuristics
+                ...data,             // Overwrite with the new layout-specific data
+            }));
             kicadSetters.setIsLayoutInteractive(isInteractive);
             kicadHandlers.setCurrentProjectName(projectName);
             appSetters.setMainView('KICAD');
@@ -200,7 +207,7 @@ const App: React.FC = () => {
             urls: [], // Add URL handling later if needed
             useSearch: appState.useSearch
         }, swarmHandlers.startSwarmTask, allTools, getKicadSystemPrompt);
-    }, [appState.userInput, appState.useSearch, kicadHandlers.handleStartKicadTask, swarmHandlers.startSwarmTask, logEvent, allTools, getKicadSystemPrompt]);
+    }, [appState.userInput, appState.useSearch, kicadHandlers, swarmHandlers, logEvent, allTools, getKicadSystemPrompt]);
 
     const handleResetTools = useCallback(async () => {
         if (!window.confirm('This will perform a full factory reset, deleting ALL custom tools, clearing all caches, and restoring the original toolset. This cannot be undone. Are you absolutely sure?')) {
@@ -394,6 +401,9 @@ const App: React.FC = () => {
         visibility: visibility,
         setVisibility: setVisibility,
     };
+    const datasheetReaderProps = {
+        runtime: executeActionRef.current ? executeActionRef.current.getRuntimeApiForAgent('datasheet-ui') : null
+    };
     
     const renderMainView = () => {
         if (kicadState.pcbArtifacts) {
@@ -462,6 +472,7 @@ const App: React.FC = () => {
                             {appState.mainView === 'KICAD' && <UIToolRunner tool={getTool('Visibility')} props={visibilityPanelProps} />}
                             {appState.mainView === 'ROBOTICS' && <UIToolRunner tool={getTool('Agent Control Panel')} props={agentControlProps} />}
                             <UIToolRunner tool={getTool('AI Model')} props={configProps} />
+                            <UIToolRunner tool={getTool('Datasheet Reader')} props={datasheetReaderProps} />
                             <UIToolRunner tool={getTool('Tool Selection Mode')} props={relevanceModeProps} />
                             {swarmState.relevanceMode === 'Embeddings' && <UIToolRunner tool={getTool('Embedding Filter')} props={relevanceConfigProps} />}
                             <UIToolRunner tool={getTool('Local AI Server Panel')} props={localAiServerProps} />

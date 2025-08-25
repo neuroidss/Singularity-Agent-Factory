@@ -42,10 +42,12 @@ const PCB_LAYOUT_TOOL: ToolCreatorPayload = {
         const simRef = React.useRef(null);
         const [isSimReady, setIsSimReady] = React.useState(false);
         const [isAutoCommitDone, setIsAutoCommitDone] = React.useState(false);
+        const [isCommitting, setIsCommitting] = React.useState(false);
 
         // When a new graph is passed in (a new layout task), reset the auto-commit state.
         React.useEffect(() => {
             setIsAutoCommitDone(false);
+            setIsCommitting(false);
         }, [graph]);
 
         // --- Initialization Effect (Runs Once) ---
@@ -175,6 +177,7 @@ const PCB_LAYOUT_TOOL: ToolCreatorPayload = {
 
         const handleCommit = React.useCallback(() => {
             if (onCommit && simRef.current?.sim) {
+                setIsCommitting(true);
                 const finalPositions = simRef.current.sim.getFinalPositions();
                 onCommit(finalPositions);
             }
@@ -203,6 +206,13 @@ const PCB_LAYOUT_TOOL: ToolCreatorPayload = {
             }
         }, [isLayoutInteractive, isAutoCommitDone, handleCommit, graph]);
         
+        const Spinner = () => (
+            <svg className="animate-spin h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+            </svg>
+        );
+
         return (
             <div className="bg-gray-900/50 border border-cyan-700/60 rounded-xl p-2 h-full flex flex-col relative">
                 <div ref={mountRef} className="w-full h-full bg-black/30 rounded overflow-hidden touch-none cursor-grab" />
@@ -211,6 +221,23 @@ const PCB_LAYOUT_TOOL: ToolCreatorPayload = {
                         <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-cyan-300"></div>
                         <p className="text-cyan-300 ml-3">Initializing 3D Engine...</p>
                    </div>
+                )}
+                {isLayoutInteractive && (
+                    <div className="absolute bottom-4 right-4 z-10">
+                        <button
+                          onClick={handleCommit}
+                          disabled={isCommitting}
+                          className="bg-green-600 hover:bg-green-700 text-white font-bold py-2 px-4 rounded-lg shadow-lg flex items-center gap-2 transition-colors disabled:bg-green-800 disabled:cursor-wait"
+                          aria-label="Commit layout and continue workflow"
+                        >
+                          {isCommitting ? <Spinner /> : (
+                            <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+                                <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
+                            </svg>
+                          )}
+                          {isCommitting ? 'Committing...' : 'Commit Layout & Continue'}
+                        </button>
+                    </div>
                 )}
             </div>
         );

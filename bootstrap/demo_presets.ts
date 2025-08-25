@@ -16,7 +16,7 @@ Here is the plan:
     *   Oscillator 'X1': '8.192MHz', footprint: 'freeeeg8-alpha:Oscillator_SMD_EuroQuartz_XO32-4Pin_3.2x2.5mm_RotB_HandSoldering', 4 pins.
     *   Capacitors: 'C1' (220nF), 'C2' (100nF), 'C3' & 'C4' (1uF), all footprint: 'Capacitor_SMD:C_0402_1005Metric', 2 pins each.
     *   LDO Caps: 'C5'-'C8' (2.2uF), footprint: 'Capacitor_SMD:C_0603_1608Metric', 2 pins each.
-    *   XIAO Headers 'J_XIAO_1', 'J_XIAO_2', footprint: 'Connector_PinHeader_2.54mm:PinHeader_1x07_P2.54mm_Vertical', 7 pins each.
+    *   XIAO Headers 'J_XIAO_1', 'J_XIAO_2', footprint: 'Connector_PinHeader_2.54mm:PinHeader_1x07_P2.54mm_Vertical_SMD_Pin1Right', 7 pins each.
     *   Pogo Pins 'J1'-'J10', footprint: 'freeeeg8-alpha:pogo_pin_d5x10mm_smd', 1 pin each, side: bottom.
 
 2.  **Net Definition:**
@@ -52,7 +52,9 @@ Here is the plan:
     *   Create proximity rules to place decoupling capacitors C1-C4 near ADC U1, C5-C6 near LDO U2, and C7-C8 near LDO U3.
 
 4.  **Board Generation:**
-    *   Generate netlist, create initial PCB, create a circular 26mm diameter outline.
+    *   4.1. Generate netlist.
+    *   4.2. Create initial PCB.
+    *   4.2. Create a circular 26mm diameter outline.
 
 5.  Arrange the components using the 'agent' arrangement strategy, which respects the defined layout rules, and wait for user input for final adjustments.
 6.  Autoroute the PCB.
