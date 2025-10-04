@@ -1,3 +1,5 @@
+// VIBE_NOTE: Do not escape backticks or dollar signs in template literals in this file.
+// Escaping is only for 'implementationCode' strings in tool definitions.
 import { Wllama } from '@wllama/wllama';
 import type { APIConfig } from '../types';
 

@@ -1,4 +1,6 @@
 // server/server.ts
+// VIBE_NOTE: Do not escape backticks or dollar signs in template literals in this file.
+// Escaping is only for 'implementationCode' strings in tool definitions.
 import express from 'express';
 import cors from 'cors';
 import fs from 'fs/promises';
@@ -15,23 +17,28 @@ const app = express();
 const PORT = 3001;
 const TOOLS_DB_PATH = path.join(__dirname, 'tools.json');
 const SCRIPTS_DIR = path.join(__dirname, 'scripts');
-const ASSETS_DIR = path.join(__dirname, 'assets');
+const ASSETS_DIR = path.join(__dirname, 'assets'); // Serve assets from the server's own directory
 
 // --- In-memory state ---
 let serverToolsCache: LLMTool[] = [];
-let gemmaProcess: ChildProcess | null = null;
-let kicadServiceProcess: ChildProcess | null = null;
-const KICAD_SERVICE_BASE_PORT = 8000;
 const KICAD_SERVICE_TIMEOUT = 600000; // 10 minutes for long-running tasks like autorouting
-let currentKicadServicePort: number | null = null;
-let gemmaLogs: string[] = [];
-const MAX_LOGS = 100;
+const MAX_LOGS = 200;
+
+// Generic process management
+const managedProcesses: Map<string, { process: ChildProcess; logs: string[]; scriptPath: string; port: number | null; type: 'node' | 'python' }> = new Map();
+const PYTHON_SERVICE_PORTS: Record<string, number> = {
+  'kicad_service': 8000,
+  'gamepad_service': 8001,
+  'gazebo_service': 8002,
+};
+
 
 // --- Middleware ---
 app.use(cors()); // Allow requests from the frontend
 app.use(express.json()); // Parse JSON bodies
-// Statically serve the scripts directory to allow frontend access to generated files
 app.use('/scripts', express.static(SCRIPTS_DIR));
+app.use('/assets', express.static(ASSETS_DIR));
+
 
 // --- Utility Functions ---
 const readToolsAndLoadCache = async (): Promise<LLMTool[]> => {
@@ -65,10 +72,10 @@ const generateMachineReadableId = (name: string, existingTools: LLMTool[]): stri
   return finalId;
 };
 
-const addLog = (log: string) => {
-    gemmaLogs.push(log);
-    if (gemmaLogs.length > MAX_LOGS) {
-        gemmaLogs.shift();
+const addLog = (logArray: string[], log: string) => {
+    logArray.push(log);
+    if (logArray.length > MAX_LOGS) {
+        logArray.shift();
     }
 };
 
@@ -85,8 +92,16 @@ const isPortFree = (port: number): Promise<boolean> => {
     });
 };
 
+const findFreePort = async (startPort: number): Promise<number> => {
+    let port = startPort;
+    while (!(await isPortFree(port))) {
+        port++;
+    }
+    return port;
+};
 
-const isKicadServiceHealthy = async (port: number): Promise<boolean> => {
+
+const isPythonServiceHealthy = async (port: number): Promise<boolean> => {
     try {
         const controller = new AbortController();
         const timeoutId = setTimeout(() => controller.abort(), 1000);
@@ -101,108 +116,77 @@ const isKicadServiceHealthy = async (port: number): Promise<boolean> => {
     }
 };
 
-const ensureKicadServiceIsReady = async (): Promise<{ success: boolean; message: string; error?: string }> => {
-    // 1. Check if the currently known service is healthy.
-    if (currentKicadServicePort && await isKicadServiceHealthy(currentKicadServicePort)) {
-        return { success: true, message: `KiCad Service is healthy on port ${currentKicadServicePort}.` };
+const ensurePythonServiceIsReady = async (processId: string, scriptPath: string): Promise<{ success: boolean; message: string; port?: number; error?: string }> => {
+    const existingProcess = managedProcesses.get(processId);
+
+    if (existingProcess && !existingProcess.process.killed && existingProcess.port && await isPythonServiceHealthy(existingProcess.port)) {
+        return { success: true, message: `Python Service '${processId}' is healthy on port ${existingProcess.port}.`, port: existingProcess.port };
     }
     
-    // 2. If not healthy or not running, find a new free port.
-    let newPort = KICAD_SERVICE_BASE_PORT;
-    while (!(await isPortFree(newPort))) {
-        newPort++;
-    }
-    console.log(`[INFO] Found free port for KiCad Service: ${newPort}`);
-
-    // 3. Clean up any old process handles we might have.
-    if (kicadServiceProcess) {
-        console.warn('[WARN] Killing previous (likely unresponsive) KiCad Service process handle...');
-        kicadServiceProcess.kill('SIGKILL');
-        kicadServiceProcess = null;
+    if (existingProcess && !existingProcess.process.killed) {
+        console.warn(`[WARN] Killing previous (likely unresponsive) service process for '${processId}'...`);
+        existingProcess.process.kill('SIGKILL');
+        // We don't delete from the map, the 'close' handler will manage it.
     }
 
     try {
-        // 4. Spawn a new process on the new free port.
-        console.log(`[INFO] Spawning new KiCad Service process on port ${newPort}...`);
+        const startPort = PYTHON_SERVICE_PORTS[processId] || 8003;
+        const port = await findFreePort(startPort);
+        const newLogs: string[] = [];
+        addLog(newLogs, `[MCP] Starting Python process '${processId}' on port ${port}...`);
+        
         const pythonExecutable = path.join(__dirname, '..', 'venv', 'bin', 'python');
-        const scriptPath = path.join(SCRIPTS_DIR, 'kicad_service.py');
+        const fullScriptPath = path.join(SCRIPTS_DIR, scriptPath);
         
-        const newProcess = spawn(pythonExecutable, [scriptPath], {
-            env: { ...process.env, KICAD_SERVICE_PORT: newPort.toString() }
-        });
-        kicadServiceProcess = newProcess;
-        
-        newProcess.stdout?.on('data', (data) => console.log(`[KiCad Service @ ${newPort}]: ${data.toString().trim()}`));
-        newProcess.stderr?.on('data', (data) => console.error(`[KiCad Service ERR @ ${newPort}]: ${data.toString().trim()}`));
-        
-        newProcess.on('close', (code) => {
-            console.log(`KiCad Service process on port ${newPort} exited with code ${code}`);
-            if (currentKicadServicePort === newPort) {
-                currentKicadServicePort = null;
-                kicadServiceProcess = null;
-            }
+        const newProcess = spawn(pythonExecutable, [fullScriptPath], {
+            cwd: SCRIPTS_DIR,
+            env: { ...process.env, PORT: port.toString() }
         });
 
-        // 5. Poll for healthiness on the new port.
-        const startTime = Date.now();
-        const timeout = 15000; // 15 seconds
-        while (Date.now() - startTime < timeout) {
-            if (await isKicadServiceHealthy(newPort)) {
-                console.log(`[INFO] New KiCad Service is now healthy on port ${newPort}.`);
-                currentKicadServicePort = newPort;
-                return { success: true, message: `KiCad Service started successfully on port ${newPort}.` };
+        managedProcesses.set(processId, { process: newProcess, logs: newLogs, scriptPath, port, type: 'python' });
+
+        newProcess.stdout?.on('data', (data) => addLog(newLogs, data.toString().trim()));
+        newProcess.stderr?.on('data', (data) => addLog(newLogs, `[ERR] ${data.toString().trim()}`));
+        newProcess.on('close', (code) => {
+            const pInfo = managedProcesses.get(processId);
+            if (pInfo) {
+                addLog(pInfo.logs, `[MCP] Process '${processId}' exited with code ${code}.`);
             }
-            if (!newProcess.pid) { // Process crashed during startup
-                 throw new Error("KiCad Service process exited prematurely during startup. Check service logs for errors.");
+        });
+        newProcess.on('error', (err) => {
+            addLog(newLogs, `[MCP FATAL] Failed to start '${processId}': ${err.message}`);
+        });
+
+        const startTime = Date.now();
+        const timeout = 15000;
+        while (Date.now() - startTime < timeout) {
+            if (await isPythonServiceHealthy(port)) {
+                console.log(`[INFO] New service '${processId}' is now healthy on port ${port}.`);
+                return { success: true, message: `Service '${processId}' started successfully on port ${port}.`, port };
+            }
+            if (newProcess.killed || newProcess.exitCode !== null) {
+                 throw new Error(`Service process for '${processId}' exited prematurely during startup.`);
             }
             await new Promise(resolve => setTimeout(resolve, 500));
         }
-
-        throw new Error(`KiCad Service failed to become healthy on port ${newPort} within ${timeout / 1000} seconds.`);
-
+        throw new Error(`Service '${processId}' failed to become healthy on port ${port} within ${timeout / 1000} seconds.`);
     } catch (e) {
         const err = e as Error;
-        if (kicadServiceProcess) {
-            kicadServiceProcess.kill('SIGKILL');
-            kicadServiceProcess = null;
+        const pInfo = managedProcesses.get(processId);
+        if (pInfo) {
+            addLog(pInfo.logs, `[MCP] Startup failed: ${err.message}`);
+            if (!pInfo.process.killed) pInfo.process.kill('SIGKILL');
         }
-        currentKicadServicePort = null;
-        return { success: false, message: `Failed to start KiCad Service: ${err.message}`, error: err.message };
+        return { success: false, message: `Failed to start service '${processId}': ${err.message}`, error: err.message };
     }
 };
 
 
 // --- API Endpoints ---
-
-// NEW: Explicitly serve files from the assets directory
-app.get('/assets/:filename', async (req, res) => {
-    try {
-        const { filename } = req.params;
-        // Security: Prevent directory traversal attacks
-        if (filename.includes('..') || path.isAbsolute(filename)) {
-            return res.status(400).send('Invalid filename.');
-        }
-        const filePath = path.join(ASSETS_DIR, filename);
-
-        // Check if file exists before attempting to send
-        await fs.access(filePath);
-        
-        // Let Express handle setting the correct Content-Type header
-        res.sendFile(filePath);
-    } catch (error) {
-        // This will now provide a clear log on the server side when an asset is not found.
-        console.error(`[ASSET SERVER] Error serving '${req.path}':`, error);
-        res.status(404).send('Asset not found');
-    }
-});
-
-
-// Get all server-side tools from the cache
 app.get('/api/tools', (req: express.Request, res: express.Response) => {
     res.json(serverToolsCache);
 });
 
-// Create a new server-side tool or update an existing one (upsert).
 app.post('/api/tools/create', async (req: express.Request, res: express.Response) => {
     try {
         const payload: NewToolPayload = req.body;
@@ -217,34 +201,17 @@ app.post('/api/tools/create', async (req: express.Request, res: express.Response
         const existingToolIndex = currentTools.findIndex(t => t.name === payload.name);
 
         if (existingToolIndex !== -1) {
-            // --- UPDATE EXISTING TOOL ---
             const existingTool = currentTools[existingToolIndex];
-            const updatedTool = {
-                ...existingTool,
-                ...payload, // Overwrite with new data from the payload
-                version: existingTool.version + 1, // Increment version on update
-                updatedAt: new Date().toISOString(),
-            };
+            const updatedTool = { ...existingTool, ...payload, version: existingTool.version + 1, updatedAt: new Date().toISOString() };
             currentTools[existingToolIndex] = updatedTool;
             await writeTools(currentTools);
-            serverToolsCache = currentTools; // Update the live cache
-
-            console.log(`[INFO] Tool '${payload.name}' updated to version ${updatedTool.version}.`);
+            serverToolsCache = currentTools;
             return res.status(200).json({ message: `Server tool '${payload.name}' updated successfully.`, tool: updatedTool });
         } else {
-            // --- CREATE NEW TOOL ---
-            const newTool: LLMTool = {
-                ...payload,
-                id: generateMachineReadableId(payload.name, currentTools),
-                version: 1,
-                createdAt: new Date().toISOString(),
-                updatedAt: new Date().toISOString(),
-            };
+            const newTool: LLMTool = { ...payload, id: generateMachineReadableId(payload.name, currentTools), version: 1, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), executionEnvironment: 'Server' };
             currentTools.push(newTool);
             await writeTools(currentTools);
-            serverToolsCache = currentTools; // Update the live cache
-            
-            console.log(`[INFO] New tool '${newTool.name}' created and loaded into memory.`);
+            serverToolsCache = currentTools;
             return res.status(201).json({ message: 'Server tool created successfully', tool: newTool });
         }
     } catch (error) {
@@ -253,172 +220,144 @@ app.post('/api/tools/create', async (req: express.Request, res: express.Response
     }
 });
 
-
-// --- Local AI Server Logic ---
-const startLocalAiServer = async () => {
-    if (gemmaProcess) {
-        throw new Error('Local AI server is already running.');
-    }
-    const scriptPath = path.join(SCRIPTS_DIR, 'gemma_server.py');
-    try {
-        await fs.access(scriptPath);
-    } catch (error) {
-        const message = 'Cannot start server: gemma_server.py does not exist. It must be created by an agent first.';
-        addLog(`[ERROR] ${message}`);
-        console.error(`[STARTUP_FAIL] Attempted to start local AI, but script was not found at ${scriptPath}`);
-        throw new Error(message);
-    }
-    
-    const pythonExecutable = path.join(__dirname, '..', 'venv', 'bin', 'python');
-    addLog('Starting local AI server...');
-    gemmaProcess = spawn(pythonExecutable, [scriptPath]);
-    
-    gemmaProcess.stdout?.on('data', (data) => addLog(data.toString().trim()));
-    gemmaProcess.stderr?.on('data', (data) => addLog(data.toString().trim()));
-    gemmaProcess.on('close', (code) => {
-        addLog(`Server process exited with code ${code}.`);
-        gemmaProcess = null;
-    });
-    gemmaProcess.on('error', (err) => {
-        addLog(`[FATAL] Failed to start server process: ${err.message}`);
-        gemmaProcess = null;
-    });
-    return { message: 'Local AI server process started.' };
-};
-
-const stopLocalAiServer = () => {
-     if (!gemmaProcess || !gemmaProcess.pid) {
-        throw new Error('Local AI server is not running.');
-    }
-    addLog('Stopping local AI server...');
-    gemmaProcess.kill('SIGTERM');
-    gemmaProcess = null;
-    return { message: 'Local AI server stop signal sent.' };
-};
-
-const getLocalAiServerStatus = () => {
-    return {
-        isRunning: gemmaProcess !== null && gemmaProcess.pid !== undefined,
-        pid: gemmaProcess?.pid,
-        logs: gemmaLogs,
-    };
-};
-
-
-// Execute a server-side tool or a special command
 app.post('/api/execute', async (req: express.Request, res: express.Response) => {
     const { name, arguments: args }: AIToolCall = req.body;
     if (!name) return res.status(400).json({ error: 'Tool name is required.' });
 
-    // Handle special, built-in server commands
     if (name === 'System_Reload_Tools') {
-        console.log('[COMMAND] Received System_Reload_Tools command. Re-reading tools.json...');
         await readToolsAndLoadCache();
         return res.json({ success: true, message: `Successfully reloaded ${serverToolsCache.length} tools from disk.` });
     }
     if (name === 'System_Reset_Server_Tools') {
-        console.log('[COMMAND] Received System_Reset_Server_Tools command. Deleting all custom tools...');
         try {
-            if (kicadServiceProcess) {
-                console.log('[COMMAND] Stopping KiCad service as part of reset...');
-                kicadServiceProcess.kill('SIGTERM');
-                kicadServiceProcess = null;
-                currentKicadServicePort = null;
+            if (managedProcesses.size > 0) {
+                managedProcesses.forEach(p_info => p_info.process.kill('SIGTERM'));
+                managedProcesses.clear();
             }
-            await writeTools([]); // Write an empty array to the file
-            serverToolsCache = []; // Clear the in-memory cache
+            await writeTools([]);
+            serverToolsCache = [];
             return res.json({ success: true, message: 'Successfully deleted all custom server-side tools and stopped services.' });
         } catch (error) {
-            const err = error as Error;
-            console.error('Error resetting server tools:', err.message);
             return res.status(500).json({ error: 'Failed to reset server tools on disk.' });
         }
     }
     
-    // --- KiCad Service Management ---
-    if (name === 'Start KiCad Service') {
-        const result = await ensureKicadServiceIsReady();
-        if (!result.success) {
-            return res.status(500).json({ error: result.error });
-        }
-        return res.json({ success: true, message: result.message });
-    }
-    if (name === 'Stop KiCad Service') {
-        if (!kicadServiceProcess) {
-             return res.status(400).json({ error: 'KiCad Service is not running or is unmanaged.' });
-        }
-        kicadServiceProcess.kill('SIGTERM');
-        kicadServiceProcess = null;
-        currentKicadServicePort = null;
-        return res.json({ success: true, message: 'KiCad Service stopped.' });
-    }
-
     const toolToExecute = serverToolsCache.find(t => t.name === name);
     if (!toolToExecute) return res.status(404).json({ error: `Server-side tool '${name}' not found in the live registry.` });
     
-    // --- KiCad Command Proxying ---
-    const PROXY_PREFIX = 'kicad_service_proxy::';
-    if (toolToExecute.implementationCode && String(toolToExecute.implementationCode).trim().startsWith(PROXY_PREFIX)) {
-        // This function now handles finding a port and starting the service if needed.
-        const startResult = await ensureKicadServiceIsReady();
-        if (!startResult.success || !currentKicadServicePort) {
-            console.error(`[ERROR] Failed to ensure KiCad service is ready: ${startResult.error}`);
-            return res.status(500).json({ error: `Failed to start or connect to the required KiCad Service: ${startResult.error}` });
+    const proxyMatch = String(toolToExecute.implementationCode).trim().match(/^([a-zA-Z0-9_]+)_proxy::(.+)$/);
+    if (proxyMatch) {
+        const serviceName = proxyMatch[1];
+        const commandName = proxyMatch[2];
+        const scriptPath = `${serviceName}.py`;
+        
+        const startResult = await ensurePythonServiceIsReady(serviceName, scriptPath);
+        if (!startResult.success || !startResult.port) {
+            return res.status(500).json({ error: `Failed to start or connect to the required service '${serviceName}': ${startResult.error}` });
         }
         
-        const commandName = toolToExecute.implementationCode.trim().substring(PROXY_PREFIX.length);
-        if (!commandName) {
-            return res.status(500).json({ error: `Could not parse command name from tool '${name}'.` });
-        }
-
         try {
-            const serviceResponse = await fetch(`http://127.0.0.1:${currentKicadServicePort}/command/${commandName}`, {
+            const bodyToSend = JSON.stringify(args || {});
+            const serviceResponse = await fetch(`http://127.0.0.1:${startResult.port}/command/${commandName}`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
-                body: JSON.stringify(args),
+                body: bodyToSend,
                 signal: AbortSignal.timeout(KICAD_SERVICE_TIMEOUT)
             });
 
-            const result = await serviceResponse.json();
+            // Handle non-JSON responses gracefully
+            const contentType = serviceResponse.headers.get("content-type");
+            if (!contentType || !contentType.includes("application/json")) {
+                const textResponse = await serviceResponse.text();
+                const errorMessage = `The '${serviceName}' service returned a non-JSON response (status ${serviceResponse.status}). This often indicates a server-side crash. Response: ${textResponse.substring(0, 500)}`;
+                 const pInfo = managedProcesses.get(serviceName);
+                if (pInfo) addLog(pInfo.logs, `[MCP] Non-JSON response received: ${textResponse}`);
+                return res.status(502).json({ error: errorMessage });
+            }
 
+            const result = await serviceResponse.json();
             if (!serviceResponse.ok) {
-                const detail = result.detail || { error: 'Unknown error from KiCad service' };
+                const detail = result.detail || { error: 'Unknown error from Python service' };
                 const errorMessage = typeof detail === 'string' ? detail : (detail.error || JSON.stringify(detail));
                 return res.status(serviceResponse.status).json({ error: errorMessage });
             }
             
-            const responseToClient = { success: true, ...result };
-            console.log(`[PROXY SUCCESS] Sending response to client for '${commandName}':`, JSON.stringify(responseToClient));
-            return res.json(responseToClient);
-
+            return res.json({ success: true, ...result });
         } catch (fetchError) {
             const err = fetchError as Error;
-            console.error(`Error proxying to KiCad Service on port ${currentKicadServicePort}:`, err);
-            // Invalidate the current service port since it failed
-            currentKicadServicePort = null;
-            return res.status(502).json({ error: `Could not connect to the KiCad Service. It may have crashed. Details: ${err.message}` });
+            return res.status(502).json({ error: `Could not connect to the '${serviceName}' service. It may have crashed. Details: ${err.message}` });
         }
     }
 
-    // Handle built-in server functions identified by special implementation code
     try {
         switch (toolToExecute.implementationCode) {
-            case 'start_local_ai':
-                const startResult = await startLocalAiServer();
-                return res.json({ success: true, ...startResult });
-            case 'stop_local_ai':
-                const stopResult = stopLocalAiServer();
-                return res.json({ success: true, ...stopResult });
-            case 'status_local_ai':
-                const statusResult = getLocalAiServerStatus();
-                return res.json({ success: true, message: "Status retrieved", ...statusResult });
+            case 'start_node_process': {
+                const { processId, scriptPath } = args;
+                if (!processId || !scriptPath) return res.status(400).json({ error: 'processId and scriptPath are required.' });
+                if (managedProcesses.has(processId) && !managedProcesses.get(processId)!.process.killed) {
+                    return res.status(400).json({ error: `Process with ID '${processId}' is already running.`});
+                }
+                
+                const fullScriptPath = path.join(SCRIPTS_DIR, scriptPath.replace(/^scripts\//, ''));
+                if (!fullScriptPath.startsWith(SCRIPTS_DIR)) return res.status(400).json({ error: "Invalid script path." });
+                await fs.access(fullScriptPath);
+
+                const port = await findFreePort(4001);
+                const newLogs: string[] = [];
+                addLog(newLogs, `[MCP] Starting process '${processId}' on port ${port}...`);
+                const newProcess = spawn('node', ['--loader', 'ts-node/esm', fullScriptPath], { 
+                    cwd: __dirname,
+                    env: { ...process.env, PORT: port.toString(), SHARD_ID: processId }
+                });
+
+                managedProcesses.set(processId, { process: newProcess, logs: newLogs, scriptPath, port, type: 'node' });
+
+                newProcess.stdout?.on('data', (data) => addLog(newLogs, `[${processId}] ${data.toString().trim()}`));
+                newProcess.stderr?.on('data', (data) => addLog(newLogs, `[${processId} ERR] ${data.toString().trim()}`));
+                newProcess.on('close', (code) => {
+                     const pInfo = managedProcesses.get(processId);
+                     if (pInfo) addLog(pInfo.logs, `[MCP] Process '${processId}' exited with code ${code}.`);
+                });
+                newProcess.on('error', (err) => {
+                    addLog(newLogs, `[MCP FATAL] Failed to start '${processId}': ${err.message}`);
+                });
+                
+                return res.json({ success: true, message: `Process '${processId}' started on port ${port}.`, processId, port });
+            }
+            case 'start_python_process': {
+                const { processId, scriptPath } = args;
+                if (!processId || !scriptPath) return res.status(400).json({ error: 'processId and scriptPath are required.' });
+                
+                const result = await ensurePythonServiceIsReady(processId, scriptPath);
+                if (result.success) {
+                    return res.json({ success: true, message: result.message, processId, port: result.port });
+                } else {
+                    return res.status(500).json({ error: result.error });
+                }
+            }
+            case 'stop_process': {
+                const { processId } = args;
+                const p_info = managedProcesses.get(processId);
+                if (!p_info || p_info.process.killed) return res.status(404).json({ error: `Process with ID '${processId}' not found or already stopped.`});
+                p_info.process.kill('SIGTERM');
+                // We don't delete it from the map. The 'close' event handler will log its exit,
+                // and it will remain in the list as "not running" for log inspection.
+                return res.json({ success: true, message: `Stop signal sent to process '${processId}'.` });
+            }
+            case 'list_managed_processes': {
+                const processList = Array.from(managedProcesses.entries()).map(([id, p_info]) => ({
+                    processId: id, scriptPath: p_info.scriptPath, 
+                    isRunning: p_info.process.pid !== null && p_info.process.exitCode === null && !p_info.process.killed,
+                    pid: p_info.process.pid, port: p_info.port, logs: p_info.logs, type: p_info.type,
+                }));
+                return res.json({ success: true, processes: processList });
+            }
         }
     } catch(e) {
         const errorMessage = e instanceof Error ? e.message : 'Unknown error during built-in command execution.';
         return res.status(500).json({ error: errorMessage });
     }
     
-    // Handle user-defined shell commands
     let command = toolToExecute.implementationCode;
     if (args) {
         for (const key in args) {
@@ -432,55 +371,45 @@ app.post('/api/execute', async (req: express.Request, res: express.Response) => 
     }
 
     if (command.startsWith('python ')) {
-        command = path.join('venv', 'bin', 'python') + command.substring('python'.length);
+        command = path.join('..', 'venv', 'bin', 'python') + command.substring('python'.length);
     }
 
-    exec(command, { timeout: 300000, cwd: __dirname }, (error, stdout, stderr) => { // 5 minute timeout
+    exec(command, { timeout: 300000, cwd: SCRIPTS_DIR }, (error, stdout, stderr) => {
         if (error) {
-            console.error(`Exec error for tool '${name}':`, { command, error: error.message, stdout, stderr });
             let detailedError = `Tool execution failed: ${error.message}`;
             if (stdout && stdout.trim()) {
                 try {
                     const parsedStdout = JSON.parse(stdout);
-                    if (parsedStdout.error) {
-                        detailedError = parsedStdout.error;
-                    } else {
-                        detailedError = stdout.trim();
-                    }
-                } catch (e) {
-                    detailedError = stdout.trim();
-                }
+                    detailedError = parsedStdout.error || stdout.trim();
+                } catch (e) { detailedError = stdout.trim(); }
             } else if (stderr && stderr.trim()) {
                 detailedError = stderr.trim();
             }
-            
             return res.status(500).json({ error: detailedError, stdout, stderr });
         }
         res.json({ success: true, message: `Tool '${name}' executed successfully.`, stdout, stderr });
     });
 });
 
-// Create/write a file on the server
 app.post('/api/files/write', async (req: express.Request, res: express.Response) => {
     try {
-        const { filePath, content } = req.body;
+        const { filePath, content, baseDir } = req.body;
         if (!filePath || typeof content !== 'string') {
             return res.status(400).json({ error: "Missing 'filePath' or 'content'." });
         }
+        const targetBaseDir = (baseDir === 'assets') ? ASSETS_DIR : SCRIPTS_DIR;
         const safeFileName = path.normalize(filePath).replace(/^(\.\.(\/|\\|$))+/, '');
         if (safeFileName.includes('..')) {
            return res.status(400).json({ error: "Invalid file path (directory traversal detected)." });
         }
-        const fullPath = path.join(SCRIPTS_DIR, safeFileName);
-        
-        if (!fullPath.startsWith(SCRIPTS_DIR)) {
-            return res.status(400).json({ error: "Invalid file path (resolved outside scripts directory)." });
+        const fullPath = path.join(targetBaseDir, safeFileName);
+        if (!fullPath.startsWith(targetBaseDir)) {
+            return res.status(400).json({ error: `Invalid file path (resolved outside '${baseDir || 'scripts'}' directory).` });
         }
-
+        await fs.mkdir(path.dirname(fullPath), { recursive: true });
         await fs.writeFile(fullPath, content);
-        res.status(201).json({ success: true, message: `File '${safeFileName}' written successfully.` });
+        res.status(201).json({ success: true, message: `File '${safeFileName}' written successfully to '${baseDir || 'scripts'}' directory.` });
     } catch (error) {
-        console.error('Error writing file:', error);
         res.status(500).json({ error: 'Internal Server Error while writing file.' });
     }
 });
@@ -488,11 +417,8 @@ app.post('/api/files/write', async (req: express.Request, res: express.Response)
 // --- Server Start ---
 app.listen(PORT, async () => {
     console.log(`Singularity Agent Factory Backend Server listening on http://localhost:${PORT}`);
-    console.log('This server allows the AI to execute local commands and write files.');
-    
     await fs.mkdir(SCRIPTS_DIR, { recursive: true });
     await fs.mkdir(ASSETS_DIR, { recursive: true });
-    
     await readToolsAndLoadCache();
     console.warn('SECURITY WARNING: This server can execute arbitrary code. Do not expose it to the internet.');
 });

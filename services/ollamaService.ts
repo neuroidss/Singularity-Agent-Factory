@@ -1,5 +1,5 @@
-
-
+// VIBE_NOTE: Do not escape backticks or dollar signs in template literals in this file.
+// Escaping is only for 'implementationCode' strings in tool definitions.
 import type { APIConfig, LLMTool, AIResponse, AIToolCall } from "../types";
 
 const OLLAMA_TIMEOUT = 600000; // 10 minutes
@@ -158,18 +158,24 @@ export const generateText = async (
     userInput: string,
     systemInstruction: string,
     modelId: string,
-    apiConfig: APIConfig
+    apiConfig: APIConfig,
+    files: { type: string, data: string }[] = []
 ): Promise<string> => {
     const { ollamaHost } = apiConfig;
     if (!ollamaHost) {
         throw new Error("Ollama Host URL is not configured. Please set it in the API Configuration.");
     }
 
+    const userMessage: any = { role: 'user', content: userInput };
+    if (files.length > 0) {
+        userMessage.images = files.map(f => f.data);
+    }
+
     const body = {
         model: modelId,
         messages: [
             { role: 'system', content: systemInstruction },
-            { role: 'user', content: userInput }
+            userMessage
         ],
         stream: false,
         options: {

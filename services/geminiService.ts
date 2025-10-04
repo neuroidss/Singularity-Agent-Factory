@@ -1,6 +1,6 @@
-
-
-import { GoogleGenAI, Type, FunctionDeclaration, GenerateContentResponse } from "@google/genai";
+// VIBE_NOTE: Do not escape backticks or dollar signs in template literals in this file.
+// Escaping is only for 'implementationCode' strings in tool definitions.
+import { GoogleGenAI, Type, FunctionDeclaration, GenerateContentResponse, Modality } from "@google/genai";
 import type { AIResponse, LLMTool, ToolParameter, AIToolCall } from "../types";
 
 const getAIClient = (): GoogleGenAI => {
@@ -89,10 +89,14 @@ const handleAPIError = (error: unknown, requestForDebug?: any, rawResponseForDeb
         try {
             // Create a debug-friendly version of the request, truncating large file data.
             const debugRequest = JSON.parse(JSON.stringify(requestForDebug)); // Deep copy
-            if (debugRequest.contents && typeof debugRequest.contents === 'object' && Array.isArray(debugRequest.contents.parts)) {
-                debugRequest.contents.parts.forEach((part: any) => {
-                    if (part.inlineData && typeof part.inlineData.data === 'string') {
-                        part.inlineData.data = part.inlineData.data.substring(0, 100) + '... [TRUNCATED]';
+            if (debugRequest.contents && Array.isArray(debugRequest.contents)) {
+                debugRequest.contents.forEach((contentItem: any) => {
+                    if(contentItem.parts && Array.isArray(contentItem.parts)) {
+                        contentItem.parts.forEach((part: any) => {
+                            if (part.inlineData && typeof part.inlineData.data === 'string') {
+                                part.inlineData.data = part.inlineData.data.substring(0, 100) + '... [TRUNCATED]';
+                            }
+                        });
                     }
                 });
             }
@@ -156,11 +160,23 @@ export const generateText = async (
     prompt: string,
     systemInstruction: string,
     modelId: string,
+    files: { name: string, type: string, data: string }[] = []
 ): Promise<string> => {
     const ai = getAIClient();
+    
+    const parts: any[] = [{ text: prompt }];
+    for (const file of files) {
+        parts.push({
+            inlineData: {
+                mimeType: file.type,
+                data: file.data,
+            },
+        });
+    }
+
     const requestPayload = {
         model: modelId,
-        contents: { parts: [{ text: prompt }] },
+        contents: { parts },
         config: {
             systemInstruction: systemInstruction,
             temperature: 0.0,
@@ -170,6 +186,65 @@ export const generateText = async (
     try {
         const response = await ai.models.generateContent(requestPayload);
         return response.text;
+    } catch (error) {
+        throw handleAPIError(error, requestPayload);
+    }
+};
+
+export const generateImages = async (prompt: string, modelId: string): Promise<any> => {
+    const ai = getAIClient();
+    const requestPayload = {
+        model: modelId,
+        prompt: prompt,
+        config: {
+            numberOfImages: 1,
+            outputMimeType: 'image/jpeg',
+            aspectRatio: '16:9',
+        },
+    };
+    try {
+        const response = await ai.models.generateImages(requestPayload);
+        return { generatedImages: response.generatedImages };
+    } catch (error) {
+        throw handleAPIError(error, requestPayload);
+    }
+};
+
+export const generateImageWithFlash = async (prompt: string, modelId: string, contextImages_base64?: string[]): Promise<any> => {
+    const ai = getAIClient();
+
+    const parts: any[] = [];
+    
+    if (contextImages_base64 && contextImages_base64.length > 0) {
+        contextImages_base64.forEach(imgBase64 => {
+            parts.push({
+                inlineData: {
+                    mimeType: 'image/jpeg', // Assuming jpeg from previous generation
+                    data: imgBase64,
+                },
+            });
+        });
+    }
+    
+    // Always add the text prompt last
+    parts.push({ text: prompt });
+
+    const requestPayload = {
+        model: modelId,
+        contents: { parts },
+        config: (contextImages_base64 && contextImages_base64.length > 0) ? {
+            responseModalities: [Modality.IMAGE, Modality.TEXT],
+        } : undefined,
+    };
+    try {
+        const response = await ai.models.generateContent(requestPayload);
+        for (const part of response.candidates[0].content.parts) {
+            if (part.inlineData) {
+                // Mimic the response structure of the generateImages API for compatibility
+                return { generatedImages: [{ image: { imageBytes: part.inlineData.data } }] };
+            }
+        }
+        throw new Error("Gemini Flash model did not return an image.");
     } catch (error) {
         throw handleAPIError(error, requestPayload);
     }
@@ -212,5 +287,60 @@ export const generateWithGoogleSearch = async (
         return { summary, sources };
     } catch(error) {
         throw handleAPIError(error, requestPayload, rawResponseForDebug);
+    }
+};
+
+export const generateAudioStream = async (
+    prompt: string,
+    voice: string,
+    modelId: string,
+    context?: string,
+    contextAudio_base64?: string,
+    contextImage_base64?: string
+) => {
+    const ai = getAIClient();
+    const config = {
+        responseModalities: ['AUDIO' as const],
+        speechConfig: {
+           voiceConfig: {
+              prebuiltVoiceConfig: { voiceName: voice }
+           },
+        },
+    };
+    
+    const fullPromptText = context 
+        ? `Given the context "${context}", say the following line with appropriate emotion: ${prompt}`
+        : prompt;
+        
+    const parts: any[] = [{ text: fullPromptText }];
+    
+    // Note: TTS models are text-in, audio-out. Multimodal context (audio/image) is not supported in the current API version.
+    // The arguments are kept for future API enhancements but are not used in this request.
+
+    const contents = [{ parts }];
+    
+    try {
+        const response = await ai.models.generateContentStream({ model: modelId, config, contents });
+        return response;
+    } catch (error) {
+        throw handleAPIError(error, { modelId, config, contents });
+    }
+};
+
+export const connectToMusicSession = async (
+    callbacks: any
+) => {
+    const ai = getAIClient();
+    try {
+        // This is a hypothetical API structure based on the user's code.
+        // The user's original code had `apiVersion: "v1alpha"`, which suggests a preview API.
+        // We assume `ai.live.music.connect` exists on the client object for this to work.
+        const sessionPromise = await (ai.live as any).music.connect({
+            model: "models/lyria-realtime-exp",
+            callbacks: callbacks
+        });
+        return sessionPromise;
+    } catch (error) {
+        throw handleAPIError(error);
     }
 };

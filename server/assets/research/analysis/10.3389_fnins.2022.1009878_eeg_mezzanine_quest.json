@@ -1,0 +1,81 @@
+{
+  "lore": {
+    "title": "Recipe: Phylactery of True Sight",
+    "description": "An artifact that binds to a XIAO-series Golem Core, granting it the ability to translate the subtle electrical whispers of the mind into coherent data. This recipe, discovered in an ancient tome, details the construction of a stackable mezzanine board, enabling advanced brain-computer interface functions.",
+    "lore_hint": "This is a single phylactery, a mere scale of the beast. Legends speak of linking multiple phylacteries into a powerful Mind-Matrix, much like the interlocking scales of the mythical Pangolin."
+  },
+  "reagents": [
+    {
+      "componentReference": "U1", "componentDescription": "8-Channel ADC", "componentValue": "ADS131M08", "footprintIdentifier": "Package_QFP:LQFP-32_5x5mm_P0.5mm", "numberOfPins": 32, "side": "top", "exportSVG": true, "exportGLB": true, "pinConnections": "[{\"pin\":29,\"net\":\"AIN0P\"},{\"pin\":32,\"net\":\"AIN1P\"},{\"pin\":1,\"net\":\"AIN2P\"},{\"pin\":4,\"net\":\"AIN3P\"},{\"pin\":5,\"net\":\"AIN4P\"},{\"pin\":8,\"net\":\"AIN5P\"},{\"pin\":9,\"net\":\"AIN6P\"},{\"pin\":12,\"net\":\"AIN7P\"},{\"pin\":2,\"net\":\"AINREF\"},{\"pin\":3,\"net\":\"AINREF\"},{\"pin\":6,\"net\":\"AINREF\"},{\"pin\":7,\"net\":\"AINREF\"},{\"pin\":10,\"net\":\"AINREF\"},{\"pin\":11,\"net\":\"AINREF\"},{\"pin\":30,\"net\":\"AINREF\"},{\"pin\":31,\"net\":\"AINREF\"},{\"pin\":13,\"net\":\"GND\"},{\"pin\":25,\"net\":\"GND\"},{\"pin\":28,\"net\":\"GND\"},{\"pin\":24,\"net\":\"CAP\"},{\"pin\":14,\"net\":\"REFIN\"},{\"pin\":15,\"net\":\"AVDD\"},{\"pin\":26,\"net\":\"DVDD\"},{\"pin\":16,\"net\":\"SYNC/RESET\"},{\"pin\":17,\"net\":\"CS\"},{\"pin\":18,\"net\":\"DRDY\"},{\"pin\":19,\"net\":\"SCLK\"},{\"pin\":20,\"net\":\"DOUT\"},{\"pin\":21,\"net\":\"DIN\"},{\"pin\":23,\"net\":\"XTAL1/CLKIN\"}]"
+    },
+    {
+      "componentReference": "U2", "componentDescription": "3.3V LDO Voltage Regulator", "componentValue": "LP5907QMFX-3.3Q1", "footprintIdentifier": "Package_TO_SOT_SMD:SOT-23-5", "numberOfPins": 5, "side": "top", "exportSVG": true, "exportGLB": true, "pinConnections": "[{\"pin\":2,\"net\":\"GND\"},{\"pin\":5,\"net\":\"AVDD\"},{\"pin\":1,\"net\":\"5V\"},{\"pin\":3,\"net\":\"5V\"}]"
+    },
+    {
+      "componentReference": "U3", "componentDescription": "3.3V LDO Voltage Regulator", "componentValue": "LP5907QMFX-3.3Q1", "footprintIdentifier": "Package_TO_SOT_SMD:SOT-23-5", "numberOfPins": 5, "side": "top", "exportSVG": true, "exportGLB": true, "pinConnections": "[{\"pin\":2,\"net\":\"GND\"},{\"pin\":5,\"net\":\"DVDD\"},{\"pin\":1,\"net\":\"5V\"},{\"pin\":3,\"net\":\"5V\"}]"
+    },
+    {
+      "componentReference": "X1", "componentDescription": "8.192MHz Oscillator", "componentValue": "8.192MHz", "footprintIdentifier": "freeeeg8-alpha:Oscillator_SMD_EuroQuartz_XO32-4Pin_3.2x2.5mm_RotB_HandSoldering", "numberOfPins": 4, "side": "top", "exportSVG": true, "exportGLB": true, "pinConnections": "[{\"pin\":2,\"net\":\"GND\"},{\"pin\":4,\"net\":\"DVDD\"},{\"pin\":3,\"net\":\"XTAL1/CLKIN\"}]"
+    },
+    {
+      "componentReference": "C1", "componentDescription": "220nF Ceramic Capacitor", "componentValue": "220nF", "footprintIdentifier": "Capacitor_SMD:C_0402_1005Metric", "numberOfPins": 2, "side": "top", "exportSVG": true, "exportGLB": true, "pinConnections": "[{\"pin\":1,\"net\":\"GND\"},{\"pin\":2,\"net\":\"CAP\"}]"
+    },
+    {
+      "componentReference": "C2", "componentDescription": "100nF Ceramic Capacitor", "componentValue": "100nF", "footprintIdentifier": "Capacitor_SMD:C_0402_1005Metric", "numberOfPins": 2, "side": "top", "exportSVG": true, "exportGLB": true, "pinConnections": "[{\"pin\":1,\"net\":\"GND\"},{\"pin\":2,\"net\":\"REFIN\"}]"
+    },
+    {
+      "componentReference": "C3", "componentDescription": "1uF Ceramic Capacitor", "componentValue": "1uF", "footprintIdentifier": "Capacitor_SMD:C_0402_1005Metric", "numberOfPins": 2, "side": "top", "exportSVG": true, "exportGLB": true, "pinConnections": "[{\"pin\":2,\"net\":\"GND\"},{\"pin\":1,\"net\":\"AVDD\"}]"
+    },
+    {
+      "componentReference": "C4", "componentDescription": "1uF Ceramic Capacitor", "componentValue": "1uF", "footprintIdentifier": "Capacitor_SMD:C_0402_1005Metric", "numberOfPins": 2, "side": "top", "exportSVG": true, "exportGLB": true, "pinConnections": "[{\"pin\":2,\"net\":\"GND\"},{\"pin\":1,\"net\":\"DVDD\"}]"
+    },
+    {
+      "componentReference": "C5", "componentDescription": "2.2uF Ceramic Capacitor", "componentValue": "2.2uF", "footprintIdentifier": "Capacitor_SMD:C_0603_1608Metric", "numberOfPins": 2, "side": "top", "exportSVG": true, "exportGLB": true, "pinConnections": "[{\"pin\":2,\"net\":\"GND\"},{\"pin\":1,\"net\":\"AVDD\"}]"
+    },
+    {
+      "componentReference": "C6", "componentDescription": "2.2uF Ceramic Capacitor", "componentValue": "2.2uF", "footprintIdentifier": "Capacitor_SMD:C_0603_1608Metric", "numberOfPins": 2, "side": "top", "exportSVG": true, "exportGLB": true, "pinConnections": "[{\"pin\":1,\"net\":\"GND\"},{\"pin\":2,\"net\":\"5V\"}]"
+    },
+    {
+      "componentReference": "C7", "componentDescription": "2.2uF Ceramic Capacitor", "componentValue": "2.2uF", "footprintIdentifier": "Capacitor_SMD:C_0603_1608Metric", "numberOfPins": 2, "side": "top", "exportSVG": true, "exportGLB": true, "pinConnections": "[{\"pin\":1,\"net\":\"GND\"},{\"pin\":2,\"net\":\"DVDD\"}]"
+    },
+    {
+      "componentReference": "C8", "componentDescription": "2.2uF Ceramic Capacitor", "componentValue": "2.2uF", "footprintIdentifier": "Capacitor_SMD:C_0603_1608Metric", "numberOfPins": 2, "side": "top", "exportSVG": true, "exportGLB": true, "pinConnections": "[{\"pin\":2,\"net\":\"GND\"},{\"pin\":1,\"net\":\"5V\"}]"
+    },
+    {
+      "componentReference": "J1", "componentDescription": "Pogo Pin Electrode", "componentValue": "POGO", "footprintIdentifier": "freeeeg8-alpha:pogo_pin_d5x10mm_smd", "numberOfPins": 1, "side": "bottom", "exportSVG": true, "exportGLB": false, "pinConnections": "[{\"pin\":1,\"net\":\"AIN0P\"}]"
+    },
+    {
+      "componentReference": "J2", "componentDescription": "Pogo Pin Electrode", "componentValue": "POGO", "footprintIdentifier": "freeeeg8-alpha:pogo_pin_d5x10mm_smd", "numberOfPins": 1, "side": "bottom", "exportSVG": true, "exportGLB": false, "pinConnections": "[{\"pin\":1,\"net\":\"AIN1P\"}]"
+    },
+    {
+      "componentReference": "J3", "componentDescription": "Pogo Pin Electrode", "componentValue": "POGO", "footprintIdentifier": "freeeeg8-alpha:pogo_pin_d5x10mm_smd", "numberOfPins": 1, "side": "bottom", "exportSVG": true, "exportGLB": false, "pinConnections": "[{\"pin\":1,\"net\":\"AIN2P\"}]"
+    },
+    {
+      "componentReference": "J4", "componentDescription": "Pogo Pin Electrode", "componentValue": "POGO", "footprintIdentifier": "freeeeg8-alpha:pogo_pin_d5x10mm_smd", "numberOfPins": 1, "side": "bottom", "exportSVG": true, "exportGLB": false, "pinConnections": "[{\"pin\":1,\"net\":\"AIN3P\"}]"
+    },
+    {
+      "componentReference": "J5", "componentDescription": "Pogo Pin Electrode", "componentValue": "POGO", "footprintIdentifier": "freeeeg8-alpha:pogo_pin_d5x10mm_smd", "numberOfPins": 1, "side": "bottom", "exportSVG": true, "exportGLB": false, "pinConnections": "[{\"pin\":1,\"net\":\"AIN4P\"}]"
+    },
+    {
+      "componentReference": "J6", "componentDescription": "Pogo Pin Electrode", "componentValue": "POGO", "footprintIdentifier": "freeeeg8-alpha:pogo_pin_d5x10mm_smd", "numberOfPins": 1, "side": "bottom", "exportSVG": true, "exportGLB": false, "pinConnections": "[{\"pin\":1,\"net\":\"AIN5P\"}]"
+    },
+    {
+      "componentReference": "J7", "componentDescription": "Pogo Pin Electrode", "componentValue": "POGO", "footprintIdentifier": "freeeeg8-alpha:pogo_pin_d5x10mm_smd", "numberOfPins": 1, "side": "bottom", "exportSVG": true, "exportGLB": false, "pinConnections": "[{\"pin\":1,\"net\":\"AIN6P\"}]"
+    },
+    {
+      "componentReference": "J8", "componentDescription": "Pogo Pin Electrode", "componentValue": "POGO", "footprintIdentifier": "freeeeg8-alpha:pogo_pin_d5x10mm_smd", "numberOfPins": 1, "side": "bottom", "exportSVG": true, "exportGLB": false, "pinConnections": "[{\"pin\":1,\"net\":\"AIN7P\"}]"
+    },
+    {
+      "componentReference": "J9", "componentDescription": "Pogo Pin Electrode", "componentValue": "POGO", "footprintIdentifier": "freeeeg8-alpha:pogo_pin_d5x10mm_smd", "numberOfPins": 1, "side": "bottom", "exportSVG": true, "exportGLB": false, "pinConnections": "[{\"pin\":1,\"net\":\"AINREF\"}]"
+    },
+    {
+      "componentReference": "J10", "componentDescription": "Pogo Pin Electrode", "componentValue": "POGO", "footprintIdentifier": "freeeeg8-alpha:pogo_pin_d5x10mm_smd", "numberOfPins": 1, "side": "bottom", "exportSVG": true, "exportGLB": false, "pinConnections": "[{\"pin\":1,\"net\":\"GND\"}]"
+    },
+    {
+      "componentReference": "J_XIAO_1", "componentDescription": "XIAO Header", "componentValue": "XIAO_HEADER", "footprintIdentifier": "Connector_PinHeader_2.54mm:PinHeader_1x07_P2.54mm_Vertical_SMD_Pin1Right", "numberOfPins": 7, "side": "top", "exportSVG": true, "exportGLB": true, "pinConnections": "[{\"pin\":1,\"net\":\"SYNC/RESET\"},{\"pin\":2,\"net\":\"DRDY\"},{\"pin\":3,\"net\":\"CS\"}]"
+    },
+    {
+      "componentReference": "J_XIAO_2", "componentDescription": "XIAO Header", "componentValue": "XIAO_HEADER", "footprintIdentifier": "Connector_PinHeader_2.54mm:PinHeader_1x07_P2.54mm_Vertical_SMD_Pin1Left", "numberOfPins": 7, "side": "top", "exportSVG": true, "exportGLB": true, "pinConnections": "[{\"pin\":2,\"net\":\"GND\"},{\"pin\":1,\"net\":\"5V\"},{\"pin\":6,\"net\":\"SCLK\"},{\"pin\":5,\"net\":\"DOUT\"},{\"pin\":4,\"net\":\"DIN\"}]"
+    }
+  ]
+}

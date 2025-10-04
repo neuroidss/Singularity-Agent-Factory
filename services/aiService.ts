@@ -1,4 +1,4 @@
-import { ModelProvider, type AIModel, type APIConfig, type AIResponse, type LLMTool } from '../types';
+import { ModelProvider, type AIModel, type APIConfig, type AIResponse, type LLMTool, type AIToolCall } from '../types';
 import * as geminiService from './geminiService';
 import * as openAIService from './openAIService';
 import * as ollamaService from './ollamaService';
@@ -113,11 +113,9 @@ export const generateResponse = async (
             return geminiService.generateWithNativeTools(userInput.text, systemInstruction, model.id, relevantTools, userInput.files);
         
         case ModelProvider.OpenAI_API:
-             // OpenAI service currently only takes text.
-             return openAIService.generateWithTools(userInput.text, systemInstruction, model.id, apiConfig, relevantTools);
+             return openAIService.generateWithTools(userInput.text, systemInstruction, model.id, apiConfig, relevantTools, userInput.files);
 
         case ModelProvider.Ollama:
-             // Ollama service currently only takes text.
             return ollamaService.generateWithTools(userInput.text, systemInstruction, model.id, apiConfig, relevantTools);
         
         case ModelProvider.Wllama:
@@ -125,7 +123,7 @@ export const generateResponse = async (
             // Wllama and HuggingFace pipelines don't support native tool calling, so we fall back to JSON prompting.
             const toolsForPrompt = relevantTools.map(t => ({ name: t.name, description: t.description, parameters: t.parameters }));
             const toolDefinitions = JSON.stringify(toolsForPrompt, null, 2);
-            const fullSystemInstruction = systemInstruction + '\n\n' + JSON_TOOL_CALL_SYSTEM_PROMPT.replace('{{TOOLS_JSON}}', toolDefinitions);
+            const fullSystemInstruction = systemInstruction + '\\n\\n' + JSON_TOOL_CALL_SYSTEM_PROMPT.replace('{{TOOLS_JSON}}', toolDefinitions);
             
             const service = model.provider === ModelProvider.Wllama ? wllamaService : huggingFaceService;
             const responseText = await service.generateJsonOutput(userInput.text, fullSystemInstruction, model.id, 0.1, apiConfig, onProgress);
@@ -144,20 +142,42 @@ export const generateTextResponse = async (
     model: AIModel,
     apiConfig: APIConfig,
     onProgress: (message: string) => void,
+    files: { name: string; type: string, data: string }[] = []
 ): Promise<string> => {
     switch (model.provider) {
         case ModelProvider.GoogleAI:
-            return geminiService.generateText(prompt, systemInstruction, model.id);
+            return geminiService.generateText(prompt, systemInstruction, model.id, files);
         case ModelProvider.OpenAI_API:
-             return openAIService.generateText(prompt, systemInstruction, model.id, apiConfig);
+             return openAIService.generateText(prompt, systemInstruction, model.id, apiConfig, files);
         case ModelProvider.Ollama:
-             return ollamaService.generateText(prompt, systemInstruction, model.id, apiConfig);
+             return ollamaService.generateText(prompt, systemInstruction, model.id, apiConfig, files);
         case ModelProvider.Wllama:
+             if (files.length > 0) throw new Error("Wllama provider does not support multimodal input.");
              return wllamaService.generateText(prompt, systemInstruction, model.id, 0.1, apiConfig, onProgress);
         case ModelProvider.HuggingFace:
+             if (files.length > 0) throw new Error("HuggingFace provider does not support multimodal input.");
              return huggingFaceService.generateText(prompt, systemInstruction, model.id, 0.1, apiConfig, onProgress);
         default:
             throw new Error(`Text generation not supported for model provider: ${model.provider}`);
+    }
+};
+
+export const generateImages = async (
+    prompt: string,
+    model: AIModel,
+    apiConfig: APIConfig,
+    onProgress: (message: string) => void,
+    contextImages_base64?: string[]
+): Promise<any> => {
+    switch (model.provider) {
+        case ModelProvider.GoogleAI:
+            if (model.id === 'gemini-2.5-flash-image-preview') {
+                return geminiService.generateImageWithFlash(prompt, model.id, contextImages_base64);
+            }
+            return geminiService.generateImages(prompt, model.id);
+        // Other providers can be added here in the future
+        default:
+            throw new Error(`Image generation is not supported for the selected model provider: ${model.provider}`);
     }
 };
 
@@ -196,7 +216,39 @@ export const filterToolsWithLLM = async (
     }
 };
 
-export const contextualizeWithSearch = async (userInput: { text: string, files: any[] }): Promise<{ summary: string, sources: any[] }> => {
+export const contextualizeWithSearch = async (userInput: { text: string, files: any[] }): Promise<{ summary: string; sources: any[] }> => {
     // For now, only Gemini supports this. We can add fallbacks for other providers later if needed.
     return geminiService.generateWithGoogleSearch(userInput.text, userInput.files);
+};
+
+export const generateAudioStream = async (
+    prompt: string,
+    voice: string,
+    model: AIModel,
+    apiConfig: APIConfig,
+    onProgress: (message: string) => void,
+    context?: string,
+    contextAudio_base64?: string,
+    contextImage_base64?: string,
+) => {
+    switch (model.provider) {
+        case ModelProvider.GoogleAI:
+            return geminiService.generateAudioStream(prompt, voice, model.id, context, contextAudio_base64, contextImage_base64);
+        default:
+            throw new Error(`Audio generation is not supported for model provider: ${model.provider}`);
+    }
+};
+
+export const connectToMusicSession = async (
+    callbacks: any,
+    model: AIModel,
+    apiConfig: APIConfig,
+    onProgress: (message: string) => void
+) => {
+     switch (model.provider) {
+        case ModelProvider.GoogleAI:
+            return geminiService.connectToMusicSession(callbacks);
+        default:
+            throw new Error(`Music generation is not supported for model provider: ${model.provider}`);
+    }
 };

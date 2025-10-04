@@ -1,7 +1,19 @@
 #!/bin/bash
 # This script starts the backend server.
-# Rename this file to start.sh and run `chmod +x start.sh` to make it executable.
+# It MUST be run from the 'server' directory.
 
+# --- VITAL: Source your ROS2 environment ---
+# This ensures that Python scripts spawned by the server can find ROS2 libraries like rclpy.
+# Update this path if your ROS2 installation is different.
+if [ -f /opt/ros/rolling/setup.bash ]; then
+  echo "--- Sourcing ROS2 environment from /opt/ros/rolling/setup.bash ---"
+  source /opt/ros/rolling/setup.bash
+else
+  echo "--- WARNING: ROS2 setup script not found at /opt/ros/rolling/setup.bash. Gazebo integration may fail. ---"
+fi
+
+
+# --- Set KiCad Environment Variables (for systems where they are not globally set) ---
 export KICAD_SYMBOL_DIR=/usr/share/kicad/symbols
 export KICAD6_SYMBOL_DIR=/usr/share/kicad/symbols
 export KICAD7_SYMBOL_DIR=/usr/share/kicad/symbols
@@ -18,7 +30,9 @@ export KICAD7_3DMODEL_DIR=/usr/share/kicad/3dmodels
 export KICAD8_3DMODEL_DIR=/usr/share/kicad/3dmodels
 export KICAD9_3DMODEL_DIR=/usr/share/kicad/3dmodels
 
+# --- Activate Python Virtual Environment ---
 source venv/bin/activate
 
+# --- Start the Node.js Backend Server ---
 echo "🚀 Starting Singularity Agent Factory Backend Server..."
 npm start

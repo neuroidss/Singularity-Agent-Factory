@@ -1,6 +1,7 @@
+// Fix: Define ToolCategory and AgentStatus locally instead of a circular import.
 export type ToolCategory = 'UI Component' | 'Functional' | 'Automation' | 'Server';
-
-export type AgentStatus = 'idle' | 'working' | 'succeeded' | 'failed' | 'terminated' | 'paused';
+export type AgentStatus = 'idle' | 'working' | 'error' | 'success';
+export type PilotMode = 'MANUAL' | 'ASSISTED' | 'AUTONOMOUS';
 
 export interface AgentWorker {
   id: string;
@@ -43,6 +44,7 @@ export interface LLMTool {
   implementationCode: string;
   createdAt?: string;
   updatedAt?: string;
+  executionEnvironment: 'Client' | 'Server';
 }
 
 export type NewToolPayload = Omit<LLMTool, 'id' | 'version' | 'createdAt' | 'updatedAt'>;
@@ -74,7 +76,8 @@ export interface EnrichedAIResponse {
   executionError?: string;
 }
 
-export type MainView = 'KICAD' | 'ROBOTICS' | 'KNOWLEDGE_GRAPH';
+// FIX: Added 'TSCIRCUIT_STUDIO' to the MainView type to resolve a type comparability error in App.tsx. This ensures all available views are correctly typed.
+export type MainView = 'KICAD' | 'ROBOTICS' | 'KNOWLEDGE_GRAPH' | 'AETHERIUM_GAME' | 'ATTENTIVE_MODELING' | 'PRODUCER_STUDIO' | 'VIRTUAL_FILM_SET' | 'TSCIRCUIT_STUDIO';
 
 export enum ModelProvider {
   GoogleAI = 'GoogleAI',
@@ -109,10 +112,66 @@ export interface RobotState {
   powerLevel: number; // Represents the agent's energy reserves
 }
 
+// Represents an in-game item stored on the server.
+export interface ServerInventoryItem {
+    id: string;
+    type: 'Reagent' | 'Artifact' | 'Incantation' | 'CreatureEssence';
+    name: string;
+    description: string;
+    quantity: number;
+}
+
+// Represents a permanent, valuable design stored on the client.
+export interface VaultItem {
+    id: string; // e.g., "phylactery_of_true_sight_v1"
+    name: string; // "Phylactery of True Sight"
+    type: 'KiCad Design' | 'Neurofeedback Protocol' | 'Incantation';
+    description: string;
+    createdAt: string;
+    files: { path: string, content: string }[]; // The actual design files
+}
+
+export interface Party {
+    id: string;
+    leaderId: string;
+    memberIds: string[];
+}
+
+export interface WorldEvent {
+    id: string;
+    name: string;
+    description: string;
+    type: 'Nexus_Anomaly' | 'Resource_Surge';
+    x: number;
+    y: number;
+    expiresAt: number; // Timestamp
+}
+
+// Represents a type of creature that can exist in the world.
+export interface WorldCreature {
+    creatureId: string;
+    name: string;
+    description: string;
+    asset_glb: string;
+}
+
+export interface PlayerState {
+    id: string; // The player's unique name
+    name: string;
+    x: number;
+    y: number;
+    rotation: number;
+    partyId?: string;
+    // Client-side state holds the permanent Vault of valuable designs.
+    vault: VaultItem[];
+    // Server-side state will have an additional, temporary `inventory: ServerInventoryItem[]`
+    inventory?: ServerInventoryItem[];
+}
+
 export interface EnvironmentObject {
   x: number;
   y: number;
-  type: 'wall' | 'drone_battery_charged' | 'drone_battery_depleted' | 'battery_swapping_station' | 'tree' | 'red_car' | 'blue_car' | 'green_car' | 'rough_terrain';
+  type: 'wall' | 'drone_battery_charged' | 'drone_battery_depleted' | 'battery_swapping_station' | 'tree' | 'red_car' | 'blue_car' | 'green_car' | 'rough_terrain' | 'Alchemists_Forge' | 'Nexus_Anomaly';
   id?: string;
   asset_glb?: string;
 }
@@ -162,8 +221,8 @@ export type KicadSchematic = [string, string[], string][];
 export type KicadPlacement = [string, number, number, number, string, string, string][];
 
 export interface ExecuteActionFunction {
-    (toolCall: AIToolCall, agentId: string): Promise<EnrichedAIResponse>;
-    getRuntimeApiForAgent: (agentId: string) => { tools: { list: () => LLMTool[] } };
+    (toolCall: AIToolCall, agentId: string, context?: MainView): Promise<EnrichedAIResponse>;
+    getRuntimeApiForAgent: (agentId: string) => any;
 }
 
 export interface ScoredTool {

@@ -1,3 +1,5 @@
+// VIBE_NOTE: Do not escape backticks or dollar signs in template literals in this file.
+// Escaping is only for 'implementationCode' strings in tool definitions.
 import { pipeline, type TextGenerationPipeline } from '@huggingface/transformers';
 import type { APIConfig } from '../types';
 

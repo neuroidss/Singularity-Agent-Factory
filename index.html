@@ -42,7 +42,8 @@
     "@dimforge/rapier3d-compat": "https://cdn.skypack.dev/@dimforge/rapier3d-compat",
     "lil-gui": "https://esm.sh/lil-gui@^0.19.1",
     "idb": "https://esm.sh/idb@^8",
-    "@wllama/wllama": "https://cdn.jsdelivr.net/npm/@wllama/wllama@2.3.4/esm/index.js"
+    "@wllama/wllama": "https://cdn.jsdelivr.net/npm/@wllama/wllama@2.3.4/esm/index.js",
+    "vite": "https://aistudiocdn.com/vite@^7.1.4"
   }
 }
 </script>
@@ -50,6 +51,10 @@
 </head>
   <body class="bg-gray-900">
     <div id="root"></div>
+    <script>
+      // Define a global promise for Rapier initialization to prevent race conditions.
+      window.rapierInitializationPromise = null;
+    </script>
     <script type="module" src="/index.tsx"></script>
   </body>
 </html>

@@ -1,5 +1,5 @@
-
-
+// VIBE_NOTE: Do not escape backticks or dollar signs in template literals in this file.
+// Escaping is only for 'implementationCode' strings in tool definitions.
 import type { APIConfig, LLMTool, AIResponse, AIToolCall } from "../types";
 
 const OPENAI_TIMEOUT = 600000; // 10 минут
@@ -74,7 +74,8 @@ export const generateWithTools = async (
     systemInstruction: string,
     modelId: string,
     apiConfig: APIConfig,
-    tools: LLMTool[]
+    tools: LLMTool[],
+    files: { type: string, data: string }[] = []
 ): Promise<AIResponse> => {
     const { openAIAPIKey, openAIBaseUrl } = apiConfig;
 
@@ -84,11 +85,23 @@ export const generateWithTools = async (
     const openAITools = buildOpenAITools(tools);
     const toolNameMap = new Map(tools.map(t => [t.name.replace(/[^a-zA-Z0-9_]/g, '_'), t.name]));
 
+    const userMessageContent: any[] = [{ type: 'text', text: userInput }];
+    if (files && files.length > 0) {
+        files.forEach(file => {
+            userMessageContent.push({
+                type: 'image_url',
+                image_url: {
+                    url: `data:${file.type};base64,${file.data}`
+                }
+            });
+        });
+    }
+
     const body = {
         model: modelId,
         messages: [
             { role: 'system', content: systemInstruction },
-            { role: 'user', content: userInput }
+            { role: 'user', content: userMessageContent }
         ],
         temperature: 0.1,
         tools: openAITools.length > 0 ? openAITools : undefined,
@@ -159,18 +172,31 @@ export const generateText = async (
     userInput: string,
     systemInstruction: string,
     modelId: string,
-    apiConfig: APIConfig
+    apiConfig: APIConfig,
+    files: { type: string, data: string }[] = []
 ): Promise<string> => {
     const { openAIAPIKey, openAIBaseUrl } = apiConfig;
 
     if (!openAIAPIKey) throw new Error("OpenAI API Key is missing.");
     if (!openAIBaseUrl) throw new Error("OpenAI Base URL is missing.");
     
+    const userMessageContent: any[] = [{ type: 'text', text: userInput }];
+    if (files && files.length > 0) {
+        files.forEach(file => {
+            userMessageContent.push({
+                type: 'image_url',
+                image_url: {
+                    url: `data:${file.type};base64,${file.data}`
+                }
+            });
+        });
+    }
+
     const body = {
         model: modelId,
         messages: [
             { role: 'system', content: systemInstruction },
-            { role: 'user', content: userInput }
+            { role: 'user', content: userMessageContent }
         ],
         temperature: 0.0,
     };
