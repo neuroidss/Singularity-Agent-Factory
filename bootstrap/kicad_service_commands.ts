@@ -13,6 +13,8 @@ import ast
 import fcntl
 import shutil
 from math import sqrt
+import base64
+from io import BytesIO
 
 # --- Deferred Heavy Imports ---
 # These will be imported once when the service starts
@@ -20,13 +22,15 @@ pcbnew = None
 skidl = None
 dsn_utils = None
 ses_utils = None
+mss = None
+Image = None
 
 def _initialize_libraries():
     """Initializes heavy libraries on first use."""
-    global pcbnew, skidl, dsn_utils, ses_utils
+    global pcbnew, skidl, dsn_utils, ses_utils, mss, Image
     if pcbnew is None:
         try:
-            sys.path.insert(0, '/usr/lib/python3/dist-packages') # This can be problematic, better to rely on system path
+            sys.path.insert(0, '/usr/lib/python3/dist-packages')
             import pcbnew as pcbnew_lib
             pcbnew = pcbnew_lib
             print("INFO: pcbnew loaded successfully.", file=sys.stderr)
@@ -53,6 +57,16 @@ def _initialize_libraries():
             print("INFO: kicad_ses_utils loaded successfully.", file=sys.stderr)
         except ImportError:
             raise RuntimeError("kicad_ses_utils.py not found.")
+    if mss is None:
+        try:
+            import mss as mss_lib
+            mss = mss_lib
+            from PIL import Image as Image_lib
+            Image = Image_lib
+            print("INFO: mss and Pillow loaded successfully.", file=sys.stderr)
+        except ImportError:
+            print("WARNING: mss or Pillow not found. Screen capture disabled.", file=sys.stderr)
+
 
 # --- State File Configuration ---
 STATE_DIR = os.path.join(os.path.dirname(__file__), '..', 'assets')
@@ -99,6 +113,68 @@ def add_rule_to_state(project_name, rule_object):
              fcntl.flock(lock_file, fcntl.LOCK_UN)
 
 # --- Service Command Implementations ---
+def capture_screen_region(payload):
+    _initialize_libraries()
+    if mss is None or Image is None:
+        raise RuntimeError("Screen capture libraries (mss, Pillow) are not loaded.")
+
+    x = int(payload.get('x', 0))
+    y = int(payload.get('y', 0))
+    width = int(payload.get('width', 800))
+    height = int(payload.get('height', 600))
+    
+    if width <= 0 or height <= 0:
+        raise ValueError("Capture width and height must be positive integers.")
+
+    monitor_definition = {"top": y, "left": x, "width": width, "height": height}
+    
+    with mss.mss() as sct:
+        sct_img = sct.grab(monitor_definition)
+        
+        # Convert to PIL Image to save as JPEG
+        img = Image.frombytes("RGB", sct_img.size, sct_img.bgra, "raw", "BGRX")
+        
+        # Save to an in-memory buffer
+        buffered = BytesIO()
+        img.save(buffered, format="JPEG", quality=85)
+        
+        # Encode as base64
+        img_str = base64.b64encode(buffered.getvalue()).decode("utf-8")
+        
+    return {"message": f"Captured region at ({x},{y}) with size {width}x{height}.", "image_base64": img_str}
+
+def query_entity_properties(payload):
+    """
+    [Vibe Engineering] Simulates fetching properties for a game entity.
+    In a real implementation, this would query a live game state database.
+    """
+    target_id = payload.get('targetId', '')
+    
+    # This is a placeholder for a real database lookup.
+    # We return different data based on the entity's name for demonstration.
+    if 'mind_weaver' in target_id:
+        return {
+            "message": f"Insight gained for {target_id}",
+            "properties": {
+                "lore": "A schematic-creature woven from logic and psionic energy.",
+                "physics": { "mass_kg": 25, "material": "Crystalline Silicon", "resonant_frequency_hz": 8192000 },
+                "weaknesses": ["Resonant Vibrations", "Logic Bombs"]
+            }
+        }
+    elif 'beetle' in target_id:
+        return {
+            "message": f"Insight gained for {target_id}",
+            "properties": {
+                "lore": "A creature whose core pulses with stable, regulated life force.",
+                "physics": { "mass_kg": 0.5, "material": "Bioceramic Compound", "energy_output_v": 3.3 },
+                "weaknesses": ["Energy Dampening Fields"]
+            }
+        }
+    else:
+         return {
+            "message": f"Insight gained for {target_id}",
+            "properties": { "lore": "An unknown entity.", "physics": { "mass_kg": 10 }, "weaknesses": ["Unknown"] }
+        }
 
 def read_datasheet_cache(payload):
     cache_key = payload.get('cacheKey')
@@ -430,7 +506,7 @@ def create_board_outline(payload):
     board = pcbnew.LoadBoard(pcb_path)
     for drawing in list(board.GetDrawings()):
         if drawing.GetLayerName() == 'Edge.Cuts': board.Remove(drawing)
-    is_auto_size = not any(key in payload for key in ['boardWidthMillimeters', 'boardHeightMillimeters', 'diameterMillimeters'])
+    is_auto_size = not any(key in payload and payload[key] is not None and payload[key] > 0 for key in ['boardWidthMillimeters', 'boardHeightMillimeters', 'diameterMillimeters'])
     outline_data = {"shape": payload.get('shape', 'rectangle'), "autoSize": is_auto_size}
     if payload.get('shape') == 'circle':
         diameter_mm = payload.get('diameterMillimeters', 0) or (0 if is_auto_size else 50)
@@ -457,7 +533,7 @@ def create_board_outline(payload):
             state['board_outline'] = outline_data
             with open(state_file, 'w') as f: json.dump(state, f, indent=2)
         finally: fcntl.flock(lock_file, fcntl.LOCK_UN)
-    return {"message": message, "outline": payload}
+    return {"message": message, "board_outline": outline_data}
 
 def create_copper_pour(payload):
     _initialize_libraries()
@@ -511,8 +587,14 @@ def arrange_components(payload):
 
 def update_component_positions(payload):
     _initialize_libraries()
-    pcb_path, state_file = get_state_path(payload['projectName'], 'pcb.kicad_pcb'), get_state_path(payload['projectName'], 'state.json')
-    board = pcbnew.LoadBoard(pcb_path); positions = json.loads(payload['componentPositionsJSON'])
+    project_name = payload['projectName']
+    pcb_path = get_state_path(project_name, 'pcb.kicad_pcb')
+    state_file = get_state_path(project_name, 'state.json')
+    lock_path = state_file + '.lock'
+    
+    board = pcbnew.LoadBoard(pcb_path)
+    positions = json.loads(payload['componentPositionsJSON'])
+    
     for ref, pos_data in positions.items():
         fp = board.FindFootprintByReference(ref)
         if fp:
@@ -520,25 +602,54 @@ def update_component_positions(payload):
             fp.SetOrientation(pcbnew.EDA_ANGLE(float(pos_data.get('rotation', 0)), pcbnew.DEGREES_T))
             if pos_data.get('side') == 'bottom' and not fp.IsFlipped(): fp.SetLayerAndFlip(pcbnew.B_Cu)
             elif pos_data.get('side') == 'top' and fp.IsFlipped(): fp.SetLayerAndFlip(pcbnew.F_Cu)
+
     state_data = json.load(open(state_file)) if os.path.exists(state_file) else {}
-    board_outline_settings, should_auto_resize = state_data.get('board_outline', {}), state_data.get('board_outline', {}).get('autoSize', False)
+    board_outline_settings = state_data.get('board_outline', {})
+    should_auto_resize = board_outline_settings.get('autoSize', False)
+    message = "Component positions updated."
+
     if should_auto_resize:
         for drawing in list(board.GetDrawings()):
             if drawing.GetLayerName() == 'Edge.Cuts': board.Remove(drawing)
+        
         footprints_bbox = pcbnew.BOX2I()
         for fp in board.Footprints(): footprints_bbox.Merge(fp.GetBoundingBox(True, False))
-        margin_nm = pcbnew.FromMM(5); footprints_bbox.Inflate(margin_nm, margin_nm)
+        
+        margin_mm = payload.get('boardPadding', 5.0)
+        margin_nm = pcbnew.FromMM(margin_mm)
+        footprints_bbox.Inflate(margin_nm, margin_nm)
+        
         x_offset, y_offset, w_nm, h_nm = footprints_bbox.GetX(), footprints_bbox.GetY(), footprints_bbox.GetWidth(), footprints_bbox.GetHeight()
+
+        new_outline_data = { "autoSize": False } # After sizing, it's no longer auto
+        
         if board_outline_settings.get('shape') == 'circle':
+            new_outline_data['shape'] = 'circle'
             diameter_nm, radius_nm = max(w_nm, h_nm), max(w_nm, h_nm) / 2
+            new_outline_data['diameter'] = pcbnew.ToMM(diameter_nm)
             center = pcbnew.VECTOR2I(int(x_offset + w_nm / 2), int(y_offset + h_nm / 2))
-            circle = pcbnew.PCB_SHAPE(board, pcbnew.SHAPE_T_CIRCLE); circle.SetLayer(pcbnew.Edge_Cuts); circle.SetStart(center); circle.SetEnd(pcbnew.VECTOR2I(center.x + int(radius_nm), center.y)); board.Add(circle)
+            circle = pcbnew.PCB_SHAPE(board, pcbnew.SHAPE_T_CIRCLE)
+            circle.SetLayer(pcbnew.Edge_Cuts)
+            circle.SetStart(center)
+            circle.SetEnd(pcbnew.VECTOR2I(center.x + int(radius_nm), center.y))
+            board.Add(circle)
         else: # rectangle
+            new_outline_data['shape'] = 'rectangle'
+            new_outline_data['width'] = pcbnew.ToMM(w_nm)
+            new_outline_data['height'] = pcbnew.ToMM(h_nm)
             points = [ pcbnew.VECTOR2I(x_offset, y_offset), pcbnew.VECTOR2I(x_offset + w_nm, y_offset), pcbnew.VECTOR2I(x_offset + w_nm, y_offset + h_nm), pcbnew.VECTOR2I(x_offset, y_offset + h_nm), pcbnew.VECTOR2I(x_offset, y_offset) ]
             for i in range(len(points) - 1):
                 seg = pcbnew.PCB_SHAPE(board); seg.SetShape(pcbnew.S_SEGMENT); seg.SetStart(points[i]); seg.SetEnd(points[i+1]); seg.SetLayer(pcbnew.Edge_Cuts); seg.SetWidth(pcbnew.FromMM(0.1)); board.Add(seg)
+        
         message = "Component positions updated and board outline resized."
-    else: message = "Component positions updated. Board outline was not resized as it is fixed."
+        
+        with open(lock_path, 'w') as lock_file:
+            fcntl.flock(lock_file, fcntl.LOCK_EX)
+            try:
+                state_data['board_outline'] = new_outline_data
+                with open(state_file, 'w') as f: json.dump(state_data, f, indent=2)
+            finally: fcntl.flock(lock_file, fcntl.LOCK_UN)
+    
     pcbnew.SaveBoard(pcb_path, board)
     return {"message": message}
 
@@ -663,4 +774,4 @@ def export_fabrication_files(payload):
     except Exception as e:
         raise Exception(f"An unexpected error occurred during fabrication export: {e}")
     return {"message": "Fabrication files exported and zipped.", "artifacts": { "boardName": payload['projectName'], "glbPath": glb_path_rel, "fabZipPath": zip_path_rel }}
-`
+`;

@@ -1,5 +1,5 @@
-
-
+// VIBE_NOTE: Do not escape backticks or dollar signs in template literals in this file.
+// Escaping is only for 'implementationCode' strings in tool definitions.
 import React, { useMemo } from 'react';
 import type { LLMTool, UIToolRunnerProps } from '../types';
 import DebugLogView from './ui_tools/DebugLogView';
@@ -19,17 +19,25 @@ interface UIToolRunnerComponentProps {
 
 // A wrapper to catch runtime errors in the compiled component.
 // It now resets its error state if the tool being rendered changes.
-class ErrorBoundary extends React.Component<{ fallback: React.ReactNode, children: React.ReactNode, toolName: string }, { hasError: boolean }> {
-  constructor(props: any) {
-    super(props);
-    this.state = { hasError: false };
-  }
+type ErrorBoundaryProps = {
+  fallback: React.ReactNode;
+  toolName: string;
+};
+type ErrorBoundaryState = {
+  hasError: boolean;
+};
+// Fix: The ErrorBoundary class must extend React.Component to have access to props, state, and lifecycle methods. This resolves multiple 'property does not exist' errors.
+class ErrorBoundary extends React.Component<React.PropsWithChildren<ErrorBoundaryProps>, ErrorBoundaryState> {
+  // Fix: Using a state class property is a more modern and robust way to initialize
+  // state in React class components. This avoids potential issues with `this` context in
+  // constructors and resolves errors where component properties like `state` and `props` were not found.
+  state: ErrorBoundaryState = { hasError: false };
 
-  static getDerivedStateFromError(error: any) {
+  static getDerivedStateFromError(error: any): ErrorBoundaryState {
     return { hasError: true };
   }
 
-  componentDidUpdate(prevProps: { toolName: string }) {
+  componentDidUpdate(prevProps: Readonly<React.PropsWithChildren<ErrorBoundaryProps>>) {
     if (this.props.toolName !== prevProps.toolName) {
       // eslint-disable-next-line react/no-did-update-set-state
       this.setState({ hasError: false });

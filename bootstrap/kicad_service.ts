@@ -45,9 +45,10 @@ async def execute_command(command_name: str, payload: Dict[str, Any] = Body(...)
     except Exception as e:
         # Log the full traceback to the service's stderr for debugging
         trace = traceback.format_exc()
-        print(f"ERROR executing '{func_name}': {e}\\n{trace}", file=sys.stderr)
+        # Log the payload that caused the error for better debugging
+        print(f"ERROR executing '{func_name}' with payload: {json.dumps(payload)}\\n{e}\\n{trace}", file=sys.stderr)
         # Raise an HTTPException, which FastAPI turns into a proper error response
-        raise HTTPException(status_code=500, detail={"error": str(e), "trace": trace})
+        raise HTTPException(status_code=500, detail={"error": str(e), "trace": trace, "payload": payload})
 
 @app.get("/health")
 async def health_check():
@@ -56,7 +57,7 @@ async def health_check():
 
 if __name__ == "__main__":
     # Get port from environment variable or default to 8000
-    port = int(os.environ.get("KICAD_SERVICE_PORT", 8000))
+    port = int(os.environ.get("PORT", 8000))
     # Bind to 127.0.0.1 to ensure it's only accessible locally
     uvicorn.run(app, host="127.0.0.1", port=port)
 `;

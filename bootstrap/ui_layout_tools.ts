@@ -1,5 +1,3 @@
-
-
 import type { ToolCreatorPayload } from '../types';
 
 export const UI_LAYOUT_TOOLS: ToolCreatorPayload[] = [
@@ -16,7 +14,10 @@ export const UI_LAYOUT_TOOLS: ToolCreatorPayload[] = [
         implementationCode: `
           const views = [
             { id: 'KICAD', label: 'KiCad Design' },
-            { id: 'ROBOTICS', label: 'Robotics Simulation' },
+            { id: 'PRODUCER_STUDIO', label: 'Producer Studio' },
+            { id: 'VIRTUAL_FILM_SET', label: 'Virtual Film Set' },
+            { id: 'AETHERIUM_GAME', label: 'Aetherium' },
+            { id: 'ATTENTIVE_MODELING', label: 'Attentive Modeling' },
             // { id: 'KNOWLEDGE_GRAPH', label: 'Strategic Memory' }, // Can be re-enabled later
           ];
 
@@ -28,11 +29,11 @@ export const UI_LAYOUT_TOOLS: ToolCreatorPayload[] = [
                         <button
                             key={view.id}
                             onClick={() => setMainView(view.id)}
-                            className={\`px-4 py-2 rounded-lg font-semibold text-sm transition-colors duration-200 flex-1 text-center \${
+                            className={"px-4 py-2 rounded-lg font-semibold text-sm transition-colors duration-200 flex-1 text-center " + (
                                 isActive
                                     ? 'bg-indigo-600 text-white shadow-md'
                                     : 'bg-transparent text-gray-400 hover:bg-gray-700/50'
-                            }\`}
+                            )}
                         >
                             {view.label}
                         </button>

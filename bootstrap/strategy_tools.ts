@@ -1,9 +1,10 @@
 
+
 import type { ToolCreatorPayload } from '../types';
 import { STRATEGIC_MEMORY_SCRIPT } from './strategy_manager_script';
 
 const STRATEGIC_MEMORY_GRAPH_VIEWER_PAYLOAD: ToolCreatorPayload = {
-    name: 'Strategic Memory Graph Viewer',
+    name: 'Innovation Knowledge Graph Viewer',
     description: 'Renders an interactive 3D force-directed graph of the agent\'s long-term strategic memory, showing Directives, knowledge, and their relationships.',
     category: 'UI Component',
     executionEnvironment: 'Client',
@@ -14,11 +15,13 @@ const STRATEGIC_MEMORY_GRAPH_VIEWER_PAYLOAD: ToolCreatorPayload = {
         { name: 'isEmbedding', type: 'boolean', description: 'Whether node embeddings are being generated.', required: true },
         { name: 'nodeEmbeddings', type: 'object', description: 'A Map of node IDs to their vector embeddings.', required: true },
         { name: 'onRefresh', type: 'object', description: 'Callback function to refresh the graph data from the server.', required: true },
+        { name: 'executeTool', type: 'object', description: 'Function to execute a tool call.', required: true },
     ],
     implementationCode: `
         const mountRef = React.useRef(null);
         const simRef = React.useRef({});
         const [selectedNodeId, setSelectedNodeId] = React.useState(null);
+        const selectedNode = React.useMemo(() => graph?.nodes.find(n => n.id === selectedNodeId), [graph, selectedNodeId]);
 
         React.useEffect(() => {
             if (isLoading || isEmbedding || !graph || !graph.nodes || graph.nodes.length === 0) {
@@ -72,6 +75,7 @@ const STRATEGIC_MEMORY_GRAPH_VIEWER_PAYLOAD: ToolCreatorPayload = {
                     Pin: { color: 0x9ca3af, radius: 0.25, shape: 'sphere' },
                     MarketNeed: { color: 0xec4899, radius: 2.0, shape: 'box' },
                     Technology: { color: 0xf97316, radius: 2.0, shape: 'octahedron' },
+                    SubComponent: { color: 0xa855f7, radius: 0.5, shape: 'icosahedron' },
                     default: { color: 0x64748b, radius: 1.5, shape: 'sphere' }
                 };
 
@@ -86,6 +90,7 @@ const STRATEGIC_MEMORY_GRAPH_VIEWER_PAYLOAD: ToolCreatorPayload = {
                     let geo;
                     if (shape === 'box') geo = new sim.THREE.BoxGeometry(radius * 1.8, radius * 1.8, radius * 1.8);
                     else if (shape === 'octahedron') geo = new sim.THREE.OctahedronGeometry(radius, 0);
+                    else if (shape === 'icosahedron') geo = new sim.THREE.IcosahedronGeometry(radius, 0);
                     else geo = new sim.THREE.SphereGeometry(radius, 32, 16);
                     
                     const mat = new sim.THREE.MeshStandardMaterial({ color, roughness: 0.5, transparent: true });
@@ -203,6 +208,37 @@ const STRATEGIC_MEMORY_GRAPH_VIEWER_PAYLOAD: ToolCreatorPayload = {
 
         }, [selectedNodeId, nodeEmbeddings]);
 
+        const handleDecompose = async () => {
+            if (!selectedNodeId || !graph) return;
+            
+            // This simulates a "Prohibition-level" LLM determining the sub-components.
+            // In a real scenario, this logic would be in a powerful, dedicated LLM tool.
+            const newNodes = Array.from({ length: 3 }).map((_, i) => ({
+                id: \`\${selectedNodeId}_sub\${i + 1}\`,
+                label: \`Sub-Essence \${i + 1}\`,
+                type: 'SubComponent'
+            }));
+
+            const newEdges = newNodes.map(newNode => ({
+                source: selectedNodeId,
+                target: newNode.id,
+                label: 'contains'
+            }));
+
+            try {
+                // We use executeTool (which wraps the runtime) to update the graph on the server.
+                // The server is the source of truth; the graph will update automatically on the next poll.
+                await executeTool('Update Strategic Memory', { nodes: JSON.stringify(newNodes), edges: JSON.stringify(newEdges) });
+                // Deselect node after decomposition to clear the panel
+                setSelectedNodeId(null);
+                // Trigger a manual refresh to see the changes immediately
+                onRefresh();
+            } catch(e) {
+                console.error(\`Decomposition failed:\`, e);
+                // Optionally, inform the user with a log event or alert.
+            }
+        };
+
         const loadingText = isLoading ? "Loading Strategic Memory..." : "Generating Embeddings...";
         if (isLoading || isEmbedding) {
             return (
@@ -217,7 +253,28 @@ const STRATEGIC_MEMORY_GRAPH_VIEWER_PAYLOAD: ToolCreatorPayload = {
             <div className="bg-gray-800/80 border-2 border-yellow-500/60 rounded-xl p-2 shadow-lg flex flex-col h-full relative">
                 <div className="absolute top-4 left-4 z-10 text-lg font-bold text-yellow-300">Innovation Knowledge Graph</div>
                 <div ref={mountRef} className="flex-grow bg-black/30 rounded overflow-hidden relative cursor-grab"></div>
-                <button onClick={onRefresh} className="absolute top-4 right-4 bg-gray-700/50 text-white font-semibold py-1 px-3 rounded-lg hover:bg-gray-600 backdrop-blur-sm">
+                
+                {selectedNode && (
+                    <div className="absolute top-1/2 -translate-y-1/2 right-4 w-64 bg-gray-900/80 backdrop-blur-sm border border-gray-700 rounded-lg p-3 text-white z-20 text-sm">
+                        <div className="flex justify-between items-start">
+                            <h4 className="font-bold text-base text-cyan-300 mb-2 break-all">{selectedNode.label}</h4>
+                            <button onClick={() => setSelectedNodeId(null)} className="text-gray-400 hover:text-white font-bold">&times;</button>
+                        </div>
+                        <div className="font-mono text-xs text-gray-400 space-y-1">
+                            <p><span className="text-gray-500">ID:</span> {selectedNode.id}</p>
+                            <p><span className="text-gray-500">Type:</span> {selectedNode.type || 'N/A'}</p>
+                        </div>
+                        <button 
+                            onClick={handleDecompose}
+                            className="w-full mt-3 bg-purple-700 hover:bg-purple-600 text-white font-semibold py-1.5 px-3 rounded-md text-xs transition-colors"
+                        >
+                            Decompose Entity
+                        </button>
+                        <p className="text-xs text-gray-500 mt-1 text-center italic">A Prohibition-level action.</p>
+                    </div>
+                )}
+
+                <button onClick={onRefresh} className="absolute top-4 right-4 bg-gray-700/50 text-white font-semibold py-1 px-3 rounded-lg hover:bg-gray-600 backdrop-blur-sm z-10">
                     Refresh
                 </button>
             </div>
@@ -225,7 +282,7 @@ const STRATEGIC_MEMORY_GRAPH_VIEWER_PAYLOAD: ToolCreatorPayload = {
     `
 };
 
-const STRATEGY_TOOL_DEFINITIONS: ToolCreatorPayload[] = [
+const STRATEGIC_TOOL_DEFINITIONS: ToolCreatorPayload[] = [
     {
         name: 'Read Strategic Memory',
         description: 'Reads the entire strategic memory graph from the persistent server storage.',
@@ -271,41 +328,48 @@ const STRATEGY_INSTALLER_TOOL: ToolCreatorPayload = {
     parameters: [],
     implementationCode: `
         // --- Step 1: Write the Python script to the server ---
-        console.log('[INFO] Writing Strategic Memory Python script to the server...');
+        runtime.logEvent('[INFO] Writing Strategic Memory Python script to the server...');
         if (runtime.isServerConnected()) {
             try {
                 await runtime.tools.run('Server File Writer', { 
                     filePath: 'strategic_memory.py', 
                     content: ${JSON.stringify(STRATEGIC_MEMORY_SCRIPT)} 
                 });
-                console.log('[INFO] Strategic Memory script written successfully.');
+                runtime.logEvent('[INFO] Strategic Memory script written successfully.');
             } catch (e) {
-                throw new Error(\`Failed to write script 'strategic_memory.py' to server: \${e.message}\`);
+                runtime.logEvent(\`[WARN] Failed to write script 'strategic_memory.py' to server: \${e.message}\`);
             }
         } else {
-            console.log('[INFO] Server not connected. Skipping Python script creation. Strategy tools will be simulated.');
+            runtime.logEvent('[INFO] Server not connected. Skipping Python script creation. Strategy tools will be simulated.');
         }
 
         // --- Step 2: Create the tool definitions ---
         const toolPayloads = [
-            ...${JSON.stringify(STRATEGY_TOOL_DEFINITIONS)},
+            ...${JSON.stringify(STRATEGIC_TOOL_DEFINITIONS)},
             ${JSON.stringify(STRATEGIC_MEMORY_GRAPH_VIEWER_PAYLOAD)}
         ];
         
+        const allTools = runtime.tools.list();
+        const existingToolNames = new Set(allTools.map(t => t.name));
+
         for (const payload of toolPayloads) {
+            if (existingToolNames.has(payload.name)) {
+                runtime.logEvent(\`[INFO] Tool '\${payload.name}' already exists. Skipping installation.\`);
+                continue;
+            }
             try {
                 await runtime.tools.run('Tool Creator', payload);
             } catch (e) {
-                console.warn(\`[WARN] Client tool '\${payload.name}' might already exist. Skipping. Error: \${e.message}\`);
+                runtime.logEvent(\`[WARN] Failed to create new tool '\${payload.name}'. Error: \${e.message}\`);
             }
         }
         
         if (runtime.isServerConnected()) {
             try {
                 const { count } = await runtime.forceRefreshServerTools();
-                console.log(\`[INFO] Client state synchronized with server. \${count} server tools loaded.\`);
+                runtime.logEvent(\`[INFO] Client state synchronized with server. \${count} server tools loaded.\`);
             } catch (e) {
-                console.error('[ERROR] Failed to force-refresh server tools after installation:', e);
+                runtime.logEvent(\`[ERROR] Failed to force-refresh server tools after installation: \${e.message}\`);
             }
         }
         

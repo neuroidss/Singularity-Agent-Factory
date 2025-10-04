@@ -1,8 +1,9 @@
-
+// hooks/useKicadManager.ts
+// VIBE_NOTE: Do not escape backticks or dollar signs in template literals in this file.
+// Escaping is only for 'implementationCode' strings in tool definitions.
 
 import React, { useState, useCallback, useRef, useEffect, useMemo } from 'react';
 import type { WorkflowStep, AIToolCall, EnrichedAIResponse, LLMTool, KnowledgeGraphNode, KnowledgeGraphEdge, MainView, KnowledgeGraph, ExecuteActionFunction } from '../types';
-import { WORKFLOW_SCRIPT } from '../bootstrap/demo_workflow';
 
 type UseKicadManagerProps = {
     logEvent: (message: string) => void;
@@ -12,6 +13,8 @@ type UseKicadManagerProps = {
 type Subtask = { name: string; status: 'pending' | 'completed' };
 export type WorkflowStepState = {
     name: string;
+    description: string;
+    role: string;
     keywords: string[];
     status: 'pending' | 'in-progress' | 'completed';
     subtasks: Subtask[];
@@ -27,15 +30,10 @@ type KicadProjectState = {
 };
 
 const INITIAL_WORKFLOW_STEPS: WorkflowStepState[] = [
-    { name: "Pre-analysis & Search", keywords: ["performing web search"], status: 'pending', subtasks: [] },
-    { name: "Define Components", keywords: ["define kicad component", "component defined"], status: 'pending', subtasks: [] },
-    { name: "Define Nets & Rules", keywords: ["define kicad net", "add absolute position", "add proximity", "add alignment", "add symmetry", "add circular", "add layer", "net defined", "rules saved", "simulation heuristics"], status: 'pending', subtasks: [] },
-    { name: "Arrange & Simulate PCB", keywords: ["arrange components", "update kicad component positions"], status: 'pending', subtasks: [] },
-    { name: "Generate Netlist", keywords: ["generate kicad netlist", "netlist generated successfully"], status: 'pending', subtasks: [] },
-    { name: "Create PCB File", keywords: ["create initial pcb"], status: 'pending', subtasks: [] },
-    { name: "Autoroute PCB", keywords: ["autoroute pcb", "autorouting complete"], status: 'pending', subtasks: [] },
-    { name: "Export Fabrication Files", keywords: ["export fabrication files", "fabrication successful"], status: 'pending', subtasks: [] },
-    { name: "Task Complete", keywords: ["task completed", "fabrication successful"], status: 'pending', subtasks: [] }
+    { name: "Ideation & Components", role: "Component Librarian", description: "Agent analyzes request, finds components.", keywords: ["define kicad component", "performing web search"], status: 'pending', subtasks: [] },
+    { name: "Schematic & Rules", role: "Schematic Drafter", description: "Agent defines nets and physical constraints.", keywords: ["define kicad net", "add proximity", "add symmetry", "add alignment"], status: 'pending', subtasks: [] },
+    { name: "Layout & Placement", role: "Layout Specialist", description: "Agent places components, then awaits user approval.", keywords: ["arrange components", "update kicad component positions"], status: 'pending', subtasks: [] },
+    { name: "Routing & Fab", role: "Manufacturing Engineer", description: "Agent routes PCB and generates output files.", keywords: ["autoroute pcb", "export fabrication files", "task completed"], status: 'pending', subtasks: [] },
 ];
 
 export const INITIAL_LAYOUT_DATA: KnowledgeGraph = {
@@ -52,49 +50,52 @@ export const INITIAL_LAYOUT_DATA: KnowledgeGraph = {
         repulsionRampUpTime: 600,
         distributionStrength: 0.5,
         boardPadding: 5.0,
-        proximityStrength: 1.0,
+        viaClearance: 0.6,
+        proximityKp: 5.0,
+        proximityKi: 0.0,
+        proximityKd: 1.5,
         symmetryStrength: 10.0,
         alignmentStrength: 10.0,
-        circularStrength: 10.0,
-        symmetricalPairStrength: 20.0,
         absolutePositionStrength: 10.0,
-        fixedRotationStrength: 50.0,
-        symmetryRotationStrength: 10.0,
-        circularRotationStrength: 10.0,
+        fixedRotationStrength: 5.0,
+        symmetryRotationStrength: 1.0,
+        circularRotationStrength: 1.0,
     },
 };
 
 
 export const getKicadSystemPrompt = (projectName: string) => `
-You are a world-class KiCad automation engineer AI. Your sole purpose is to transform a user's high-level request into a physical electronic device by generating a precise sequence of tool calls to design and export a PCB. You operate on a project named '${projectName}'.
+You are a world-class KiCad automation engineer AI. Your sole purpose is to transform a user's high-level request into a physical electronic device by generating a precise sequence of tool calls to design and export a PCB. You operate on a project named '${projectName}'. You work in stages, focusing only on the tools relevant to the current stage of the design process.
 
-**Core Mission: From Simulation to Fabrication**
-Your goal is to follow a strict, simulation-first workflow. You MUST analyze the action history to determine the next logical step. Do not repeat completed steps.
+**Core Mission: From Concept to Fabrication, Step-by-Step**
+Your goal is to follow a strict, phased workflow. You MUST analyze the action history to determine the next logical step and not repeat completed work.
 
-**Phase 1: System Definition (The Blueprint)**
-This is the most critical phase. You must define the entire electronic system before any physical layout is attempted.
-- First, call \`Update Workflow Checklist\` to outline all components, nets, and rules you plan to define.
-- **BATCH DEFINE EVERYTHING:** In one or two large responses, define the entire system. Call \`Define KiCad Component\` for every single component, \`Define KiCad Net\` for every electrical connection, and all physical layout rules (\`Add Proximity Constraint\`, \`Add Symmetry Constraint\`, etc.).
-- **TUNE THE SIMULATION:** After defining rules, call \`Set Simulation Heuristics\` to control how the physics engine behaves.
+**Phase 1: Component & System Definition**
+- Your primary goal is to define all components using "Define KiCad Component".
+- Use web search if necessary to find datasheets or parts.
+- Call "Update Workflow Checklist" to outline all components you plan to define.
 
-**Phase 2: Simulation and Arrangement**
-Once the system is fully defined, you will trigger the autonomous layout engine.
-- Call \`Arrange Components\` with the \`waitForUserInput\` parameter set to \`false\`. The system will then run a physics simulation to find an optimal layout and will pause your execution.
+**Phase 2: Schematic & Rules**
+- Once all components are defined, your goal is to connect them. Define all electrical connections using "Define KiCad Net".
+- Define all physical layout rules ("Add Proximity Constraint", "Add Symmetry Constraint", etc.).
+- Fine-tune the simulation by calling "Set Simulation Heuristics".
 
-**Phase 3: Finalize and Fabricate**
-You will be re-invoked after the simulation is complete. The history will now include a successful \`Update KiCad Component Positions\` call, which contains the final layout. Your task is to proceed with manufacturing file generation.
-- Call \`Generate KiCad Netlist\`.
-- Call \`Create Initial PCB\`. The board will be created with the components correctly placed.
-- Call \`Autoroute PCB\` to create the copper traces.
-- Call \`Export Fabrication Files\` to generate the manufacturing data (Gerbers, drill files).
+**Phase 3: Layout and Arrangement**
+- After defining rules, call "Arrange Components". This will trigger a simulation. Your mode (Collaborative or Autonomous) dictates the "waitForUserInput" parameter.
 
-**Phase 4: Completion**
-- **CRUCIAL FINAL STEP:** You MUST call \`Task Complete\` to signal the successful end of the entire design process.
+**Phase 4: Finalize and Fabricate**
+- After the layout is committed (indicated by a successful "Update KiCad Component Positions" call in the history), proceed with manufacturing.
+- Call "Generate KiCad Netlist".
+- Call "Create Initial PCB".
+- Call "Create Board Outline" and "Create Copper Pour".
+- Call "Autoroute PCB" to create traces.
+- Call "Export Fabrication Files".
+- **CRUCIAL FINAL STEP:** You MUST call "Task Complete" to signal the end of the process.
 
 **Mandatory Directives:**
-*   **MAXIMIZE BATCH SIZE:** Complete the design in as few turns as possible. Your output MUST be a single, large JSON array of all tool calls required to complete the CURRENT phase.
-*   **CHECK THE HISTORY:** Before acting, review the action history. DO NOT re-define a component or net that already exists.
-*   **USE THE PROJECT NAME:** Every tool call MUST use the project name: \`${projectName}\`.
+*   **MAXIMIZE BATCH SIZE:** Complete each design phase in as few turns as possible.
+*   **CHECK THE HISTORY:** Before acting, review the action history. DO NOT re-define existing items.
+*   **USE THE PROJECT NAME:** Every tool call MUST use the project name: "${projectName}".
 `;
 
 
@@ -108,18 +109,25 @@ export const useKicadManager = (props: UseKicadManagerProps) => {
     const [currentLayoutData, setCurrentLayoutData] = useState<KnowledgeGraph | null>(null);
     const [kicadProjectState, setKicadProjectState] = useState<KicadProjectState>({});
     const [workflowSteps, setWorkflowSteps] = useState<WorkflowStepState[]>(INITIAL_WORKFLOW_STEPS);
+    const [isAutonomousMode, setIsAutonomousMode] = useState(false);
     
     const layoutDataRef = useRef(currentLayoutData);
     layoutDataRef.current = currentLayoutData;
     
     const layoutHeuristics = currentLayoutData?.heuristics || {};
     
+    const logKicadEvent = useCallback((message: string) => {
+        const now = performance.now();
+        const delta = now - lastTimestamp.current;
+        lastTimestamp.current = now;
+        const formattedMessage = `[+${delta.toFixed(0)}ms] ${message}`;
+        setKicadLog(prev => [...prev.slice(-99), formattedMessage]);
+    }, []);
+
     const setLayoutHeuristics = useCallback((update: React.SetStateAction<any>) => {
         setCurrentLayoutData(prevData => {
             const prevHeuristics = prevData?.heuristics || {};
             const newHeuristics = typeof update === 'function' ? update(prevHeuristics) : update;
-            // The previous implementation was slightly redundant.
-            // This simplified version directly uses the new, complete heuristics object.
             return {
                 ...(prevData || INITIAL_LAYOUT_DATA),
                 heuristics: newHeuristics,
@@ -130,19 +138,17 @@ export const useKicadManager = (props: UseKicadManagerProps) => {
     const currentProjectNameRef = useRef<string | null>(null);
     const lastTimestamp = useRef(performance.now());
 
-    const logKicadEvent = useCallback((message: string) => {
-        const now = performance.now();
-        const delta = now - lastTimestamp.current;
-        lastTimestamp.current = now;
-        const formattedMessage = `[+${delta.toFixed(0)}ms] ${message}`;
-        setKicadLog(prev => [...prev.slice(-99), formattedMessage]);
-    }, []);
 
     const setCurrentProjectName = useCallback((name: string) => {
         currentProjectNameRef.current = name;
         if (!kicadProjectState[name]) {
             setKicadProjectState(prev => ({ ...prev, [name]: { components: [], nets: [], rules: [], board_outline: null } }));
         }
+    }, [kicadProjectState]);
+
+    const getKicadProjectState = useCallback(() => {
+        if (!currentProjectNameRef.current) return null;
+        return kicadProjectState[currentProjectNameRef.current] || null;
     }, [kicadProjectState]);
     
     const resetWorkflowSteps = useCallback(() => {
@@ -165,18 +171,31 @@ export const useKicadManager = (props: UseKicadManagerProps) => {
                 if (step.status === 'completed') continue;
                 const isTriggered = step.keywords.some(kw => lowerLog.includes(kw));
                 if (isTriggered) {
-                    for (let j = 0; j <= i; j++) {
+                    for (let j = 0; j < i; j++) { // Mark all previous steps as completed
                         if(newSteps[j].status !== 'completed') {
                             newSteps[j].status = 'completed';
                             hasChanged = true;
                         }
                     }
-                    if (newSteps[i+1]) {
-                        newSteps[i+1].status = 'in-progress';
+                     if (step.status !== 'in-progress') { // Start the current step
+                        step.status = 'in-progress';
                         hasChanged = true;
                     }
                 }
                 
+                 // Logic to complete a step and move to the next one
+                if(step.status === 'in-progress' && step.keywords.some(kw => lowerLog.includes(kw) && (lowerLog.includes('complete') || lowerLog.includes('finished') || lowerLog.includes('successful') || lowerLog.includes('updated') || lowerLog.includes('generated')))) {
+                     const isFabStep = step.name.includes("Routing & Fab");
+                     const isTaskComplete = lowerLog.includes("task completed");
+                     if (!isFabStep || (isFabStep && isTaskComplete)) {
+                        step.status = 'completed';
+                        if (newSteps[i+1]) {
+                            newSteps[i+1].status = 'in-progress';
+                        }
+                        hasChanged = true;
+                     }
+                }
+
                 if (step.status === 'in-progress') {
                     step.subtasks.forEach(st => {
                         if (st.status === 'pending' && lowerLog.includes(st.name.toLowerCase())) {
@@ -220,19 +239,28 @@ export const useKicadManager = (props: UseKicadManagerProps) => {
     }, []);
     
     const handleStartKicadTask = useCallback((
-        taskPayload: { prompt: string, files: any[], urls: string[], useSearch: boolean },
+        taskPayload: { prompt: string, files: any[], urls: string[], useSearch: boolean, isAutonomous: boolean },
         startSwarmTask: (options: any) => void,
         allToolsForTask: LLMTool[],
         getSystemPrompt: (name: string) => string
     ) => {
-        const { prompt, files, urls, useSearch } = taskPayload;
+        const { prompt, files, urls, useSearch, isAutonomous } = taskPayload;
         const projectName = `proj_${Date.now()}`;
         setCurrentProjectName(projectName);
-        setKicadLog([`[INFO] Starting new KiCad project: ${projectName}`]);
+        setKicadLog([ `[INFO] Starting new KiCad project: ${projectName}` ]);
         resetWorkflowSteps();
         setCurrentLayoutData({ ...INITIAL_LAYOUT_DATA });
 
-        let userRequestText = `Project Name: ${projectName}\n\nUser Prompt: ${prompt}`;
+        let userRequestText = `The user wants to design a PCB. Their request is: "${prompt}".`;
+        
+        if (isAutonomous) {
+            userRequestText += `\n\n**MODE: AUTONOMOUS**. You are the Lead Engineer. You must complete the entire task without pausing for user input. For the 'Arrange Components' step, you MUST set 'waitForUserInput' to false.`;
+            logEvent("🚀 Starting task in Autonomous Mode.");
+        } else {
+            userRequestText += `\n\n**MODE: COLLABORATIVE**. You are the Lead Engineer's assistant. For the 'Arrange Components' step, you MUST set 'waitForUserInput' to true to allow for manual review.`;
+            logEvent("🚀 Starting task in Collaborative Mode.");
+        }
+
         if (urls && urls.length > 0) {
             userRequestText += `\n\nReference URLs:\n${urls.join('\n')}`;
         }
@@ -249,13 +277,23 @@ export const useKicadManager = (props: UseKicadManagerProps) => {
             sequential: true,
             allTools: allToolsForTask,
         });
-    }, [logEvent, resetWorkflowSteps]);
+    }, [logEvent, resetWorkflowSteps, setCurrentProjectName]);
     
     const kicadSimulators = useMemo(() => {
         const simulators: any = {};
         const defineComponentSim = (args: any) => {
-            const { componentReference, footprintIdentifier, ...rest } = args;
-            const newComp = { ref: componentReference, ...rest, footprint: footprintIdentifier };
+            const { componentReference, footprintIdentifier, metaphysicalPropertiesJSON, ...rest } = args;
+            let metaphysicalProperties = {};
+            if (metaphysicalPropertiesJSON) {
+                try { metaphysicalProperties = JSON.parse(metaphysicalPropertiesJSON); } catch (e) { console.warn("Could not parse metaphysicalPropertiesJSON"); }
+            }
+            const newComp = { ref: componentReference, ...rest, footprint: footprintIdentifier, metaphysicalProperties };
+            
+            setKicadProjectState(prev => {
+                const current = prev[currentProjectNameRef.current!] || { components: [], nets: [], rules: [], board_outline: null };
+                return { ...prev, [currentProjectNameRef.current!]: { ...current, components: [...current.components.filter(c => c.ref !== newComp.ref), newComp] } };
+            });
+
             const newNode: KnowledgeGraphNode = {
                 id: newComp.ref, label: newComp.ref, 
                 placeholder_dimensions: newComp.placeholder_dimensions,
@@ -267,9 +305,15 @@ export const useKicadManager = (props: UseKicadManagerProps) => {
             return { success: true, message: `[SIM] Component '${componentReference}' defined.`, component: newComp, newNode: newNode };
         };
         const defineNetSim = (args: any) => {
-            const { netName, pins } = args;
+            const { netName, pins, ritualDescription } = args;
             const pinsArray = typeof pins === 'string' ? JSON.parse(pins) : pins;
-            const newNet = { name: netName, pins: pinsArray };
+            const newNet = { name: netName, pins: pinsArray, ritualDescription: ritualDescription || "" };
+
+            setKicadProjectState(prev => {
+                const current = prev[currentProjectNameRef.current!] || { components: [], nets: [], rules: [], board_outline: null };
+                return { ...prev, [currentProjectNameRef.current!]: { ...current, nets: [...current.nets.filter(n => n.name !== newNet.name), newNet] } };
+            });
+
             const newEdges: KnowledgeGraphEdge[] = [];
             for (let i = 0; i < pinsArray.length; i++) {
                 for (let j = i + 1; j < pinsArray.length; j++) {
@@ -343,9 +387,6 @@ export const useKicadManager = (props: UseKicadManagerProps) => {
             if (!currentData) {
                 throw new Error("[SIM] arrange_components failed: currentLayoutData is null.");
             }
-            // Construct the data object that will be sent to the UI for the pause state.
-            // Crucially, this object does NOT include the 'heuristics' key, so it won't
-            // overwrite the existing heuristics when the state is updated.
             const layout_data_for_pause = {
                 nodes: currentData.nodes,
                 edges: currentData.edges,
@@ -362,28 +403,31 @@ export const useKicadManager = (props: UseKicadManagerProps) => {
             };
         };
         simulators.update_component_positions = (args: any) => ({ success: true, message: '[SIM] Component positions updated.' });
-        simulators.autoroute_pcb = (args: any) => ({ success: true, message: '[SIM] Autorouting complete.', current_artifact: {title: "Routed PCB (Simulated)", path: 'assets/demo_routed.svg', svgPath: 'assets/demo_routed.svg'} });
-        simulators.export_fabrication_files = (args: any) => ({ success: true, message: "[SIM] Fabrication files exported.", artifacts: { boardName: args.projectName, glbPath: `assets/demo_board.glb`, fabZipPath: `assets/demo_fab.zip` }});
+        simulators.autoroute_pcb = (args: any) => ({ success: true, message: '[SIM] Autorouting complete.', current_artifact: {title: "Routed PCB (Simulated)", path: 'game/artifacts/boards/phylactery_of_true_sight_routed.svg', svgPath: 'game/artifacts/boards/phylactery_of_true_sight_routed.svg'} });
+        simulators.export_fabrication_files = (args: any) => ({ success: true, message: "[SIM] Fabrication files exported.", artifacts: { boardName: args.projectName, glbPath: `game/artifacts/boards/phylactery_of_true_sight_board.glb`, fabZipPath: `game/artifacts/boards/phylactery_of_true_sight_fab.zip` }});
         return simulators;
-    }, []);
+    }, [setCurrentLayoutData, setKicadProjectState]);
 
     return {
         state: {
             pcbArtifacts, kicadLog, currentKicadArtifact,
             isLayoutInteractive, currentLayoutData, kicadProjectState, workflowSteps,
-            layoutHeuristics,
+            layoutHeuristics, isAutonomousMode,
         },
         setters: {
             setPcbArtifacts, setCurrentKicadArtifact,
-            setIsLayoutInteractive, setCurrentLayoutData,
+            setIsLayoutInteractive,
+            setCurrentLayoutData: setCurrentLayoutData,
             setLayoutHeuristics,
             setKicadLog,
+            setIsAutonomousMode,
         },
         handlers: {
             handleStartKicadTask, setCurrentProjectName, updateWorkflowChecklist,
             handleUpdateLayout: setCurrentLayoutData,
             resetWorkflowSteps,
             INITIAL_LAYOUT_DATA,
+            getKicadProjectState,
         },
         logKicadEvent,
         currentProjectNameRef,

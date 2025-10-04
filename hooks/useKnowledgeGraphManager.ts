@@ -6,10 +6,11 @@ import { generateEmbeddings } from '../services/embeddingService';
 
 type UseKnowledgeGraphManagerProps = {
     logEvent: (message: string) => void;
+    executeTool: (toolName: string, args: any) => Promise<any>;
 };
 
 export const useKnowledgeGraphManager = (props: UseKnowledgeGraphManagerProps) => {
-    const { logEvent } = props;
+    const { logEvent, executeTool } = props;
     
     const [graph, setGraph] = useState<KnowledgeGraph | null>(INNOVATION_KNOWLEDGE_GRAPH);
     const [isLoading, setIsLoading] = useState(false);
@@ -55,18 +56,19 @@ export const useKnowledgeGraphManager = (props: UseKnowledgeGraphManagerProps) =
         // embedNodes(); // Prevent auto-loading on startup
     }, [graph, nodeEmbeddings.size, isEmbedding, logEvent]);
 
-    const kgViewerProps = {
+    const innovationGraphViewerProps = {
         graph,
         isLoading,
         isEmbedding,
         nodeEmbeddings,
         onRefresh: fetchGraph,
+        executeTool,
     };
 
     return {
         state: { graph, isLoading, isEmbedding, nodeEmbeddings },
         handlers: { fetchGraph, setGraph },
         graphStateRef,
-        kgViewerProps, // Pass down a convenient props object
+        innovationGraphViewerProps, // Pass down a convenient props object
     };
 };

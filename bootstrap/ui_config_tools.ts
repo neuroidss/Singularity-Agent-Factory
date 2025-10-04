@@ -1,5 +1,6 @@
 import type { ToolCreatorPayload } from '../types';
 import { LOCAL_AI_PANEL_TOOL_PAYLOAD } from './local_ai_tools';
+import { IMAGE_MODELS, TTS_MODELS, MUSIC_MODELS, VIDEO_MODELS, LIVE_MODELS, TTS_VOICES } from '../constants';
 
 export const UI_CONFIG_TOOLS: ToolCreatorPayload[] = [
     {
@@ -51,8 +52,9 @@ export const UI_CONFIG_TOOLS: ToolCreatorPayload[] = [
         ],
         implementationCode: `
           const handleModelChange = (e) => {
-            const modelId = e.target.value;
-            const model = availableModels.find(m => m.id === modelId);
+            const uniqueId = e.target.value;
+            const [provider, modelId] = uniqueId.split('::');
+            const model = availableModels.find(m => m.id === modelId && m.provider === provider);
             if (model) {
               setSelectedModel(model);
             }
@@ -101,7 +103,7 @@ export const UI_CONFIG_TOOLS: ToolCreatorPayload[] = [
               <div>
                 <select
                   id="model-select"
-                  value={selectedModel?.id || ''}
+                  value={selectedModel ? \`\${selectedModel.provider}::\${selectedModel.id}\` : ''}
                   onChange={handleModelChange}
                   className="w-full bg-gray-900 border border-gray-600 rounded-lg p-2 focus:ring-2 focus:ring-indigo-500"
                 >
@@ -109,7 +111,7 @@ export const UI_CONFIG_TOOLS: ToolCreatorPayload[] = [
                     models.length > 0 && (
                       <optgroup key={providerName} label={providerName.replace('_API', ' API')}>
                         {models.map(model => (
-                          <option key={model.id} value={model.id}>
+                          <option key={\`\${model.provider}::\${model.id}\`} value={\`\${model.provider}::\${model.id}\`}>
                             {model.name}
                           </option>
                         ))}
@@ -169,6 +171,81 @@ export const UI_CONFIG_TOOLS: ToolCreatorPayload[] = [
         `
     },
     {
+        name: 'Generative Services Panel',
+        description: 'A UI panel for configuring models and voices for generative services like image, speech, and music.',
+        category: 'UI Component',
+        executionEnvironment: 'Client',
+        purpose: 'To provide user control over which models and voices are used for multimodal generation, enabling local model usage.',
+        parameters: [
+            { name: 'config', type: 'object', description: 'The current generative services configuration object.', required: true },
+            { name: 'setConfig', type: 'object', description: 'Function to update the configuration object.', required: true },
+        ],
+        implementationCode: `
+            const imageModels = ${JSON.stringify(IMAGE_MODELS)};
+            const ttsModels = ${JSON.stringify(TTS_MODELS)};
+            const musicModels = ${JSON.stringify(MUSIC_MODELS)};
+            const videoModels = ${JSON.stringify(VIDEO_MODELS)};
+            const liveModels = ${JSON.stringify(LIVE_MODELS)};
+            const ttsVoices = ${JSON.stringify(TTS_VOICES)};
+
+            const handleChange = (e) => {
+                setConfig(prev => ({ ...prev, [e.target.name]: e.target.value }));
+            };
+
+            return (
+                <div className="bg-gray-800/60 border border-gray-700 rounded-xl p-3 space-y-3">
+                    <h3 className="text-lg font-bold text-indigo-300">Generative Services</h3>
+                    
+                    <div>
+                        <label htmlFor="imageModel" className="block text-sm font-medium text-gray-300 mb-1">Image Generation</label>
+                        <select name="imageModel" id="imageModel" value={config.imageModel} onChange={handleChange} className="w-full bg-gray-900 border border-gray-600 rounded-lg p-2 focus:ring-2 focus:ring-indigo-500">
+                            {imageModels.map(m => <option key={m.id} value={m.id}>{m.name}</option>)}
+                        </select>
+                        {config.imageModel === 'comfyui_stable_diffusion' && <p className="text-xs text-gray-400 mt-1">Note: ComfyUI integration is not yet implemented.</p>}
+                    </div>
+
+                    <div>
+                        <label htmlFor="videoModel" className="block text-sm font-medium text-gray-300 mb-1">Video Generation</label>
+                        <select name="videoModel" id="videoModel" value={config.videoModel} onChange={handleChange} className="w-full bg-gray-900 border border-gray-600 rounded-lg p-2 focus:ring-2 focus:ring-indigo-500">
+                            {videoModels.map(m => <option key={m.id} value={m.id}>{m.name}</option>)}
+                        </select>
+                    </div>
+
+                    <div>
+                        <label htmlFor="ttsModel" className="block text-sm font-medium text-gray-300 mb-1">Text-to-Speech</label>
+                        <select name="ttsModel" id="ttsModel" value={config.ttsModel} onChange={handleChange} className="w-full bg-gray-900 border border-gray-600 rounded-lg p-2 focus:ring-2 focus:ring-indigo-500">
+                           {ttsModels.map(m => <option key={m.id} value={m.id}>{m.name}</option>)}
+                        </select>
+                    </div>
+
+                    {config.ttsModel === 'gemini' && (
+                        <div>
+                            <label htmlFor="ttsVoice" className="block text-sm font-medium text-gray-300 mb-1">Gemini Voice</label>
+                            <select name="ttsVoice" id="ttsVoice" value={config.ttsVoice} onChange={handleChange} className="w-full bg-gray-900 border border-gray-600 rounded-lg p-2 focus:ring-2 focus:ring-indigo-500">
+                                {ttsVoices.map(v => <option key={v} value={v}>{v}</option>)}
+                            </select>
+                        </div>
+                    )}
+                    
+                     <div>
+                        <label htmlFor="musicModel" className="block text-sm font-medium text-gray-300 mb-1">Music Generation</label>
+                        <select name="musicModel" id="musicModel" value={config.musicModel} onChange={handleChange} className="w-full bg-gray-900 border border-gray-600 rounded-lg p-2 focus:ring-2 focus:ring-indigo-500">
+                            {musicModels.map(m => <option key={m.id} value={m.id}>{m.name}</option>)}
+                        </select>
+                        {config.musicModel === 'local_musicgen' && <p className="text-xs text-gray-400 mt-1">Note: MusicGen integration is not yet implemented.</p>}
+                     </div>
+
+                     <div>
+                        <label htmlFor="liveModel" className="block text-sm font-medium text-gray-300 mb-1">Live Conversation</label>
+                        <select name="liveModel" id="liveModel" value={config.liveModel} onChange={handleChange} className="w-full bg-gray-900 border border-gray-600 rounded-lg p-2 focus:ring-2 focus:ring-indigo-500">
+                            {liveModels.map(m => <option key={m.id} value={m.id}>{m.name}</option>)}
+                        </select>
+                     </div>
+                </div>
+            );
+        `
+    },
+    {
         name: 'Tool Selection Mode',
         description: 'Selects the method for filtering tools provided to the agent.',
         category: 'UI Component',
@@ -205,7 +282,7 @@ export const UI_CONFIG_TOOLS: ToolCreatorPayload[] = [
                                     />
                                 </div>
                                 <div className="ml-3 text-sm">
-                                    <label htmlFor={mode.id} className={\`font-medium \${isSwarmRunning ? 'text-gray-500' : 'text-gray-200'}\`}>
+                                    <label htmlFor={mode.id} className={"font-medium " + (isSwarmRunning ? 'text-gray-500' : 'text-gray-200')}>
                                         {mode.label}
                                     </label>
                                     <p className="text-gray-400 text-xs">{mode.description}</p>

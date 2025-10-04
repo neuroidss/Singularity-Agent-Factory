@@ -1,8 +1,143 @@
 // bootstrap/sim/graphics.ts
 
 export const GraphicsClassString = `
+class ThirdPersonCamera {
+    constructor(camera, domElement, THREE) {
+        this.camera = camera;
+        this.domElement = domElement;
+        this.THREE = THREE;
+        this.target = null;
+
+        this.currentPosition = new this.THREE.Vector3();
+        this.currentLookat = new this.THREE.Vector3();
+
+        this.isMouseDown = false;
+        this.phi = Math.PI / 3.5; // Vertical angle
+        this.theta = 0; // Horizontal angle
+        this.distance = 50; // Camera distance from target
+        
+        // Add gamepad state
+        this.gamepadIndex = null;
+        this.boundGamepadConnected = this.onGamepadConnected.bind(this);
+        this.boundGamepadDisconnected = this.onGamepadDisconnected.bind(this);
+        
+        this.onPointerDown = this.onPointerDown.bind(this);
+        this.onPointerMove = this.onPointerMove.bind(this);
+        this.onPointerUp = this.onPointerUp.bind(this);
+        this.onWheel = this.onWheel.bind(this);
+
+        this.domElement.addEventListener('pointerdown', this.onPointerDown);
+        this.domElement.addEventListener('wheel', this.onWheel, { passive: false });
+        window.addEventListener('gamepadconnected', this.boundGamepadConnected);
+        window.addEventListener('gamepaddisconnected', this.boundGamepadDisconnected);
+        this.findGamepad(); // Check if a gamepad is already connected
+    }
+    
+    findGamepad() {
+        const gamepads = navigator.getGamepads();
+        for (let i = 0; i < gamepads.length; i++) {
+            if (gamepads[i]) {
+                this.gamepadIndex = i;
+                break;
+            }
+        }
+    }
+    
+    onGamepadConnected(event) {
+        if (this.gamepadIndex === null) {
+            this.gamepadIndex = event.gamepad.index;
+        }
+    }
+
+    onGamepadDisconnected(event) {
+        if (this.gamepadIndex === event.gamepad.index) {
+            this.gamepadIndex = null;
+        }
+    }
+
+    onPointerDown(event) {
+        if (event.button !== 0) return;
+        this.isMouseDown = true;
+        this.domElement.addEventListener('pointermove', this.onPointerMove);
+        this.domElement.addEventListener('pointerup', this.onPointerUp);
+    }
+    
+    onPointerMove(event) {
+        if (!this.isMouseDown) return;
+        this.theta -= event.movementX * 0.005;
+        this.phi -= event.movementY * 0.005;
+        this.phi = Math.max(0.1, Math.min(Math.PI / 2.1, this.phi)); // Clamp vertical angle
+    }
+    
+    onPointerUp(event) {
+        this.isMouseDown = false;
+        this.domElement.removeEventListener('pointermove', this.onPointerMove);
+        this.domElement.removeEventListener('pointerup', this.onPointerUp);
+    }
+
+    onWheel(event) {
+        event.preventDefault();
+        this.distance += event.deltaY * 0.05;
+        this.distance = Math.max(10, Math.min(200, this.distance)); // Clamp distance
+    }
+
+    update(targetMesh) {
+        // Add gamepad input handling at the top
+        if (this.gamepadIndex !== null) {
+            const gp = navigator.getGamepads()[this.gamepadIndex];
+            if (gp) {
+                const rightStickX = gp.axes[2] || 0;
+                const rightStickY = gp.axes[3] || 0;
+                const deadzone = 0.15;
+
+                if (Math.abs(rightStickX) > deadzone) {
+                    this.theta -= rightStickX * 0.03;
+                }
+                if (Math.abs(rightStickY) > deadzone) {
+                    this.phi -= rightStickY * 0.03;
+                    this.phi = Math.max(0.1, Math.min(Math.PI / 2.1, this.phi));
+                }
+            }
+        }
+
+        if (!targetMesh) {
+            this.camera.lookAt(0, 0, 0);
+            return;
+        }
+        this.target = targetMesh;
+        const targetPosition = new this.THREE.Vector3();
+        this.target.getWorldPosition(targetPosition);
+        targetPosition.y += 5; // Look slightly above the target's origin
+
+        const offset = new this.THREE.Vector3();
+        offset.x = this.distance * Math.sin(this.phi) * Math.sin(this.theta);
+        offset.y = this.distance * Math.cos(this.phi);
+        offset.z = this.distance * Math.sin(this.phi) * Math.cos(this.theta);
+
+        const cameraPosition = targetPosition.clone().add(offset);
+        
+        this.currentPosition.lerp(cameraPosition, 0.1);
+        this.camera.position.copy(this.currentPosition);
+        
+        this.currentLookat.lerp(targetPosition, 0.1);
+        this.camera.lookAt(this.currentLookat);
+    }
+
+    cleanup() {
+        this.domElement.removeEventListener('pointerdown', this.onPointerDown);
+        this.domElement.removeEventListener('wheel', this.onWheel);
+        this.domElement.removeEventListener('pointermove', this.onPointerMove);
+        this.domElement.removeEventListener('pointerup', this.onPointerUp);
+        
+        // Cleanup gamepad listeners
+        window.removeEventListener('gamepadconnected', this.boundGamepadConnected);
+        window.removeEventListener('gamepaddisconnected', this.boundGamepadDisconnected);
+    }
+}
+
+
 class Graphics {
-    constructor(mountNode, THREE, OrbitControls, GLTFLoader, SVGLoader, boardOutline, scale, isServerConnected) {
+    constructor(mountNode, THREE, OrbitControls, GLTFLoader, SVGLoader, boardOutline, scale, isServerConnected, mode, playerId = null) {
         this.THREE = THREE;
         this.GLTFLoader = GLTFLoader;
         this.SVGLoader = SVGLoader;
@@ -17,8 +152,16 @@ class Graphics {
         this.renderer = new this.THREE.WebGLRenderer({ antialias: true });
         this.renderer.setSize(mountNode.clientWidth, mountNode.clientHeight);
         mountNode.appendChild(this.renderer.domElement);
-        this.controls = new OrbitControls(this.camera, this.renderer.domElement);
-        this.controls.enableDamping = true;
+        
+        this.mode = mode;
+        this.playerId = playerId;
+        if (this.mode === 'robotics') {
+            this.controls = new ThirdPersonCamera(this.camera, this.renderer.domElement, this.THREE);
+        } else {
+            this.controls = new OrbitControls(this.camera, this.renderer.domElement);
+            this.controls.enableDamping = true;
+        }
+
         this.scene.add(new this.THREE.AmbientLight(0xffffff, 1.5));
         const dirLight = new this.THREE.DirectionalLight(0xffffff, 3.0);
         dirLight.position.set(50, 100, 75);
@@ -126,7 +269,7 @@ class Graphics {
             if (minDist === distToMinX) return new this.THREE.Vector3(boardMinX, worldPos.y, closestZ);
             if (minDist === distToMaxX) return new this.THREE.Vector3(boardMaxX, worldPos.y, closestZ);
             if (minDist === distToMinZ) return new this.THREE.Vector3(closestX, worldPos.y, boardMinZ);
-            return new this.THREE.Vector3(closestX, worldPos.y, boardMaxZ);
+            return new this.THREE.Vector3(closestX, worldPos.y, maxZ);
         }
     }
     
@@ -196,7 +339,7 @@ class Graphics {
     }
 
     onPointerDown(event) {
-        if (event.button !== 0 || !this.simulation) return;
+        if (event.button !== 0 || !this.simulation || this.mode === 'robotics') return; // Disable dragging in game mode
         this.updateMouse(event);
         this.raycaster.setFromCamera(this.mouse, this.camera);
         const allMeshes = Array.from(this.meshes.values()).flatMap(m => [m.placeholder, m.glb, m.footprint]).filter(Boolean);
@@ -224,11 +367,32 @@ class Graphics {
             this.raycaster.setFromCamera(this.mouse, this.camera);
             const intersection = new this.THREE.Vector3();
             if (this.raycaster.ray.intersectPlane(this.plane, intersection)) {
-                 if (this.draggedObject.userData.agentId) {
-                    this.simulation.dragAgent(this.draggedObject.userData.agentId, intersection);
+                const agentId = this.draggedObject.userData.agentId;
+                 if (agentId) {
+                    const meshEntry = this.meshes.get(agentId);
+                    if (meshEntry) {
+                        // Directly update X and Z for all visual meshes. Y is handled by render loop.
+                        if (meshEntry.placeholder) {
+                            meshEntry.placeholder.position.x = intersection.x;
+                            meshEntry.placeholder.position.z = intersection.z;
+                        }
+                        if (meshEntry.glb) {
+                            meshEntry.glb.position.x = intersection.x;
+                            meshEntry.glb.position.z = intersection.z;
+                        }
+                        if (meshEntry.courtyard) {
+                            meshEntry.courtyard.position.x = intersection.x;
+                            meshEntry.courtyard.position.z = intersection.z;
+                        }
+                        if (meshEntry.footprint) {
+                            meshEntry.footprint.position.x = intersection.x;
+                            meshEntry.footprint.position.z = intersection.z;
+                        }
+                    }
+                    this.simulation.dragAgent(agentId, intersection);
                 }
             }
-        } else { 
+        } else {
             this.raycaster.setFromCamera(this.mouse, this.camera);
             const allMeshes = Array.from(this.meshes.values()).flatMap(m => [m.placeholder, m.glb, m.footprint]).filter(Boolean);
             const intersects = this.raycaster.intersectObjects(allMeshes, true);
@@ -246,7 +410,7 @@ class Graphics {
     }
 
     onPointerUp(event) {
-        this.controls.enabled = true;
+        if (this.mode !== 'robotics') this.controls.enabled = true;
         if (this.draggedObject && this.simulation) {
             this.simulation.stopDragAgent();
             this.draggedObject = null;
@@ -254,7 +418,7 @@ class Graphics {
     }
     
     handleDoubleClick(event) {
-        if (!this.simulation) return;
+        if (!this.simulation || this.mode === 'robotics') return;
         this.updateMouse(event);
         this.raycaster.setFromCamera(this.mouse, this.camera);
         const allMeshes = Array.from(this.meshes.values()).flatMap(m => [m.placeholder, m.glb, m.footprint]).filter(Boolean);
@@ -277,25 +441,28 @@ class Graphics {
             this.boardMesh = null;
         }
 
-        if (!outline || !outline.width || !outline.height) return;
+        if (!outline || !outline.width || !outline.height) {
+            return;
+        }
 
         const boardMaterial = new this.THREE.MeshStandardMaterial({ color: 0x004d00, metalness: 0.2, roughness: 0.8, side: this.THREE.DoubleSide });
-        const boardHeight = 1.6 * scale;
-        this.boardY = boardHeight / 2;
+        const boardHeight = this.mode === 'pcb' ? 1.6 * scale : 0.2 * scale;
+        this.boardY = this.mode === 'pcb' ? boardHeight / 2 : 0;
         let boardGeom;
+        
+        const width = outline.width * scale;
+        const depth = outline.height * scale;
 
         if (outline.shape === 'circle') {
             const radius = (outline.width / 2) * scale;
             boardGeom = new this.THREE.CylinderGeometry(radius, radius, boardHeight, 64);
         } else {
-            const width = outline.width * scale;
-            const depth = outline.height * scale;
             boardGeom = new this.THREE.BoxGeometry(width, boardHeight, depth);
         }
         this.boardMesh = new this.THREE.Mesh(boardGeom, boardMaterial);
         const centerX = (outline.x + outline.width / 2) * scale;
         const centerZ = (outline.y + outline.height / 2) * scale;
-        this.boardMesh.position.set(centerX, 0, centerZ);
+        this.boardMesh.position.set(centerX, this.mode === 'pcb' ? 0 : -boardHeight/2, centerZ);
         this.scene.add(this.boardMesh);
     }
 
@@ -355,6 +522,7 @@ class Graphics {
                 geom = new this.THREE.BoxGeometry(agentSize, agentSize, agentSize);
                 mat = this.envMaterial.clone();
              }
+             geom.translate(0, agentSize / 2, 0);
         }
         const mesh = new this.THREE.Mesh(geom, mat);
         if(node.type === 'robot') mesh.rotation.x = Math.PI / 2;
@@ -440,21 +608,15 @@ class Graphics {
                 this.scene.add(group);
             };
 
-            const attemptLoadSvg = (url, isFallback = false) => {
-                const cacheBuster = '?t=' + new Date().getTime();
+            const attemptLoadSvg = (url) => {
                 if (window.cacheService) {
                     window.cacheService.getAssetBlob(url).then(async (blob) => {
                         if (blob) {
                             loadSvgFromText(await blob.text());
                         } else {
-                            fetch(url + cacheBuster)
+                            fetch(url)
                                 .then(res => {
                                     if (res.ok) return res.text();
-                                    if (!isFallback && this.isServerConnected) {
-                                        console.warn(\`[SVG] Failed to load from server '\\\${url}'. Falling back to local path.\`);
-                                        attemptLoadSvg(node.svgPath, true);
-                                        return null;
-                                    }
                                     return Promise.reject(new Error(\`HTTP \\\${res.status} for \\\${url}\`));
                                 })
                                 .then(svgText => {
@@ -464,9 +626,7 @@ class Graphics {
                                     }
                                 })
                                 .catch(err => {
-                                    if (isFallback || !this.isServerConnected) {
-                                        console.error(\`[SVG] Final attempt to load '\\\${url}' failed:\`, err);
-                                    }
+                                    console.warn(\`[SVG LOAD FAILED] Could not load SVG from '\\\${url}'. Error: \${err.message}\`);
                                 });
                         }
                     });
@@ -477,7 +637,7 @@ class Graphics {
                 ? 'http://localhost:3001/' + node.svgPath
                 : node.svgPath;
             
-            attemptLoadSvg(initialSvgUrl, !this.isServerConnected);
+            attemptLoadSvg(initialSvgUrl);
         }
         
         const assetPath = (mode === 'pcb' && node.glbPath) ? node.glbPath :
@@ -554,21 +714,15 @@ class Graphics {
                 }, undefined, (error) => console.error(\`[GLB] Error loading model from blob for \\\${id}:\`, error));
             };
 
-            const attemptLoadGlb = (url, isFallback = false) => {
-                const cacheBuster = '?t=' + new Date().getTime();
+            const attemptLoadGlb = (url) => {
                 if (window.cacheService) {
                     window.cacheService.getAssetBlob(url).then(async (blob) => {
                         if (blob) {
                             loadGltfFromBlob(blob);
                         } else {
-                            fetch(url + cacheBuster)
+                            fetch(url)
                                 .then(res => {
                                     if (res.ok) return res.blob();
-                                    if (!isFallback && this.isServerConnected) {
-                                        console.warn(\`[GLB] Failed to load from server '\\\${url}'. Falling back to local path.\`);
-                                        attemptLoadGlb(assetPath, true);
-                                        return null;
-                                    }
                                     return Promise.reject(new Error(\`HTTP \\\${res.status} for \\\${url}\`));
                                 })
                                 .then(blob => {
@@ -578,9 +732,7 @@ class Graphics {
                                     }
                                 })
                                 .catch(err => {
-                                    if (isFallback || !this.isServerConnected) {
-                                        console.error(\`[GLB] Final attempt to load '\\\${url}' failed:\`, err);
-                                    }
+                                    console.warn(\`[GLB LOAD FAILED] Could not load model from '\\\${url}'. Using placeholder. Error: \${err.message}\`);
                                 });
                         }
                     });
@@ -591,7 +743,7 @@ class Graphics {
                 ? 'http://localhost:3001/' + assetPath
                 : assetPath;
             
-            attemptLoadGlb(initialGlbUrl, !this.isServerConnected);
+            attemptLoadGlb(initialGlbUrl);
         }
     }
 
@@ -658,6 +810,13 @@ class Graphics {
 
     render() {
         if (!this.simulation) return;
+
+        if (this.mode === 'robotics' && this.playerId) {
+            const playerMesh = this.meshes.get(this.playerId)?.glb || this.meshes.get(this.playerId)?.placeholder;
+            this.controls.update(playerMesh);
+        } else {
+            this.controls.update();
+        }
         
         this.meshes.forEach((meshEntry, id) => {
             const pos = this.simulation.getPosition(id);
@@ -666,21 +825,47 @@ class Graphics {
             if (!pos || !simRot || !node) return;
 
             const isBottom = node.side === 'bottom';
+            const isDragged = this.draggedObject && this.draggedObject.userData.agentId === id;
+            
+            const updateRotation = (mesh, additionalRotation) => {
+                if (mesh) {
+                    if (additionalRotation) {
+                        const finalRot = new this.THREE.Quaternion().multiplyQuaternions(simRot, additionalRotation);
+                        mesh.quaternion.copy(finalRot);
+                    } else {
+                        mesh.quaternion.copy(simRot);
+                    }
+                }
+            };
 
             if (meshEntry.placeholder) {
-                meshEntry.placeholder.position.set(pos.x, pos.y, pos.z);
-                meshEntry.placeholder.quaternion.copy(simRot);
+                if (!isDragged) {
+                    meshEntry.placeholder.position.set(pos.x, pos.y, pos.z);
+                } else {
+                    meshEntry.placeholder.position.y = pos.y;
+                }
+                updateRotation(meshEntry.placeholder);
                 meshEntry.placeholder.visible = this.visibility.placeholders && (!meshEntry.glb || !this.visibility.glb);
             }
+
             if (meshEntry.glb) {
-                meshEntry.glb.position.set(pos.x, pos.y, pos.z);
-                meshEntry.glb.quaternion.copy(simRot);
+                if (!isDragged) {
+                    meshEntry.glb.position.set(pos.x, pos.y, pos.z);
+                } else {
+                    meshEntry.glb.position.y = pos.y;
+                }
+                updateRotation(meshEntry.glb);
                 meshEntry.glb.visible = this.visibility.glb;
             }
+
             if (meshEntry.courtyard) {
                 const courtyardY = isBottom ? -this.boardY : this.boardY;
-                meshEntry.courtyard.position.set(pos.x, courtyardY, pos.z);
-                meshEntry.courtyard.quaternion.copy(simRot);
+                if (!isDragged) {
+                    meshEntry.courtyard.position.set(pos.x, courtyardY, pos.z);
+                } else {
+                    meshEntry.courtyard.position.y = courtyardY;
+                }
+                updateRotation(meshEntry.courtyard);
                 meshEntry.courtyard.visible = this.visibility.courtyards;
                 
                 const targetMaterials = this.materials.courtyard[isBottom ? 'bottom' : 'top'];
@@ -691,12 +876,14 @@ class Graphics {
             }
             
             if (meshEntry.footprint) {
-                const zUpToYUpQuaternion = new this.THREE.Quaternion().setFromEuler(new this.THREE.Euler(-Math.PI / 2, 0, 0));
                 const footprintY = isBottom ? -this.boardY - 0.1 : this.boardY + 0.1;
-                meshEntry.footprint.position.set(pos.x, footprintY, pos.z);
-                
-                const finalFootprintRot = new this.THREE.Quaternion().multiplyQuaternions(simRot, zUpToYUpQuaternion);
-                meshEntry.footprint.quaternion.copy(finalFootprintRot);
+                if (!isDragged) {
+                    meshEntry.footprint.position.set(pos.x, footprintY, pos.z);
+                } else {
+                    meshEntry.footprint.position.y = footprintY;
+                }
+                const zUpToYUpQuaternion = new this.THREE.Quaternion().setFromEuler(new this.THREE.Euler(-Math.PI / 2, 0, 0));
+                updateRotation(meshEntry.footprint, zUpToYUpQuaternion);
                 meshEntry.footprint.visible = this.visibility.svg;
 
                 const targetMaterial = this.materials.footprint[isBottom ? 'bottom' : 'top'];
@@ -707,7 +894,7 @@ class Graphics {
                 });
             }
         });
-
+        
         if (this.visibility.nets && this.simulation && this.netLines.size > 0) {
             this.netLines.forEach(line => {
                 const positions = line.geometry.attributes.position.array;
@@ -739,7 +926,6 @@ class Graphics {
             });
         }
         
-        this.controls.update();
         this.renderer.render(this.scene, this.camera);
     }
 
@@ -751,6 +937,8 @@ class Graphics {
         this.renderer.domElement.removeEventListener('pointerdown', this.boundPointerDown);
         this.renderer.domElement.removeEventListener('pointermove', this.boundPointerMove);
         this.renderer.domElement.removeEventListener('pointerup', this.boundPointerUp);
+        if(this.controls.cleanup) this.controls.cleanup();
+
         if (this.renderer.domElement.parentElement) {
             this.renderer.domElement.parentElement.removeChild(this.renderer.domElement);
         }

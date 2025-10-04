@@ -1,3 +1,4 @@
+
 // bootstrap/ui_layout_rules_tools.ts
 
 import type { ToolCreatorPayload } from '../types';
@@ -113,7 +114,7 @@ return (
         
         <div className="flex-grow overflow-y-auto pr-1 space-y-2">
             {(rules || []).map((rule, index) => (
-                <div key={index} className={\`p-2 rounded-lg bg-gray-900/50 border \${rule.enabled ? 'border-cyan-700/80' : 'border-gray-700'} transition-colors\`}>
+                <div key={index} className={"p-2 rounded-lg bg-gray-900/50 border transition-colors " + (rule.enabled ? 'border-cyan-700/80' : 'border-gray-700')}>
                    <div className="flex justify-between items-center">
                         <span className="font-semibold text-sm truncate pr-2">{rule.type.replace(/([A-Z])/g, ' $1').trim()}</span>
                         <div className="flex items-center gap-2">

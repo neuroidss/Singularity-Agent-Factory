@@ -1,5 +1,3 @@
-
-
 import { useState, useCallback } from 'react';
 import { AI_MODELS } from '../constants';
 import type { AIModel, APIConfig, MainView } from '../types';
@@ -25,6 +23,15 @@ export const useAppStateManager = () => {
         return initialConfig;
     });
 
+    const [generativeServiceConfig, setGenerativeServiceConfig] = useState({
+        imageModel: 'gemini-2.5-flash-image-preview',
+        ttsModel: 'gemini',
+        ttsVoice: 'Zephyr',
+        musicModel: 'lyria',
+        videoModel: 'veo-2.0-generate-001',
+        liveModel: 'gemini-2.5-flash-native-audio-preview-09-2025',
+    });
+
     const logEvent = useCallback((message: string) => {
       const timestamp = new Date().toLocaleTimeString();
       setEventLog(prev => [...prev.slice(-199), `[${timestamp}] ${message}`]);
@@ -39,6 +46,7 @@ export const useAppStateManager = () => {
             selectedModel,
             apiConfig,
             useSearch,
+            generativeServiceConfig,
         },
         setters: {
             setUserInput,
@@ -48,6 +56,7 @@ export const useAppStateManager = () => {
             setSelectedModel,
             setApiConfig,
             setUseSearch,
+            setGenerativeServiceConfig,
         },
         logEvent,
     };

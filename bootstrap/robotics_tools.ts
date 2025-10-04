@@ -1,26 +1,6 @@
 import type { ToolCreatorPayload } from '../types';
 
-export const ROBOTICS_TOOLS: ToolCreatorPayload[] = [
-    {
-        name: 'Define Robot Agent',
-        description: 'Defines a new robot agent with a specific behavior personality for the simulation.',
-        category: 'Functional',
-        executionEnvironment: 'Client',
-        purpose: 'To configure and instantiate individual robot agents before starting a simulation.',
-        parameters: [
-          { name: 'id', type: 'string', description: 'The unique identifier for the robot agent.', required: true },
-          { name: 'startX', type: 'number', description: 'The starting X coordinate for the agent.', required: true },
-          { name: 'startY', type: 'number', description: 'The starting Y coordinate for the agent.', required: true },
-          { name: 'behaviorType', type: 'string', description: "The agent's behavior: 'patroller', 'resource_collector', or 'seek_target'.", required: true },
-          { name: 'targetId', type: 'string', description: "The ID of the target object for 'seek_target' behavior (e.g., 'red_car').", required: false },
-          { name: 'asset_glb', type: 'string', description: "Optional path to a GLB model for the agent's visual representation (e.g., 'assets/robot.glb').", required: false },
-        ],
-        implementationCode: `
-            // This is a client-side tool whose logic is handled inside useAppRuntime
-            // to directly update the state in useRobotManager.
-            return { success: true, message: \`Personality for agent '\${args.id}' has been defined.\` };
-        `
-    },
+export const ROBOTICS_TOOL_DEFINITIONS: ToolCreatorPayload[] = [
     {
         name: 'Start Robot Simulation',
         description: 'Starts the robotics simulation, creating all defined agents on the field.',
@@ -115,4 +95,9 @@ export const ROBOTICS_TOOLS: ToolCreatorPayload[] = [
             return { success: true, message: "Turn right command issued." };
         `
     }
+];
+
+
+export const ROBOTICS_TOOLS: ToolCreatorPayload[] = [
+    ...ROBOTICS_TOOL_DEFINITIONS,
 ];

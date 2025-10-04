@@ -1,7 +1,8 @@
-
-
+// VIBE_NOTE: Do not escape backticks or dollar signs in template literals in this file.
+// Escaping is only for 'implementationCode' strings in tool definitions.
 import { useState, useMemo, useCallback, useEffect, useRef } from 'react';
-import { CORE_TOOLS, BOOTSTRAP_TOOL_PAYLOADS } from '../constants';
+import { CORE_TOOLS } from '../constants';
+import { BOOTSTRAP_TOOL_PAYLOADS } from '../bootstrap';
 import { loadStateFromStorage } from '../versioning';
 import type { LLMTool, ToolCreatorPayload } from '../types';
 
@@ -25,7 +26,7 @@ export const generateMachineReadableId = (name: string, existingTools: LLMTool[]
 };
 
 export const bootstrapTool = (payload: ToolCreatorPayload, existingTools: LLMTool[]): LLMTool => {
-    const { executionEnvironment, ...toolData } = payload;
+    const { ...toolData } = payload;
     
     // In client-only mode, the execution environment is always 'Client',
     // but we keep the category ('Server') for display and logical separation.
@@ -57,16 +58,73 @@ export const initializeTools = (): LLMTool[] => {
 
 
 export const useToolManager = ({ logEvent }: { logEvent: (message: string) => void }) => {
-    const [tools, setTools] = useState<LLMTool[]>(() => {
-        const loadedState = loadStateFromStorage();
-        return loadedState ? loadedState.tools : initializeTools();
-    });
+    const [tools, setTools] = useState<LLMTool[]>([]);
     
     // State for server tools and connection status
     const [serverTools, setServerTools] = useState<LLMTool[]>([]);
     const [isServerConnected, setIsServerConnected] = useState<boolean>(false);
     const isServerConnectedRef = useRef(isServerConnected);
     isServerConnectedRef.current = isServerConnected;
+
+    useEffect(() => {
+        const freshBootstrapTools = initializeTools();
+        const freshBootstrapToolsMap = new Map(freshBootstrapTools.map(t => [t.name, t]));
+        
+        const storedState = loadStateFromStorage();
+        const storedTools = storedState ? storedState.tools : [];
+
+        if (!storedState) {
+            setTools(freshBootstrapTools);
+            logEvent('[SYSTEM] Initial toolset loaded. No previous state found.');
+            return;
+        }
+
+        const updatedTools: LLMTool[] = [];
+        const processedStoredToolNames = new Set<string>();
+        let versionUpdateCount = 0;
+        let codeUpdateCount = 0;
+        let preservedUserToolsCount = 0;
+
+        for (const storedTool of storedTools) {
+            processedStoredToolNames.add(storedTool.name);
+            const freshTool = freshBootstrapToolsMap.get(storedTool.name);
+
+            if (freshTool) {
+                if (freshTool.version > storedTool.version) {
+                    updatedTools.push(freshTool);
+                    versionUpdateCount++;
+                } else if (
+                    freshTool.version === storedTool.version &&
+                    freshTool.implementationCode !== storedTool.implementationCode
+                ) {
+                    updatedTools.push(freshTool);
+                    codeUpdateCount++;
+                } else {
+                    updatedTools.push(storedTool);
+                }
+            } else {
+                updatedTools.push(storedTool);
+                preservedUserToolsCount++;
+            }
+        }
+
+        let newToolsCount = 0;
+        for (const freshTool of freshBootstrapTools) {
+            if (!processedStoredToolNames.has(freshTool.name)) {
+                updatedTools.push(freshTool);
+                newToolsCount++;
+            }
+        }
+        
+        if (versionUpdateCount > 0 || codeUpdateCount > 0 || newToolsCount > 0) {
+            logEvent(`[SYSTEM] Tools auto-updated: ${versionUpdateCount} by version, ${codeUpdateCount} by code change. ${newToolsCount} new tools added. Preserved ${preservedUserToolsCount} user-generated tools.`);
+        } else {
+            logEvent(`[SYSTEM] Tools are up to date. Loaded ${storedTools.length} tools from storage.`);
+        }
+        
+        setTools(updatedTools);
+
+    }, []); // Run only once on mount
 
     const forceRefreshServerTools = useCallback(async () => {
         try {

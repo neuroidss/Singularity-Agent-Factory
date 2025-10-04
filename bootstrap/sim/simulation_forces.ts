@@ -1,60 +1,6 @@
 // bootstrap/sim/simulation_forces.ts
 
 export const ForceSimulationFunctionsString = `
-    applySoftRepulsion() {
-        if (!this.params.componentSpacing || this.params.componentSpacing === 0) return;
-
-        const agentIds = Array.from(this.agents.keys());
-        const rampUpFactor = Math.min(1.0, this.step_count / this.params.repulsionRampUpTime);
-        const K_REPULSION = this.params.componentSpacing * 0.01;
-
-        for (let i = 0; i < agentIds.length; i++) {
-            for (let j = i + 1; j < agentIds.length; j++) {
-                const idA = agentIds[i], idB = agentIds[j];
-                const agentA = this.agents.get(idA), agentB = this.agents.get(idB);
-                const nodeA = this.nodeMap.get(idA), nodeB = this.nodeMap.get(idB);
-                if (!agentA || !agentB || !nodeA || !nodeB || nodeA.side !== nodeB.side) continue;
-
-                const { drcDims: dimsA } = this.getDrcInfo(nodeA);
-                const { drcDims: dimsB } = this.getDrcInfo(nodeB);
-
-                const radiusA = Math.hypot(dimsA.width, dimsA.height) / 2 * this.SCALE;
-                const radiusB = Math.hypot(dimsB.width, dimsB.height) / 2 * this.SCALE;
-                
-                const dx = agentA.pos.x - agentB.pos.x;
-                const dz = agentA.pos.z - agentB.pos.z;
-                const distSq = dx * dx + dz * dz;
-                const radiiSum = radiusA + radiusB;
-
-                const anchorOfA = this.satelliteToAnchorMap.get(idA);
-                const anchorOfB = this.satelliteToAnchorMap.get(idB);
-                
-                let pushA = true;
-                let pushB = true;
-                if (anchorOfA === idB) pushB = false;
-                if (anchorOfB === idA) pushA = false;
-
-                if (distSq < (radiiSum * radiiSum) && distSq > 1e-6) {
-                    const dist = Math.sqrt(distSq);
-                    const overlap = radiiSum - dist;
-                    const forceMag = K_REPULSION * overlap * rampUpFactor;
-                    
-                    const fx = (dx / dist) * forceMag;
-                    const fz = (dz / dist) * forceMag;
-                    
-                    if (pushA) {
-                        agentA.force.x += fx;
-                        agentA.force.z += fz;
-                    }
-                    if (pushB) {
-                        agentB.force.x -= fx;
-                        agentB.force.z -= fz;
-                    }
-                }
-            }
-        }
-    }
-
     getPinWorldPos(agentId) {
         const agent = this.agents.get(agentId);
         const node = this.nodeMap.get(agentId);
@@ -64,26 +10,17 @@ export const ForceSimulationFunctionsString = `
 
         const worldPositions = {};
         
-        // The agent's rotation quaternion and position vector from the simulation state
         const agentQuaternion = new this.THREE.Quaternion(agent.rot.x, agent.rot.y, agent.rot.z, agent.rot.w);
         const agentPosition = new this.THREE.Vector3(agent.pos.x, agent.pos.y, agent.pos.z);
 
         pinMap.forEach((pin, pinName) => {
-            // Create a vector for the pin's local position.
-            // KiCad's Y-axis (down) maps to the simulation's negative Z-axis.
             const localPinVector = new this.THREE.Vector3(
                 pin.x * this.SCALE,
-                0, // Pins are on the X-Z plane relative to the component center
+                0,
                 -pin.y * this.SCALE 
             );
-
-            // Apply the agent's rotation to the local pin position.
             localPinVector.applyQuaternion(agentQuaternion);
-
-            // Add the agent's world position to get the pin's final world position.
             const worldPinVector = localPinVector.add(agentPosition);
-            
-            // We only care about the X and Z for 2D layout forces.
             worldPositions[pinName] = { x: worldPinVector.x, z: worldPinVector.z };
         });
         return worldPositions;
@@ -115,12 +52,11 @@ export const ForceSimulationFunctionsString = `
                 const otherNode = this.nodeMap.get(otherCompId);
                 if (!otherNode) return;
 
-                // Asymmetrical force: only the smaller component is pulled.
                 const mySize = (currentNode.placeholder_dimensions?.width ?? 0) * (currentNode.placeholder_dimensions?.height ?? 0);
                 const otherSize = (otherNode.placeholder_dimensions?.width ?? 0) * (otherNode.placeholder_dimensions?.height ?? 0);
 
                 if (mySize > otherSize) {
-                    return; // This component is larger, so it acts as an anchor and is not pulled.
+                    return;
                 }
 
                 const thisPinPos = allPinWorldPos[agentId]?.[thisPinName];
@@ -149,7 +85,6 @@ export const ForceSimulationFunctionsString = `
         const numAgents = this.agents.size;
         if (numAgents <= 1) return;
         
-        // Calculate center of mass of all *other* agents
         let comX = 0, comZ = 0;
         this.agents.forEach((otherAgent, otherId) => {
             if (otherId !== agentId) {
@@ -163,7 +98,6 @@ export const ForceSimulationFunctionsString = `
         const dx = agent.pos.x - comX;
         const dz = agent.pos.z - comZ;
         
-        // Apply force pushing away from the center of mass
         const forceX = dx * K_DIST;
         const forceZ = dz * K_DIST;
 
@@ -176,79 +110,6 @@ export const ForceSimulationFunctionsString = `
         }
     }
     
-     applyContainmentForAgent(agentId) {
-        const K_CONTAINMENT = this.params.boardEdgeConstraint;
-        const agent = this.agents.get(agentId);
-        const node = this.nodeMap.get(agentId);
-        if (!agent || !node || !this.graph || !this.graph.board_outline || K_CONTAINMENT === 0) return;
-
-        const { x, y, width, height, shape } = this.graph.board_outline;
-        const { drcDims } = this.getDrcInfo(node);
-
-        if (shape === 'circle') {
-            const centerX = (x + width / 2) * this.SCALE;
-            const centerZ = (y + height / 2) * this.SCALE;
-            const radius = (width / 2) * this.SCALE;
-            const dx = agent.pos.x - centerX;
-            const dz = agent.pos.z - centerZ;
-            const dist = Math.hypot(dx, dz);
-            
-            const node_w2 = (drcDims.width / 2) * this.SCALE;
-            const node_h2 = (drcDims.height / 2) * this.SCALE;
-            const max_extent = Math.hypot(node_w2, node_h2); // Simple approximation for corner
-            
-            if (dist + max_extent > radius) {
-                if (dist < 1e-6) return; // Prevent division by zero if agent is at the center
-                const penetration = (dist + max_extent) - radius;
-                const forceMagnitude = penetration * K_CONTAINMENT * 0.5;
-                const forceX = -(dx / dist) * forceMagnitude;
-                const forceZ = -(dz / dist) * forceMagnitude;
-                agent.force.x += forceX;
-                agent.force.z += forceZ;
-                agent.lastForces['Board Edge Force'] = (agent.lastForces['Board Edge Force'] || 0) + Math.hypot(forceX, forceZ);
-            }
-        } else { // Rectangular board
-            const left = x * this.SCALE;
-            const right = (x + width) * this.SCALE;
-            const top = y * this.SCALE; // z-min
-            const bottom = (y + height) * this.SCALE; // z-max
-
-            // We consider the bounding box of the rotated component for simplicity and robustness.
-            const corners = this.getRotatedRectCorners(agent, drcDims);
-            let minCompX = Infinity, maxCompX = -Infinity, minCompZ = Infinity, maxCompZ = -Infinity;
-            corners.forEach(c => {
-                minCompX = Math.min(minCompX, c.x);
-                maxCompX = Math.max(maxCompX, c.x);
-                minCompZ = Math.min(minCompZ, c.z);
-                maxCompZ = Math.max(maxCompZ, c.z);
-            });
-            
-            let fx = 0;
-            let fz = 0;
-            const forceMultiplier = K_CONTAINMENT * 0.5;
-
-            // Use a spring-like force based on penetration. This is more stable and intuitive.
-            if (minCompX < left) {
-                fx += (left - minCompX) * forceMultiplier;
-            }
-            if (maxCompX > right) {
-                fx -= (maxCompX - right) * forceMultiplier;
-            }
-            if (minCompZ < top) {
-                fz += (top - minCompZ) * forceMultiplier;
-            }
-            if (maxCompZ > bottom) {
-                fz -= (maxCompZ - bottom) * forceMultiplier;
-            }
-
-            if (Math.abs(fx) > 0 || Math.abs(fz) > 0) {
-                agent.force.x += fx;
-                agent.force.z += fz;
-                agent.lastForces['Board Edge Force'] = (agent.lastForces['Board Edge Force'] || 0) + Math.hypot(fx, fz);
-            }
-        }
-    }
-
     applySymmetryForAgent(agentId, rule) {
         const K_SYMMETRY = this.params.symmetryStrength;
         const axis = rule.axis || 'vertical';
@@ -277,13 +138,11 @@ export const ForceSimulationFunctionsString = `
         const nodeA = this.nodeMap.get(agentId);
         const nodeB = this.nodeMap.get(otherId);
         if (nodeA && nodeB) {
-            // Rotational part: Align rotations to be the same, not mirrored.
             const Kp_rot = this.params.symmetryRotationStrength * 100;
             const Kd_rot = Kp_rot / 10;
             const currentRotA = new this.THREE.Euler().setFromQuaternion(agentA.rot, 'YXZ').y;
             const currentRotB = new this.THREE.Euler().setFromQuaternion(agentB.rot, 'YXZ').y;
             
-            // The new logic: make their rotations equal.
             const targetAngleA = currentRotB;
 
             let error = targetAngleA - currentRotA;
@@ -294,62 +153,7 @@ export const ForceSimulationFunctionsString = `
             agentA.lastForces['Symmetry Rotation'] = (agentA.lastForces['Symmetry Rotation'] || 0) + Math.abs(torqueY);
         }
     }
-
-    applySymmetricalPairForAgent(agentId, rule) {
-        const { pair, axis, separation } = rule;
-        const agent = this.agents.get(agentId);
-        if (!agent || !pair.includes(agentId)) return;
-
-        const otherId = pair[0] === agentId ? pair[1] : pair[0];
-        const otherAgent = this.agents.get(otherId);
-        if (!otherAgent) return;
-        
-        const K_PAIR = this.params.symmetricalPairStrength;
-        const sep = separation * this.SCALE;
-
-        if (axis === 'vertical') {
-            const midZ = (agent.pos.z + otherAgent.pos.z) / 2;
-            const fz_align = (midZ - agent.pos.z) * K_PAIR;
-            agent.force.z += fz_align;
-            const targetSign = (agentId === pair[0]) ? -1 : 1;
-            const targetX = targetSign * sep / 2;
-            const fx_sep = (targetX - agent.pos.x) * K_PAIR;
-            agent.force.x += fx_sep;
-            agent.lastForces['Symmetrical Pair Strength'] = (agent.lastForces['Symmetrical Pair Strength'] || 0) + Math.hypot(fx_sep, fz_align);
-        } else {
-            const midX = (agent.pos.x + otherAgent.pos.x) / 2;
-            const fx_align = (midX - agent.pos.x) * K_PAIR;
-            agent.force.x += fx_align;
-            const targetSign = (agentId === pair[0]) ? -1 : 1;
-            const targetZ = targetSign * sep / 2;
-            const fz_sep = (targetZ - agent.pos.z) * K_PAIR;
-            agent.force.z += fz_sep;
-            agent.lastForces['Symmetrical Pair Strength'] = (agent.lastForces['Symmetrical Pair Strength'] || 0) + Math.hypot(fx_align, fz_sep);
-        }
-    }
     
-    applyGroupAlignmentForAgent(agentId, rule) {
-        const { components, axis } = rule;
-        if (!components.includes(agentId)) return;
-        const K_GROUP_ALIGN = 0.5; // This force is typically weaker
-        const groupAgents = components.map(id => this.agents.get(id)).filter(Boolean);
-        if (groupAgents.length < 2) return;
-        const currentAgent = this.agents.get(agentId);
-        if (!currentAgent) return;
-
-        if (axis === 'horizontal') {
-            const avgZ = groupAgents.reduce((sum, a) => sum + a.pos.z, 0) / groupAgents.length;
-            const forceZ = (avgZ - currentAgent.pos.z) * K_GROUP_ALIGN;
-            currentAgent.force.z += forceZ;
-            currentAgent.lastForces['Group Alignment'] = (currentAgent.lastForces['Group Alignment'] || 0) + Math.abs(forceZ);
-        } else {
-            const avgX = groupAgents.reduce((sum, a) => sum + a.pos.x, 0) / groupAgents.length;
-            const forceX = (avgX - currentAgent.pos.x) * K_GROUP_ALIGN;
-            currentAgent.force.x += forceX;
-            currentAgent.lastForces['Group Alignment'] = (currentAgent.lastForces['Group Alignment'] || 0) + Math.abs(forceX);
-        }
-    }
-
     applyAlignmentForAgent(agentId, rule) {
         const K_ALIGN = this.params.alignmentStrength;
         const axis = rule.axis || 'vertical';
@@ -367,121 +171,121 @@ export const ForceSimulationFunctionsString = `
         }
         agent.lastForces['Alignment Strength'] = (agent.lastForces['Alignment Strength'] || 0) + force;
     }
+    
+    applyProximityPIDForAgent(pidInfo) {
+        const { controller, anchorId, satelliteId } = pidInfo;
+        const satelliteAgent = this.agents.get(satelliteId);
+        const anchorAgent = this.agents.get(anchorId);
+        const satelliteBody = this.rigidBodyMap.get(satelliteId);
+        if (!satelliteAgent || !anchorAgent || !satelliteBody || !satelliteBody.isDynamic()) return;
+        
+        const anchorNode = this.nodeMap.get(anchorId);
+        const satelliteNode = this.nodeMap.get(satelliteId);
+        if (!anchorNode || !satelliteNode) return;
 
-    applyProximityForAgent(agentId, rule, allPinWorldPos) {
-        const K_PROXIMITY = this.params.proximityStrength * 10.0;
-        if (K_PROXIMITY === 0) return;
-    
-        const satelliteAgent = this.agents.get(agentId);
-        if (!satelliteAgent) return;
-    
-        rule.groups.forEach(group => {
-            if (!Array.isArray(group) || group.length < 2 || !group.includes(agentId)) {
-                return;
-            }
-    
-            const anchorId = group[0];
-            // CRITICAL FIX: The force is only calculated for satellites. If the current agent is the anchor, do nothing.
-            if (agentId === anchorId) {
-                return;
-            }
-    
-            const anchorAgent = this.agents.get(anchorId);
-            if (!anchorAgent) return;
-    
-            let targetPoint, sourcePoint;
-            
-            // --- Pin-to-Pin Attraction (Primary) ---
-            const anchorPins = allPinWorldPos[anchorId] || {};
-            const satellitePins = allPinWorldPos[agentId] || {};
-            const sharedPinPairs = [];
-            (this.graph.edges || []).forEach(edge => {
-                const [sComp, sPin] = edge.source.split('-');
-                const [tComp, tPin] = edge.target.split('-');
-                if ((sComp === anchorId && tComp === agentId) || (sComp === agentId && tComp === anchorId)) {
-                    const anchorPinPos = (sComp === anchorId) ? anchorPins[sPin] : anchorPins[tPin];
-                    const satellitePinPos = (sComp === agentId) ? satellitePins[sPin] : satellitePins[tPin];
-                    if (anchorPinPos && satellitePinPos) {
-                        sharedPinPairs.push({ anchor: anchorPinPos, satellite: satellitePinPos });
-                    }
-                }
-            });
-    
-            if (sharedPinPairs.length > 0) {
-                // Average the positions of all connected pins to find a centroid target.
-                targetPoint = sharedPinPairs.reduce((acc, p) => ({ x: acc.x + p.anchor.x, z: acc.z + p.anchor.z }), { x: 0, z: 0 });
-                targetPoint.x /= sharedPinPairs.length;
-                targetPoint.z /= sharedPinPairs.length;
-                sourcePoint = sharedPinPairs.reduce((acc, p) => ({ x: acc.x + p.satellite.x, z: acc.z + p.satellite.z }), { x: 0, z: 0 });
-                sourcePoint.x /= sharedPinPairs.length;
-                sourcePoint.z /= sharedPinPairs.length;
-            } else {
-                // --- Center-to-Center Attraction (Fallback) ---
-                targetPoint = { x: anchorAgent.pos.x, z: anchorAgent.pos.z };
-                sourcePoint = { x: satelliteAgent.pos.x, z: satelliteAgent.pos.z };
-            }
-    
-            const dx = targetPoint.x - sourcePoint.x;
-            const dz = targetPoint.z - sourcePoint.z;
-            
-            // Apply a simple spring-like force.
-            const fx = dx * K_PROXIMITY;
-            const fz = dz * K_PROXIMITY;
-            
-            // The force is ONLY applied to the satellite, ensuring the anchor is not pushed.
-            satelliteAgent.force.x += fx;
-            satelliteAgent.force.z += fz;
-            
-            satelliteAgent.lastForces['Proximity'] = (satelliteAgent.lastForces['Proximity'] || 0) + Math.hypot(fx, fz);
-        });
+        const { drcDims: anchorDims } = this.getEffectiveDrcInfo(anchorNode);
+        const { drcDims: satelliteDims } = this.getEffectiveDrcInfo(satelliteNode);
+        const anchorRadius = Math.hypot(anchorDims.width, anchorDims.height) / 2 * this.SCALE;
+        const satelliteRadius = Math.hypot(satelliteDims.width, satelliteDims.height) / 2 * this.SCALE;
+        const idealSeparation = anchorRadius + satelliteRadius + (this.params.componentSpacing / 10);
+
+        const vecToSatellite = { x: satelliteAgent.pos.x - anchorAgent.pos.x, z: satelliteAgent.pos.z - anchorAgent.pos.z };
+        const dist = Math.hypot(vecToSatellite.x, vecToSatellite.z);
+
+        if (dist > 1e-6) { vecToSatellite.x /= dist; vecToSatellite.z /= dist; } 
+        else { vecToSatellite.x = 1; vecToSatellite.z = 0; }
+        
+        const targetPoint = { x: anchorAgent.pos.x + vecToSatellite.x * idealSeparation, y: satelliteAgent.pos.y, z: anchorAgent.pos.z + vecToSatellite.z * idealSeparation };
+        controller.applyLinearCorrection(satelliteBody, targetPoint, { x: 0, y: 0, z: 0 });
+        
+        const forceMag = Math.hypot(targetPoint.x - satelliteAgent.pos.x, targetPoint.z - satelliteAgent.pos.z) * this.params.proximityKp;
+        satelliteAgent.lastForces['Proximity (PID)'] = (satelliteAgent.lastForces['Proximity (PID)'] || 0) + forceMag;
     }
 
-    applyCircularForAgent(agentId, rule) {
-        const K_CIRCULAR = this.params.circularStrength;
+    applyCircularPIDForAgent(pidInfo) {
+        const { controller, rule, componentId } = pidInfo;
+        const agent = this.agents.get(componentId);
+        const body = this.rigidBodyMap.get(componentId);
+        if (!agent || !body || !body.isDynamic()) return;
+
         const { components, radius, center } = rule;
-        const agent = this.agents.get(agentId);
-        const node = this.nodeMap.get(agentId);
-        if (!agent || !node) return;
-
-        const agentIndex = components.indexOf(agentId);
-        if (agentIndex === -1) return;
-
         const N = components.length;
-        const angle = (2 * Math.PI / N) * agentIndex;
-        const targetX = (center[0] + radius * Math.cos(angle)) * this.SCALE;
-        const targetZ = (center[1] + radius * Math.sin(angle)) * this.SCALE;
-        const fx = (targetX - agent.pos.x) * K_CIRCULAR;
-        const fz = (targetZ - agent.pos.z) * K_CIRCULAR;
-        agent.force.x += fx;
-        agent.force.z += fz;
-        agent.lastForces['Circular Strength'] = (agent.lastForces['Circular Strength'] || 0) + Math.hypot(fx, fz);
+        const componentIndex = components.indexOf(componentId);
+        if (componentIndex === -1) return;
 
-        const Kp_rot = this.params.circularRotationStrength * 100;
-        const Kd_rot = Kp_rot / 10;
-        const currentAngle = new this.THREE.Euler().setFromQuaternion(agent.rot, 'YXZ').y;
-        const targetRotDegrees = (angle * 180 / Math.PI) - 90;
-        const targetAngle = targetRotDegrees * Math.PI / 180;
-        let error = targetAngle - currentAngle;
+        const rad = radius * this.SCALE;
+        const centerX = (center?.[0] || 0) * this.SCALE;
+        const centerZ = (center?.[1] || 0) * this.SCALE;
+
+        // --- Positional Correction ---
+        const targetAngle = (componentIndex / N) * 2 * Math.PI;
+        const targetPoint = {
+            x: centerX + rad * Math.cos(targetAngle),
+            y: agent.pos.y,
+            z: centerZ + rad * Math.sin(targetAngle)
+        };
+        controller.applyLinearCorrection(body, targetPoint, { x: 0, y: 0, z: 0 });
+        const posForceMag = Math.hypot(targetPoint.x - agent.pos.x, targetPoint.z - agent.pos.z) * this.params.proximityKp;
+        agent.lastForces['Circular Position'] = (agent.lastForces['Circular Position'] || 0) + posForceMag;
+
+        // --- Rotational Correction ---
+        const vecToCenter = { x: centerX - agent.pos.x, z: centerZ - agent.pos.z };
+        const targetRotY = Math.atan2(vecToCenter.z, vecToCenter.x) + Math.PI / 2;
+        const targetQuat = new this.THREE.Quaternion().setFromEuler(new this.THREE.Euler(0, targetRotY, 0));
+        controller.applyAngularCorrection(body, {x: targetQuat.x, y: targetQuat.y, z: targetQuat.z, w: targetQuat.w}, { x: 0, y: 0, z: 0 });
+
+        const currentRotY = new this.THREE.Euler().setFromQuaternion(agent.rot, 'YXZ').y;
+        let error = targetRotY - currentRotY;
         while (error < -Math.PI) error += 2 * Math.PI;
         while (error > Math.PI) error -= 2 * Math.PI;
-        const torqueY = Kp_rot * error - Kd_rot * agent.angularVel.y;
-        agent.torque.y += torqueY;
-        agent.lastForces['Circular Rotation'] = (agent.lastForces['Circular Rotation'] || 0) + Math.abs(torqueY);
+        agent.lastForces['Circular Rotation'] = (agent.lastForces['Circular Rotation'] || 0) + Math.abs(error) * this.params.proximityKp;
     }
     
-    applyLayerForces() {
-        const K_LAYER = 5.0;
-        const boardThickness = 1.6 * this.SCALE;
-        this.agents.forEach((agent, id) => {
-            const node = this.nodeMap.get(id);
-            if (!node) return;
-            const targetY = (node.side === 'bottom') ? -boardThickness / 2 : boardThickness / 2;
-            const forceY = (targetY - agent.pos.y) * K_LAYER;
-            agent.force.y += forceY;
-            if (Math.abs(forceY) > 0.1) agent.lastForces['Layer Force'] = (agent.lastForces['Layer Force'] || 0) + Math.abs(forceY);
-        });
-    }
+    applySymmetricalPairPIDForAgent(pidInfo) {
+        const { controller, rule, componentId } = pidInfo;
+        const agentA = this.agents.get(componentId);
+        const bodyA = this.rigidBodyMap.get(componentId);
+        if (!agentA || !bodyA || !bodyA.isDynamic()) return;
 
+        const pair = rule.pair;
+        const otherId = pair[0] === componentId ? pair[1] : pair[0];
+        const agentB = this.agents.get(otherId);
+        if (!agentB) return;
+
+        const separation = (rule.separation || 0) * this.SCALE;
+        const halfSep = separation / 2.0;
+
+        const comX = (agentA.pos.x + agentB.pos.x) / 2.0;
+        const comZ = (agentA.pos.z + agentB.pos.z) / 2.0;
+
+        let targetPoint;
+        let targetAngle;
+        const isFirstInPair = pair[0] === componentId;
+
+        if (rule.axis === 'vertical') {
+            targetPoint = { x: comX - (isFirstInPair ? halfSep : -halfSep), y: agentA.pos.y, z: comZ };
+            targetAngle = isFirstInPair ? Math.PI / 2 : -Math.PI / 2; // Pointing towards each other
+        } else { // horizontal
+            targetPoint = { x: comX, y: agentA.pos.y, z: comZ - (isFirstInPair ? halfSep : -halfSep) };
+            targetAngle = isFirstInPair ? 0 : Math.PI; // Pointing towards each other
+        }
+
+        // --- Positional Correction ---
+        controller.applyLinearCorrection(bodyA, targetPoint, { x: 0, y: 0, z: 0 });
+        const posForceMag = Math.hypot(targetPoint.x - agentA.pos.x, targetPoint.z - agentA.pos.z) * this.params.proximityKp;
+        agentA.lastForces['Symmetry Position'] = (agentA.lastForces['Symmetry Position'] || 0) + posForceMag;
+
+        // --- Rotational Correction ---
+        const targetQuat = new this.THREE.Quaternion().setFromEuler(new this.THREE.Euler(0, targetAngle, 0));
+        controller.applyAngularCorrection(bodyA, {x: targetQuat.x, y: targetQuat.y, z: targetQuat.z, w: targetQuat.w}, { x: 0, y: 0, z: 0 });
+
+        const currentRotY = new this.THREE.Euler().setFromQuaternion(agentA.rot, 'YXZ').y;
+        let error = targetAngle - currentRotY;
+        while (error < -Math.PI) error += 2 * Math.PI;
+        while (error > Math.PI) error -= 2 * Math.PI;
+        agentA.lastForces['Symmetry Rotation'] = (agentA.lastForces['Symmetry Rotation'] || 0) + Math.abs(error) * this.params.proximityKp;
+    }
+    
     applyFixedPropertyForAgent(agentId, rule) {
         const { properties } = rule;
         const agent = this.agents.get(agentId);
@@ -528,30 +332,100 @@ export const ForceSimulationFunctionsString = `
         }
     }
 
-    calculateForcesForAgent(allPinWorldPos) {
-        this.agents.forEach((agent, id) => {
+    calculateForcesAndTorques() {
+        if (this.mode === 'robotics') {
+            this.agents.forEach((agent, id) => {
+                const body = this.rigidBodyMap.get(id);
+                if (!body) return;
+                
+                agent.lastForces = {};
+                
+                const aiState = this.agentAIState.get(id);
+                if (aiState && aiState.behavior === 'patroller' && body.isDynamic()) {
+                    const currentPos = body.translation();
+                    const targetPos = aiState.target;
+                    const dx = targetPos.x - currentPos.x;
+                    const dz = targetPos.z - currentPos.z;
+                    const dist = Math.hypot(dx, dz);
+
+                    if (dist < this.PATROLLER_TARGET_RADIUS) {
+                        aiState.target = this.getRandomTarget();
+                    }
+
+                    const forceMagnitude = this.PATROLLER_SPEED;
+                    if (dist > 0.1) {
+                        const force = { x: (dx / dist) * forceMagnitude, y: 0, z: (dz / dist) * forceMagnitude };
+                        body.addForce(force, true);
+                        agent.lastForces['Patrol Force'] = forceMagnitude;
+
+                        const currentVel = body.linvel();
+                        if (Math.hypot(currentVel.x, currentVel.z) > 0.1 * this.SCALE) {
+                            const targetAngle = Math.atan2(currentVel.x, currentVel.z);
+                            const rot = body.rotation();
+                            const currentAngle = new this.THREE.Euler().setFromQuaternion({x: rot.x, y: rot.y, z: rot.z, w: rot.w}, 'YXZ').y;
+                            
+                            let error = targetAngle - currentAngle;
+                            while (error < -Math.PI) error += 2 * Math.PI;
+                            while (error > Math.PI) error -= 2 * Math.PI;
+
+                            const Kp_rot = 20.0;
+                            const Kd_rot = 5.0;
+                            const angVel = body.angvel();
+
+                            const torqueY = Kp_rot * error - Kd_rot * angVel.y;
+                            body.addTorque({ x: 0, y: torqueY, z: 0 }, true);
+                            agent.lastForces['Patrol Torque'] = Math.abs(torqueY);
+                        }
+                    }
+                }
+            });
+            return;
+        }
+
+        // --- PCB Logic ---
+        const allPinWorldPos = {};
+        this.agents.forEach((_, id) => {
+            allPinWorldPos[id] = this.getPinWorldPos(id);
+            const agent = this.agents.get(id);
             agent.force = { x: 0, y: 0, z: 0 };
             agent.torque = { x: 0, y: 0, z: 0 };
             agent.lastForces = {};
-            this.applyContainmentForAgent(id);
+        });
+    
+        this.agents.forEach((_, id) => {
             this.applyNetForcesForAgent(id, allPinWorldPos);
             this.applyDistributionForceForAgent(id);
-
-            (this.graph.rules || []).filter(rule => rule.enabled !== false).forEach(rule => {
-                const componentList = rule.component ? [rule.component] : (rule.components || rule.pair || rule.pairs?.flat() || rule.groups?.flat());
-                if (componentList && componentList.includes(id)) {
+            (this.graph.rules || []).filter(r => r.enabled !== false).forEach(rule => {
+                const components = rule.component ? [rule.component] : (rule.components || rule.pair || rule.pairs?.flat() || rule.groups?.flat());
+                if (components && components.includes(id)) {
                     switch (rule.type) {
                         case 'SymmetryConstraint': this.applySymmetryForAgent(id, rule); break;
                         case 'AlignmentConstraint': this.applyAlignmentForAgent(id, rule); break;
-                        case 'ProximityConstraint': this.applyProximityForAgent(id, rule, allPinWorldPos); break;
-                        case 'CircularConstraint': this.applyCircularForAgent(id, rule); break;
                         case 'FixedPropertyConstraint': this.applyFixedPropertyForAgent(id, rule); break;
-                        case 'SymmetricalPairConstraint': this.applySymmetricalPairForAgent(id, rule); break;
-                        case 'GroupAlignmentConstraint': this.applyGroupAlignmentForAgent(id, rule); break;
                         case 'AbsolutePositionConstraint': this.applyAbsolutePositionForAgent(id, rule); break;
                     }
                 }
             });
+        });
+
+        this.pidControllers.forEach(pidInfo => {
+            if (pidInfo.type === 'proximity') this.applyProximityPIDForAgent(pidInfo);
+            else if (pidInfo.type === 'circular') this.applyCircularPIDForAgent(pidInfo);
+            else if (pidInfo.type === 'symmetrical_pair') this.applySymmetricalPairPIDForAgent(pidInfo);
+        });
+        
+        this.agents.forEach((agent, id) => {
+            if (id === this.draggedAgentId) return;
+            const body = this.rigidBodyMap.get(id);
+            if (body && body.isDynamic()) {
+                body.resetForces(true); body.resetTorques(true);
+                const { force, torque } = agent;
+                const MAX_FORCE = 1e6, MAX_TORQUE = 1e5;
+                const clampedForce = { x: isFinite(force.x) ? this.clamp(force.x, -MAX_FORCE, MAX_FORCE) : 0, y: 0, z: isFinite(force.z) ? this.clamp(force.z, -MAX_FORCE, MAX_FORCE) : 0 };
+                const clampedTorque = { x: 0, y: isFinite(torque.y) ? this.clamp(torque.y, -MAX_TORQUE, MAX_TORQUE) : 0, z: 0 };
+                body.addForce(clampedForce, true);
+                body.addTorque(clampedTorque, true);
+            }
         });
     }
 `

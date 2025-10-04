@@ -1,3 +1,5 @@
+
+
 import type { ToolCreatorPayload } from '../types';
 
 export const UI_AGENT_TOOLS: ToolCreatorPayload[] = [
@@ -15,11 +17,11 @@ export const UI_AGENT_TOOLS: ToolCreatorPayload[] = [
         implementationCode: `
           const { robotStates, environmentState, observationHistory } = robotState;
           
-          const pilotAgentId = 'Scout-Drone-1'; // Pilot the scout drone
+          const pilotAgentId = 'Mind-Weaver-1'; // Pilot the Mind Weaver creature
 
           const handleDefineAgent = () => {
               // Deploys a team for the mission
-              handleManualControl('Define Robot Agent', { id: 'Scout-Drone-1', asset_glb: 'assets/drone_scout.glb', startX: 2, startY: 2, behaviorType: 'seek_target', targetId: 'red_car_1' });
+              handleManualControl('Define Robot Agent', { id: 'Mind-Weaver-1', asset_glb: 'game/creatures/creature_schematic_mind_weaver_ads131m08.glb', startX: 2, startY: 2, behaviorType: 'seek_target', targetId: 'red_car_1' });
               // You can define other agents here if needed, for example a resource collector for depleted batteries.
           };
           
@@ -127,7 +129,8 @@ export const UI_AGENT_TOOLS: ToolCreatorPayload[] = [
                     else if (finalX > 0.5) command = 'Turn Right';
                     
                     if (command) {
-                        handleManualControl(command, { agentId: pilotAgentId });
+                        // FIX: Changed 'agentId' to 'playerId' to match the expected argument in the game world manager's control function.
+                        handleManualControl(command, { playerId: pilotAgentId });
                         lastCommandTimeRef.current = now;
                     }
                 }
@@ -172,7 +175,7 @@ export const UI_AGENT_TOOLS: ToolCreatorPayload[] = [
                           </button>
                           <div className="text-center text-xs p-2 bg-gray-900/50 rounded-lg">
                               <p className="font-semibold text-gray-300">Gamepad:</p>
-                              <p className={\`\${inputState.current.padConnected ? 'text-green-400' : 'text-gray-500'}\`}>
+                              <p className={inputState.current.padConnected ? 'text-green-400' : 'text-gray-500'}>
                                   {gamepadStatus}
                               </p>
                           </div>
@@ -195,7 +198,7 @@ export const UI_AGENT_TOOLS: ToolCreatorPayload[] = [
                            <div key={p.id} className="bg-gray-900/50 p-2 rounded-lg text-sm">
                                 <div className="flex justify-between">
                                    <span className="font-bold">{p.id}</span>
-                                   <span className={\`font-mono \${statusColor}\`}>{statusText}</span>
+                                   <span className={"font-mono " + statusColor}>{statusText}</span>
                                 </div>
                                 {activeAgent ? (
                                     <div className="font-mono text-xs text-gray-400 flex justify-between items-center">

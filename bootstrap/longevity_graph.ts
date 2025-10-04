@@ -1,3 +1,4 @@
+
 import type { KnowledgeGraph } from '../types';
 
 export const LONGEVITY_KNOWLEDGE_GRAPH: KnowledgeGraph = {
@@ -29,6 +30,7 @@ export const LONGEVITY_KNOWLEDGE_GRAPH: KnowledgeGraph = {
     { source: "Autophagy", target: "Cellular Senescence" },
     { source: "DNA Repair", target: "Longevity" },
     { source: "Autophagy", target: "Longevity" },
-    { source: "Cellular Senescence", target: "Longevity" },
+    // A conceptual link; senescence is a hallmark of aging, and reducing it promotes longevity.
+    { source: "Cellular Senescence", target: "Longevity", label: "impacts" },
   ],
 };

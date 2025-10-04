@@ -1,5 +1,5 @@
-
-
+// VIBE_NOTE: Do not escape backticks or dollar signs in template literals in this file.
+// Escaping is only for 'implementationCode' strings in tool definitions.
 import { useState, useCallback, useEffect, useRef } from 'react';
 import { generateEmbeddings, cosineSimilarity } from '../services/embeddingService';
 import { CORE_TOOLS } from '../constants';

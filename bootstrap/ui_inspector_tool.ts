@@ -1,3 +1,4 @@
+
 // bootstrap/ui_inspector_tool.ts
 import type { ToolCreatorPayload } from '../types';
 
@@ -61,7 +62,7 @@ export const INSPECTOR_TOOL_PAYLOAD: ToolCreatorPayload = {
                                 key={agent.id}
                                 onMouseEnter={() => onHover(agent.id, true)}
                                 onMouseLeave={() => onHover(agent.id, false)}
-                                className={\`mb-1 rounded-lg transition-all duration-200 \${isSelected ? 'bg-indigo-700' : 'bg-gray-700/50'}\`}
+                                className={"mb-1 rounded-lg transition-all duration-200 " + (isSelected ? 'bg-indigo-700' : 'bg-gray-700/50')}
                             >
                                 <button onClick={() => onSelect(agent.id)} className="w-full text-left p-2">
                                     <div className="flex justify-between items-center">

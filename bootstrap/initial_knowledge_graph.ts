@@ -1,5 +1,6 @@
 
 import type { KnowledgeGraph, KnowledgeGraphNode, KnowledgeGraphEdge } from '../types';
+import { LONGEVITY_KNOWLEDGE_GRAPH } from './longevity_graph';
 
 // --- Pre-computed Datasheet Extractions (Embedded for offline demo reliability) ---
 const ADS131M08_PINS = [{"pin": 1, "name": "AIN2P"}, {"pin": 2, "name": "AIN2N"}, {"pin": 3, "name": "AIN3N"}, {"pin": 4, "name": "AIN3P"}, {"pin": 5, "name": "AIN4P"}, {"pin": 6, "name": "AIN4N"}, {"pin": 7, "name": "AIN5N"}, {"pin": 8, "name": "AIN5P"}, {"pin": 9, "name": "AIN6P"}, {"pin": 10, "name": "AIN6N"}, {"pin": 11, "name": "AIN7N"}, {"pin": 12, "name": "AIN7P"}, {"pin": 13, "name": "AGND"}, {"pin": 14, "name": "REFIN"}, {"pin": 15, "name": "AVDD"}, {"pin": 16, "name": "SYNC/RESET"}, {"pin": 17, "name": "CS"}, {"pin": 18, "name": "DRDY"}, {"pin": 19, "name": "SCLK"}, {"pin": 20, "name": "DOUT"}, {"pin": 21, "name": "DIN"}, {"pin": 22, "name": "XTAL2"}, {"pin": 23, "name": "XTAL1/CLKIN"}, {"pin": 24, "name": "CAP"}, {"pin": 25, "name": "DGND"}, {"pin": 26, "name": "DVDD"}, {"pin": 27, "name": "NC"}, {"pin": 28, "name": "AGND"}, {"pin": 29, "name": "AIN0P"}, {"pin": 30, "name": "AIN0N"}, {"pin": 31, "name": "AIN1N"}, {"pin": 32, "name": "AIN1P"}];
@@ -26,10 +27,8 @@ const baseNodes: KnowledgeGraphNode[] = [
     { id: 'J_XIAO_1', label: 'J_XIAO_1', type: "Component" },
     { id: 'J_XIAO_2', label: 'J_XIAO_2', type: "Component" },
 
-    // --- Technology Push Side ---
-    { id: "longevity_research", label: "Longevity Research", type: "Technology" },
-    { id: "Sirtuins", label: "Sirtuins", type: "Technology" },
-    { id: "NAD+", label: "NAD+", type: "Technology" },
+    // --- Technology Push Side (Longevity) ---
+    ...LONGEVITY_KNOWLEDGE_GRAPH.nodes.map(n => ({...n, type: 'Technology'})),
 ];
 
 const baseEdges: KnowledgeGraphEdge[] = [
@@ -38,8 +37,8 @@ const baseEdges: KnowledgeGraphEdge[] = [
     ...baseNodes.filter(n => n.type === 'Component').map(c => ({ source: "eeg_mezzanine", target: c.id, label: "uses" })),
 
     // --- Technology Push Connections ---
-    { source: "longevity_research", target: "Sirtuins", label: "involves" },
-    { source: "NAD+", target: "Sirtuins", label: "activates" },
+    ...LONGEVITY_KNOWLEDGE_GRAPH.edges,
+    { source: 'eeg_mezzanine', target: 'Longevity', label: 'enables_research_into' }
 ];
 
 // --- Dynamic Pin Generation ---

@@ -7,26 +7,22 @@ import { KICAD_DSN_UTILS_SCRIPT } from './kicad_dsn_utils';
 import { KICAD_SES_UTILS_SCRIPT } from './kicad_ses_utils';
 
 const KICAD_TOOL_DEFINITIONS: ToolCreatorPayload[] = [
-    // --- Service Management ---
-    {
-        name: 'Start KiCad Service',
-        description: 'Starts the long-running Python service for KiCad automation. This MUST be called before any other KiCad command to ensure high performance by avoiding repeated library loading.',
-        category: 'Server',
-        executionEnvironment: 'Server',
-        purpose: "To initialize the high-performance KiCad automation engine, which is a prerequisite for all subsequent hardware design tasks.",
-        parameters: [],
-        implementationCode: '# This is a special server-side command handled by the Node.js backend to spawn the Python service.'
-    },
-    {
-        name: 'Stop KiCad Service',
-        description: 'Stops the long-running Python service for KiCad automation, freeing up system resources.',
-        category: 'Server',
-        executionEnvironment: 'Server',
-        purpose: "To cleanly shut down the KiCad automation engine when it's no longer needed.",
-        parameters: [],
-        implementationCode: '# This is a special server-side command handled by the Node.js backend to terminate the Python service.'
-    },
+    // --- Service Management tools have been removed and replaced by generic MCP tools ---
     // --- Tool Definitions using proxy ---
+    {
+        name: 'Capture Screen Region',
+        description: 'Captures a specified region of the primary screen and returns it as a base64 encoded JPEG image.',
+        category: 'Server',
+        executionEnvironment: 'Server',
+        purpose: 'To provide a "virtual camera" for an agent to perceive the state of a GUI, game, or any other visual application running on the server.',
+        parameters: [
+            { name: 'x', type: 'number', description: 'The x-coordinate of the top-left corner of the capture region.', required: true },
+            { name: 'y', type: 'number', description: 'The y-coordinate of the top-left corner of the capture region.', required: true },
+            { name: 'width', type: 'number', description: 'The width of the capture region.', required: true },
+            { name: 'height', type: 'number', description: 'The height of the capture region.', required: true },
+        ],
+        implementationCode: 'kicad_service_proxy::capture_screen_region',
+    },
     {
         name: 'Add Absolute Position Constraint',
         description: 'Fixes an electronic component to an absolute coordinate on the PCB along one or both axes. For example, you can lock a component to y=9, allowing its x-position to be determined by other forces like symmetry. Essential for connectors or parts with fixed mechanical constraints.',
@@ -149,6 +145,7 @@ const KICAD_TOOL_DEFINITIONS: ToolCreatorPayload[] = [
             { name: 'numberOfPins', type: 'number', description: 'The total number of pins for this component. Used for creating generic parts. Set to 0 if this is a pre-defined library part specified in componentValue.', required: true },
             { name: 'pinConnections', type: 'string', description: "Optional: A JSON string of an array of objects mapping pin numbers to net names for validation. E.g., '[{\"pin\": 1, \"net\": \"VCC\"}, {\"pin\": 2, \"net\": \"GND\"}]'.", required: false },
             { name: 'side', type: 'string', description: "The initial side of the board for the component ('top' or 'bottom'). Defaults to 'top'.", required: false },
+            { name: 'metaphysicalPropertiesJSON', type: 'string', description: "Optional: A JSON string describing the component's lore properties (e.g., '{\"Essence_Type\": \"Perception\", \"Aetheric_Affinity\": \"Psionic\"}').", required: false },
             { name: 'exportSVG', type: 'boolean', description: "Generate an SVG footprint of the component. (Used for demo visualization)", required: false },
             { name: 'exportGLB', type: 'boolean', description: "Generate a 3D GLB model of the component. (Used for demo visualization)", required: false }
         ],
@@ -164,6 +161,7 @@ const KICAD_TOOL_DEFINITIONS: ToolCreatorPayload[] = [
             { name: 'projectName', type: 'string', description: 'The unique name for this hardware project.', required: true },
             { name: 'netName', type: 'string', description: "The name of the net (e.g., 'GND', 'VCC', 'DATA0').", required: true },
             { name: 'pins', type: 'array', description: 'An array of component pin strings to connect to this net (e.g., ["U1-1", "R1-2"]).', required: true },
+            { name: 'ritualDescription', type: 'string', description: "Optional: A lore-friendly description of the magical act of creating this connection.", required: false },
         ],
         implementationCode: 'kicad_service_proxy::define_net'
     },
@@ -230,13 +228,14 @@ const KICAD_TOOL_DEFINITIONS: ToolCreatorPayload[] = [
     },
     {
         name: 'Update KiCad Component Positions',
-        description: 'Updates the positions of components on the .kicad_pcb file after arrangement and automatically calculates a new board outline to tightly fit the placed components.',
+        description: 'Updates the positions of components on the .kicad_pcb file and automatically calculates a new board outline to tightly fit the placed components.',
         category: 'Server',
         executionEnvironment: 'Server',
         purpose: 'To commit the refined component layout from the arrangement stage back to the KiCad board file and create the final, optimized board outline for manufacturing.',
         parameters: [
             { name: 'projectName', type: 'string', description: 'The unique name for this hardware project.', required: true },
             { name: 'componentPositionsJSON', type: 'string', description: `A JSON string of an object mapping component references to their new {x, y, rotation, side} coordinates. Example: '{"U1": {"x": 10, "y": 15, "rotation": 90, "side": "top"}, "R1": {"x": 25, "y": 15, "rotation": 0, "side": "bottom"}}'.`, required: true },
+            { name: 'boardPadding', type: 'number', description: 'Optional margin in mm to add around components when auto-sizing the board outline.', required: false },
         ],
         implementationCode: 'kicad_service_proxy::update_component_positions'
     },
@@ -279,221 +278,178 @@ const KICAD_TOOL_DEFINITIONS: ToolCreatorPayload[] = [
     }
 ];
 
-const OVERALL_PROGRESS_TOOL: ToolCreatorPayload = {
-    name: 'Overall Progress',
-    description: 'A UI panel that displays the agent\'s progress through the KiCad workflow and shows a detailed log of events.',
+const WORKFLOW_STAGES_TOOL: ToolCreatorPayload = {
+    name: 'Workflow Stages',
+    description: 'A UI panel that displays the agent\'s progress through the KiCad workflow stages.',
     category: 'UI Component',
     executionEnvironment: 'Client',
-    purpose: 'To provide the user with a clear, real-time view of the agent\'s progress and actions during the PCB design process.',
+    purpose: 'To provide the user with a clear, high-level, interactive view of the agent\'s progress and actions during the PCB design process.',
     parameters: [
-        { name: 'workflowSteps', type: 'array', description: 'List of workflow steps and their status.', required: true },
-        { name: 'kicadLog', type: 'array', description: 'Log messages from the KiCad workflow.', required: true },
+        { name: 'workflowSteps', type: 'array', description: 'List of workflow stages and their status.', required: true },
     ],
     implementationCode: `
-        const logScrollRef = React.useRef(null);
-    
-        React.useEffect(() => {
-            if (logScrollRef.current) {
-                logScrollRef.current.scrollTop = logScrollRef.current.scrollHeight;
-            }
-        }, [kicadLog]);
-
-        const currentStepIndexProgress = workflowSteps.findIndex(step => step.status === 'in-progress');
-        const activeStep = workflowSteps[currentStepIndexProgress];
-        
         return (
-            <div className="bg-gray-800/70 backdrop-blur-sm border border-gray-700 rounded-xl p-3 flex flex-col h-full text-white">
-                <h3 className="text-lg font-bold text-cyan-300 mb-2 text-center">Overall Progress</h3>
-                
-                <div className="flex-shrink-0 space-y-1 pl-1 max-h-48 overflow-y-auto pr-1 mb-2">
+            <div className="bg-gray-800/60 border border-gray-700 rounded-xl p-4 text-white">
+                <h3 className="text-lg font-bold text-indigo-300 mb-3">Project Workflow</h3>
+                <div className="space-y-4">
                     {workflowSteps.map((step, index) => {
-                        let statusIcon = '⚪'; let textColor = 'text-gray-500'; let iconColor = '';
-                        if (step.status === 'in-progress') { statusIcon = '●'; textColor = 'text-yellow-300'; iconColor = 'text-yellow-400'; }
-                        if (step.status === 'completed') { statusIcon = '●'; textColor = 'text-green-400'; iconColor = 'text-green-500'; }
+                        const isCompleted = step.status === 'completed';
+                        const isInProgress = step.status === 'in-progress';
+                        
+                        let statusColor = 'border-gray-600';
+                        if (isInProgress) statusColor = 'border-indigo-500';
+                        if (isCompleted) statusColor = 'border-green-500';
 
                         return (
-                            <div key={index} className={\`flex items-center gap-2 text-sm \${textColor}\`}>
-                                <span className={iconColor}>{statusIcon}</span>
-                                <span>{step.name}</span>
+                            <div key={index} className={"p-3 rounded-lg bg-gray-900/50 border-l-4 " + statusColor}>
+                                <div className="flex items-center justify-between">
+                                    <div>
+                                        <p className="font-semibold text-gray-400 text-sm">STAGE {index + 1}: {step.role}</p>
+                                        <h4 className="font-bold text-white text-base">{step.name}</h4>
+                                        <p className="text-xs text-gray-400">{step.description}</p>
+                                    </div>
+                                    <div className="flex items-center justify-center w-8 h-8 rounded-full bg-gray-700">
+                                        {isCompleted && <span className="text-green-400 text-xl">✓</span>}
+                                        {isInProgress && <div className="w-4 h-4 rounded-full bg-indigo-500 animate-pulse"></div>}
+                                    </div>
+                                </div>
                             </div>
                         )
                     })}
                 </div>
-
-                <div ref={logScrollRef} className="flex-grow bg-black/30 rounded p-2 overflow-y-auto min-h-0">
-                   {kicadLog.length > 0 ? kicadLog.map((log, i) => <div key={i} className={\`py-0.5 text-xs border-b border-slate-800/50 \${log.includes('ERROR') ? 'text-red-400' : 'text-slate-300'} break-words whitespace-pre-wrap font-mono\`}>{log}</div>) : <p className="text-slate-500 text-sm">Waiting for logs...</p>}
-               </div>
             </div>
         );
     `
 };
 
-const KICAD_DESIGN_PANEL_TOOL: ToolCreatorPayload = {
-    name: 'KiCad Design Automation Panel',
-    description: 'The main UI for the KiCad workflow, orchestrating all sub-panels for layout, heuristics, and progress monitoring.',
+const LEAD_ENGINEER_WORKBENCH_TOOL: ToolCreatorPayload = {
+    name: 'Lead Engineer Workbench',
+    description: 'The main UI for the KiCad workflow, orchestrating all sub-panels for layout, heuristics, and progress monitoring, following a human-in-the-loop Holacracy model.',
     category: 'UI Component',
     executionEnvironment: 'Client',
-    purpose: 'To provide a user-friendly, all-in-one interface for the complex hardware generation workflow, managed by an AI swarm.',
+    purpose: 'To provide a user-friendly, all-in-one interface for the complex hardware generation workflow, managed by an AI swarm and directed by a human Lead Engineer.',
     parameters: [
-        { name: 'onStartScript', type: 'object', description: 'Function to start the local simulation.', required: true },
-        { name: 'kicadLog', type: 'array', description: 'Log messages from the KiCad workflow.', required: true },
-        { name: 'isSwarmRunning', type: 'boolean', description: 'Flag indicating if the LLM agent is running.', required: true },
-        { name: 'scriptExecutionState', type: 'string', description: 'The current state of the script execution engine.', required: true },
-        { name: 'isLayoutPending', type: 'boolean', description: 'Flag indicating if the layout is paused for user interaction.', required: true },
-        { name: 'workflowSteps', type: 'array', description: 'List of workflow steps and their status.', required: true },
-        { name: 'getTool', type: 'object', description: 'Function to retrieve a tool definition by name.', required: true },
-        { name: 'generateSvg', type: 'boolean', description: 'Whether to generate SVG footprints during the script run.', required: true },
-        { name: 'setGenerateSvg', type: 'object', description: 'Function to toggle SVG generation.', required: true },
-        { name: 'generateGlb', type: 'boolean', description: 'Whether to generate 3D GLB models during the script run.', required: true },
-        { name: 'setGenerateGlb', type: 'object', description: 'Function to toggle GLB generation.', required: true },
-        { name: 'workflowScripts', type: 'array', description: 'An array of available saved scripts.', required: true },
+        // Core State & Setters
+        { name: 'userInput', type: 'string', description: 'Current value of the input.', required: true },
+        { name: 'setUserInput', type: 'object', description: 'Function to update the input value.', required: true },
+        { name: 'isSwarmRunning', type: 'boolean', description: 'Flag indicating if the agent is running.', required: true },
+        { name: 'workflowSteps', type: 'array', description: 'List of workflow stages and their status.', required: true },
         { name: 'currentLayoutData', type: 'object', description: 'Graph data for the interactive layout tool.', required: true },
+        { name: 'isLayoutInteractive', type: 'boolean', description: 'Flag for interactive layout mode.', required: true },
         { name: 'layoutHeuristics', type: 'object', description: 'Current heuristics for the layout simulation.', required: false },
-        { name: 'setLayoutHeuristics', type: 'object', description: 'Function to update the layout heuristics.', required: false },
-        { name: 'isLayoutInteractive', type: 'boolean', description: 'Flag to determine if the commit button should be active.', required: true },
-        { name: 'onCommitLayout', type: 'object', description: 'Callback function to commit the final layout.', required: true },
-        { name: 'onUpdateLayout', type: 'object', description: 'Callback function to update the layout data (e.g., rules).', required: true },
-        { name: 'isServerConnected', type: 'boolean', description: 'Flag indicating if the server is connected.', required: true },
-        { name: 'visibility', type: 'object', description: 'An object with boolean flags for different layers.', required: true },
+        { name: 'visibility', type: 'object', description: 'Visibility flags for different layers.', required: true },
+        { name: 'isServerConnected', type: 'boolean', description: 'Flag for server connection status.', required: true },
+        { name: 'isAutonomousMode', type: 'boolean', description: 'Flag indicating if the agent is in autonomous mode.', required: true },
+        { name: 'demoScripts', type: 'array', description: 'Array of available demo workflow scripts.', required: true },
+        { name: 'currentUserTask', type: 'object', description: 'The current high-level task object for the agent.', required: true },
+        
+        // Callbacks & Handlers
+        { name: 'onStartTask', type: 'object', description: 'Function to start the main design task.', required: true },
+        { name: 'onCommitLayout', type: 'object', description: 'Callback to commit the final layout.', required: true },
+        { name: 'onUpdateLayout', type: 'object', description: 'Callback to update layout data.', required: true },
+        { name: 'setLayoutHeuristics', type: 'object', description: 'Function to update layout heuristics.', required: true },
+        { name: 'setVisibility', type: 'object', description: 'Function to update layer visibility.', required: true },
+        { name: 'setIsAutonomousMode', type: 'object', description: 'Function to set the autonomous mode.', required: true },
+        
+        // Agent Dependencies
+        { name: 'startSwarmTask', type: 'object', description: 'Function to start an agent task.', required: true },
+        { name: 'allTools', type: 'array', description: 'List of all available tools.', required: true },
+        { name: 'getKicadSystemPrompt', type: 'object', description: 'Function to get the system prompt.', required: true },
+        { name: 'getTool', type: 'object', description: 'Function to retrieve a tool definition by name.', required: true },
+        
+        // Scripted Workflow Props
+        { name: 'scriptExecutionState', type: 'string', description: 'The current state of the script execution engine.', required: true },
+        { name: 'currentScriptStepIndex', type: 'number', description: 'The index of the currently executing script step.', required: true },
+        { name: 'stepStatuses', type: 'array', description: 'An array tracking the status of each script step.', required: true },
+        { name: 'onPlayPause', type: 'object', description: 'Callback to play or pause script execution.', required: true },
+        { name: 'onStop', type: 'object', description: 'Callback to stop script execution.', required: true },
+        { name: 'onStepForward', type: 'object', description: 'Callback to execute the next step.', required: true },
+        { name: 'onStepBackward', type: 'object', description: 'Callback to move the execution pointer back one step.', required: true },
+        { name: 'onRunFromStep', type: 'object', description: 'Callback to start execution from a specific step.', required: true },
     ],
     implementationCode: `
-        const [selectedScript, setSelectedScript] = React.useState(workflowScripts.length > 0 ? workflowScripts[0].workflow : []);
         const [selectedInspectorId, setSelectedInspectorId] = React.useState(null);
-
-        const handleScriptSelect = (e) => {
-            const scriptName = e.target.value;
-            const script = workflowScripts.find(s => s.name === scriptName);
-            if (script) {
-                setSelectedScript(script.workflow);
-            }
+        const [selectedScript, setSelectedScript] = React.useState('');
+        
+        const handleSubmit = () => {
+            if (!userInput.trim()) return;
+            onStartTask({ prompt: userInput, files: [], urls: [], useSearch: false, isAutonomous: isAutonomousMode }, startSwarmTask, allTools, getKicadSystemPrompt);
         };
-
+        
         const handleRunScript = () => {
-            if (selectedScript.length > 0) {
-                const selectedScriptName = workflowScripts.find(s => s.workflow === selectedScript)?.name || 'Untitled Script';
-                onStartScript(selectedScript, selectedScriptName);
+            if (!selectedScript) return;
+            const scriptToRun = demoScripts.find(s => s.name === selectedScript);
+            if (scriptToRun) {
+                const projectName = \`proj_\${Date.now()}\`;
+                const task = {
+                    isScripted: true,
+                    script: scriptToRun.workflow,
+                    projectName: projectName
+                };
+                startSwarmTask({ task, systemPrompt: getKicadSystemPrompt(projectName), sequential: true, allTools });
             }
         };
-
-        const isGenerating = isSwarmRunning || scriptExecutionState !== 'idle' || isLayoutPending;
-
-        let statusText = 'Idle';
-        if (isSwarmRunning) statusText = 'LLM Task Running...';
-        else if (scriptExecutionState !== 'idle') statusText = 'Script Running...';
-        else if (isLayoutPending) statusText = 'Layout Pending Commit...';
-
-        const layoutProps = {
-            graph: currentLayoutData,
-            layoutStrategy: currentLayoutData?.layoutStrategy || 'agent',
-            mode: 'pcb',
-            isLayoutInteractive: isLayoutInteractive,
-            onCommit: onCommitLayout,
-            onUpdateLayout: onUpdateLayout,
-            getTool: getTool,
-            heuristics: layoutHeuristics,
-            isServerConnected: isServerConnected,
-            visibility: visibility,
-        };
         
-        const rulesProps = {
-            rules: currentLayoutData?.rules || [],
-            onUpdateRules: (newRules) => onUpdateLayout(prev => ({ ...prev, rules: newRules })),
-        };
+        const isExecutingScript = scriptExecutionState !== 'idle' && currentUserTask?.isScripted;
         
-        const heuristicsProps = {
-            params: layoutHeuristics,
-            setParams: setLayoutHeuristics,
-            selectedAgent: null, // This can be expanded later
-            updateAgent: () => {},
-        };
-        
-        const progressProps = {
-            workflowSteps: workflowSteps,
-            kicadLog: kicadLog,
-        };
-
-        const selectedNode = React.useMemo(() => {
-            if (!selectedInspectorId || !currentLayoutData?.nodes) return null;
-            return currentLayoutData.nodes.find(n => n.id === selectedInspectorId);
-        }, [selectedInspectorId, currentLayoutData?.nodes]);
-
-        const inspectorProps = {
-            graph: currentLayoutData,
-            debugInfo: {},
-            selectedId: selectedInspectorId,
-            selectedNode: selectedNode,
-            onSelect: setSelectedInspectorId,
-            onHover: () => {},
+        const layoutProps = { graph: currentLayoutData, layoutStrategy: currentLayoutData?.layoutStrategy || 'agent', mode: 'pcb', isLayoutInteractive: isLayoutInteractive, onCommit: onCommitLayout, onUpdateLayout: onUpdateLayout, getTool: getTool, heuristics: layoutHeuristics, isServerConnected: isServerConnected, visibility: visibility };
+        const rulesProps = { rules: currentLayoutData?.rules || [], onUpdateRules: (newRules) => onUpdateLayout(prev => ({ ...prev, rules: newRules })) };
+        const visibilityProps = { visibility, setVisibility };
+        const selectedNode = React.useMemo(() => currentLayoutData?.nodes?.find(n => n.id === selectedInspectorId) || null, [selectedInspectorId, currentLayoutData?.nodes]);
+        const inspectorProps = { graph: currentLayoutData, debugInfo: {}, selectedId: selectedInspectorId, selectedNode, onSelect: setSelectedInspectorId, onHover: () => {} };
+        const workflowControllerProps = {
+            workflow: currentUserTask?.script || [],
+            executionState: scriptExecutionState,
+            currentStepIndex: currentScriptStepIndex,
+            stepStatuses: stepStatuses,
+            onPlayPause, onStop, onStepForward, onStepBackward, onRunFromStep
         };
 
         return (
-            <div className="h-full w-full flex flex-col gap-2">
-                <div className="flex-shrink-0 flex items-center justify-center gap-6 p-1 bg-gray-900/40 rounded-md">
-                    <div className="flex items-center">
-                        <input type="checkbox" id="generate-svg" checked={generateSvg} onChange={e => setGenerateSvg(e.target.checked)} disabled={isGenerating} className="h-4 w-4 rounded border-gray-500 bg-gray-700 text-indigo-500 focus:ring-indigo-600" />
-                        <label htmlFor="generate-svg" className="ml-2 text-sm text-gray-300">Generate SVGs</label>
-                    </div>
-                    <div className="flex items-center">
-                        <input type="checkbox" id="generate-glb" checked={generateGlb} onChange={e => setGenerateGlb(e.target.checked)} disabled={isGenerating} className="h-4 w-4 rounded border-gray-500 bg-gray-700 text-indigo-500 focus:ring-indigo-600" />
-                        <label htmlFor="generate-glb" className="ml-2 text-sm text-gray-300">Generate 3D Models</label>
+            <div className="h-full w-full grid grid-cols-12 gap-4">
+                <div className="col-span-3 h-full flex flex-col gap-4">
+                    {isExecutingScript ? (
+                        <UIToolRunner tool={getTool('Interactive Workflow Controller')} props={workflowControllerProps} />
+                    ) : (
+                        <UIToolRunner tool={getTool('Workflow Stages')} props={{ workflowSteps }} />
+                    )}
+                </div>
+                
+                <div className="col-span-6 h-full flex flex-col gap-4">
+                    {!isSwarmRunning && (
+                         <div className="bg-gray-800/60 border border-gray-700 rounded-xl p-4 space-y-4">
+                             <div>
+                                <h3 className="text-lg font-bold text-indigo-300 mb-2">1. Process Tension: Design a new PCB</h3>
+                                <textarea value={userInput} onChange={(e) => setUserInput(e.target.value)} placeholder="e.g., An 8-channel EEG board based on the ADS131M08..." className="w-full h-24 p-3 bg-gray-900 border border-gray-600 rounded-lg focus:ring-2 focus:ring-indigo-500" />
+                                <div className="flex items-center justify-between mt-2">
+                                    <div className="flex items-center"><input type="checkbox" id="autonomous-mode" checked={isAutonomousMode} onChange={(e) => setIsAutonomousMode(e.target.checked)} className="h-4 w-4 rounded border-gray-500 bg-gray-700 text-indigo-500" /><label htmlFor="autonomous-mode" className="ml-2 text-sm text-gray-300">Autonomous Mode</label></div>
+                                    <button onClick={handleSubmit} disabled={!userInput.trim()} className="bg-indigo-600 text-white font-semibold py-2 px-6 rounded-lg hover:bg-indigo-700 disabled:bg-gray-600">Start Task</button>
+                                </div>
+                            </div>
+                            <div className="border-t border-gray-700 pt-3">
+                                <h3 className="text-lg font-bold text-purple-300 mb-2">OR: Run a Demo Scenario</h3>
+                                <div className="flex gap-2">
+                                    <select value={selectedScript} onChange={e => setSelectedScript(e.target.value)} className="flex-grow bg-gray-900 border border-gray-600 rounded-lg p-2 focus:ring-2 focus:ring-indigo-500"><option value="">Select a demo script...</option>{demoScripts.map(s => <option key={s.name} value={s.name}>{s.name}</option>)}</select>
+                                    <button onClick={handleRunScript} disabled={!selectedScript} className="bg-purple-600 text-white font-semibold py-2 px-6 rounded-lg hover:bg-purple-700 disabled:bg-gray-600">Run Script</button>
+                                </div>
+                            </div>
+                         </div>
+                    )}
+                    <div className="flex-grow min-h-0">
+                       <UIToolRunner tool={getTool('Interactive Simulation View')} props={layoutProps} />
                     </div>
                 </div>
 
-                <div className="flex-grow grid grid-cols-1 lg:grid-cols-10 gap-4 min-h-0">
-                    <div className="lg:col-span-3 h-full flex flex-col gap-4 min-h-0">
-                        <div className="flex-1 min-h-0">
-                            <UIToolRunner tool={getTool('Layout Rules')} props={rulesProps} />
-                        </div>
-                        <div className="flex-1 min-h-0">
-                           <UIToolRunner tool={getTool('Layout Heuristics')} props={heuristicsProps} />
-                        </div>
-                    </div>
-                    
-                    <div className="lg:col-span-4 h-full flex flex-col gap-4 min-h-0">
-                       <div className="max-h-[35%] flex flex-col min-h-0">
-                           <UIToolRunner tool={getTool('Inspector')} props={inspectorProps} />
-                       </div>
-                       <div className="flex-grow min-h-0">
-                           <UIToolRunner tool={getTool('Interactive PCB Layout Tool')} props={layoutProps} />
-                       </div>
-                        <div className="flex-shrink-0 mt-2 bg-gray-900/50 border border-gray-700 rounded-xl p-3 space-y-3">
-                            <h4 className="text-base font-bold text-cyan-300">Run Saved Script</h4>
-                            <div className="flex gap-2 items-center">
-                                <select
-                                    onChange={handleScriptSelect}
-                                    defaultValue={workflowScripts.length > 0 ? workflowScripts[0].name : ''}
-                                    className="flex-grow bg-gray-800 border border-gray-600 rounded-lg p-2 text-sm focus:ring-2 focus:ring-cyan-500"
-                                    disabled={isGenerating}
-                                    aria-label="Select a saved script"
-                                >
-                                    {(workflowScripts || []).map(script => <option key={script.name} value={script.name}>{script.name}</option>)}
-                                </select>
-                                <button 
-                                    onClick={handleRunScript}
-                                    className="bg-cyan-600 hover:bg-cyan-500 text-white font-semibold py-2 px-4 rounded-lg shadow-lg transition-colors disabled:bg-cyan-900/50 disabled:cursor-not-allowed disabled:text-gray-400"
-                                >
-                                    Run Script
-                                </button>
-                            </div>
-                            {isGenerating && (
-                                <div className="text-center text-yellow-300 text-sm flex items-center justify-center gap-2 pt-2">
-                                    <svg className="animate-spin h-4 w-4 text-yellow-300" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
-                                    <span>Agent Busy: {statusText}</span>
-                                </div>
-                            )}
-                        </div>
-                    </div>
-
-                    <div className="lg:col-span-3 h-full flex flex-col gap-4 min-h-0">
-                        <div className="flex-grow min-h-0">
-                            <UIToolRunner tool={getTool('Overall Progress')} props={progressProps} />
-                        </div>
-                    </div>
+                <div className="col-span-3 h-full flex flex-col gap-4">
+                    <div className="flex-1 min-h-0"><UIToolRunner tool={getTool('Inspector')} props={inspectorProps} /></div>
+                    <div className="flex-1 min-h-0"><UIToolRunner tool={getTool('Layout Rules')} props={rulesProps} /></div>
+                    <UIToolRunner tool={getTool('Visibility')} props={visibilityProps} />
                 </div>
             </div>
         );
     `
 };
+
 
 const KICAD_INSTALLER_TOOL: ToolCreatorPayload = {
     name: 'Install KiCad Engineering Suite',
@@ -511,42 +467,49 @@ const KICAD_INSTALLER_TOOL: ToolCreatorPayload = {
             { name: 'kicad_ses_utils.py', content: ${JSON.stringify(KICAD_SES_UTILS_SCRIPT)} },
         ];
         
-        console.log(\`[INFO] Writing \${scriptsToWrite.length} KiCad Python service scripts to the server...\`);
+        runtime.logEvent(\`[INFO] Writing \${scriptsToWrite.length} KiCad Python service scripts to the server...\`);
         if (runtime.isServerConnected()) {
             for (const script of scriptsToWrite) {
                 try {
                     await runtime.tools.run('Server File Writer', { filePath: script.name, content: script.content });
                 } catch (e) {
-                    throw new Error(\`Failed to write script '\${script.name}' to server: \${e.message}\`);
+                    runtime.logEvent(\`[WARN] Failed to write script '\${script.name}' to server: \${e.message}\`);
                 }
             }
-            console.log('[INFO] KiCad Python service scripts written successfully.');
+            runtime.logEvent('[INFO] KiCad Python service scripts written successfully.');
         } else {
-             console.log('[INFO] Server not connected. Skipping Python script creation. KiCad tools will be simulated.');
+             runtime.logEvent('[INFO] Server not connected. Skipping Python script creation. KiCad tools will be simulated.');
         }
 
         // --- Step 2: Create the tool definitions ---
         const toolPayloads = [
             ...${JSON.stringify(KICAD_TOOL_DEFINITIONS)},
-            ${JSON.stringify(KICAD_DESIGN_PANEL_TOOL)},
-            ${JSON.stringify(OVERALL_PROGRESS_TOOL)}
+            ${JSON.stringify(LEAD_ENGINEER_WORKBENCH_TOOL)},
+            ${JSON.stringify(WORKFLOW_STAGES_TOOL)}
         ];
 
-        console.log(\`[INFO] Creating \${toolPayloads.length} KiCad tools...\`);
+        runtime.logEvent(\`[INFO] Creating \${toolPayloads.length} KiCad tools...\`);
+        const allTools = runtime.tools.list();
+        const existingToolNames = new Set(allTools.map(t => t.name));
+
         for (const payload of toolPayloads) {
+            if (existingToolNames.has(payload.name)) {
+                runtime.logEvent(\`[INFO] Tool '\${payload.name}' already exists. Skipping installation.\`);
+                continue;
+            }
             try {
                 await runtime.tools.run('Tool Creator', payload);
             } catch (e) {
-                console.warn(\`[WARN] Tool '\${payload.name}' might already exist. Skipping. Error: \${e.message}\`);
+                runtime.logEvent(\`[WARN] Failed to create new tool '\${payload.name}'. Error: \${e.message}\`);
             }
         }
         
         if (runtime.isServerConnected()) {
             try {
                 const { count } = await runtime.forceRefreshServerTools();
-                console.log(\`[INFO] Client state synchronized with server. \${count} server tools loaded.\`);
+                runtime.logEvent(\`[INFO] Client state synchronized with server. \${count} server tools loaded.\`);
             } catch (e) {
-                console.error('[ERROR] Failed to force-refresh server tools after installation:', e);
+                runtime.logEvent(\`[ERROR] Failed to force-refresh server tools after installation: \${e.message}\`);
             }
         }
         

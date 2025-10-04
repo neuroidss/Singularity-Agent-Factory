@@ -1,3 +1,4 @@
+// bootstrap/automation_tools.ts
 import type { ToolCreatorPayload } from '../types';
 
 export const AUTOMATION_TOOLS: ToolCreatorPayload[] = [

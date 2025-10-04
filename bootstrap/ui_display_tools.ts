@@ -1,108 +1,9 @@
 
+
+
 import type { ToolCreatorPayload } from '../types';
 
 export const UI_DISPLAY_TOOLS: ToolCreatorPayload[] = [
-    {
-        name: 'Mission Command',
-        description: 'Renders the main textarea for user input and the submit button.',
-        category: 'UI Component',
-        executionEnvironment: 'Client',
-        purpose: 'To provide the primary user interface for assigning high-level goals to the agent swarm.',
-        parameters: [
-            {name: 'userInput', type: 'string', description: 'Current value of the input', required: true},
-            {name: 'setUserInput', type: 'object', description: 'Function to update the input value', required: true},
-            {name: 'handleSubmit', type: 'object', description: 'Function to call on submit', required: true},
-            {name: 'isSwarmRunning', type: 'boolean', description: 'Whether the swarm is running.', required: true },
-            {name: 'useSearch', type: 'boolean', description: 'Whether web search is enabled.', required: true },
-            {name: 'setUseSearch', type: 'object', description: 'Function to toggle web search.', required: true },
-            {name: 'selectedModel', type: 'object', description: 'The currently selected AI model.', required: true },
-            {name: 'examplePrompts', type: 'array', description: 'A list of example prompts for the user to select.', required: true },
-        ],
-        implementationCode: `
-          const [selectedPrompt, setSelectedPrompt] = React.useState('');
-
-          const handlePromptSelect = (e) => {
-              const promptText = e.target.value;
-              setSelectedPrompt(promptText);
-              if (promptText) {
-                  setUserInput(promptText);
-              }
-          };
-        
-          const Spinner = () => (
-            <svg className="animate-spin h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-            </svg>
-          );
-          
-          const isDisabled = isSwarmRunning;
-          const buttonText = isSwarmRunning ? 'Agent is Active...' : 'Start Task';
-          let placeholderText = "Describe a high-level goal for the agent...";
-          if(isSwarmRunning) placeholderText = "Agent task is running...";
-
-          const isGoogleModel = selectedModel.provider === 'GoogleAI';
-    
-          return (
-            <div className="w-full bg-gray-800/60 border border-gray-700 rounded-xl p-4">
-                <h3 className="text-lg font-bold text-indigo-300 mb-2">Mission Command</h3>
-                <div className="mb-2">
-                    <select
-                        id="demo-prompt-select"
-                        value={selectedPrompt}
-                        onChange={handlePromptSelect}
-                        className="w-full bg-gray-900 border border-gray-600 rounded-lg p-2 focus:ring-2 focus:ring-indigo-500 text-sm"
-                        disabled={isDisabled}
-                        aria-label="Select an example prompt"
-                    >
-                        <option value="">Select an example prompt...</option>
-                        {(examplePrompts || []).map((p, i) => <option key={i} value={p.prompt}>{p.name}</option>)}
-                    </select>
-                </div>
-                <div className="relative w-full group">
-                    <textarea
-                        id="userInput"
-                        value={userInput}
-                        onChange={(e) => setUserInput(e.target.value)}
-                        placeholder={placeholderText}
-                        className="w-full h-24 p-3 bg-gray-900 border border-gray-600 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition-colors duration-200 resize-y disabled:cursor-not-allowed"
-                        disabled={isDisabled}
-                        onKeyDown={(e) => {
-                            if (e.key === 'Enter' && !e.shiftKey) {
-                                e.preventDefault();
-                                if (!isDisabled) handleSubmit();
-                            }
-                        }}
-                    />
-                </div>
-                <div className="flex items-center gap-2 pt-2">
-                    <input 
-                        type="checkbox" 
-                        id="use-search-main" 
-                        checked={useSearch && isGoogleModel} 
-                        onChange={e => setUseSearch(e.target.checked)} 
-                        disabled={!isGoogleModel}
-                        className="h-4 w-4 rounded border-gray-600 bg-gray-800 text-indigo-600 disabled:opacity-50 disabled:cursor-not-allowed"
-                    />
-                    <label 
-                        htmlFor="use-search-main" 
-                        className={\`text-sm \${isGoogleModel ? 'text-gray-300' : 'text-gray-500'}\`}
-                    >
-                        Enable Web Search (Google AI only)
-                    </label>
-                </div>
-                <button
-                    onClick={handleSubmit}
-                    disabled={isDisabled || !userInput.trim()}
-                    className="mt-3 w-full flex items-center justify-center gap-2 bg-indigo-600 text-white font-semibold py-2.5 px-4 rounded-lg hover:bg-indigo-700 disabled:bg-indigo-900/50 disabled:cursor-not-allowed disabled:text-gray-400 transition-all duration-200"
-                >
-                    {isSwarmRunning ? <Spinner /> : null}
-                    {buttonText}
-                </button>
-            </div>
-          );
-        `
-    },
     {
         name: 'Debug Log View',
         description: 'A floating panel that shows a running log of events, API call counts, and system reset functionality.',
@@ -306,7 +207,7 @@ export const UI_DISPLAY_TOOLS: ToolCreatorPayload[] = [
             
             // A simple chevron icon component
             const ChevronIcon = ({ open }) => (
-                <svg xmlns="http://www.w3.org/2000/svg" className={\`h-5 w-5 transition-transform duration-200 \${open ? 'rotate-180' : ''}\`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <svg xmlns="http://www.w3.org/2000/svg" className={"h-5 w-5 transition-transform duration-200 " + (open ? 'rotate-180' : '')} fill="none" viewBox="0 0 24 24" stroke="currentColor">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
                 </svg>
             );
