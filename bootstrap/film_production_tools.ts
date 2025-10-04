@@ -132,6 +132,141 @@ const FILM_PRODUCTION_TOOL_DEFINITIONS: ToolCreatorPayload[] = [
     }
 ];
 
+const PRODUCTION_MANAGER_PAYLOAD: ToolCreatorPayload = {
+    name: 'Production Manager',
+    description: 'A UI panel for saving, loading, exporting, and importing production sessions (mangas).',
+    category: 'UI Component',
+    executionEnvironment: 'Client',
+    purpose: 'To manage the lifecycle of creative productions, enabling persistence and sharing.',
+    parameters: [
+        { name: 'productionData', type: 'object', description: 'The current production data in memory.', required: false },
+        { name: 'setProductionData', type: 'object', description: 'Function to update the production data in memory.', required: true },
+    ],
+    implementationCode: `
+        const [sessions, setSessions] = React.useState([]);
+        const [sessionName, setSessionName] = React.useState('');
+        const [isLoading, setIsLoading] = React.useState(false);
+
+        const refreshSessions = React.useCallback(async () => {
+            setIsLoading(true);
+            const loadedSessions = await window.productionService.listProductionSessions();
+            setSessions(loadedSessions);
+            setIsLoading(false);
+        }, []);
+
+        React.useEffect(() => {
+            refreshSessions();
+        }, []);
+
+        const handleSave = async () => {
+            if (!sessionName.trim() || !productionData) {
+                alert('Please enter a session name and generate some data first.');
+                return;
+            }
+            const session = {
+                id: \`session_\${Date.now()}\`,
+                name: sessionName,
+                createdAt: new Date().toISOString(),
+                data: {
+                    ...productionData,
+                    storyboardFrames: Array.from(productionData.storyboardFrames || []),
+                    characterModels: Array.from(productionData.characterModels || []),
+                    locationModels: Array.from(productionData.locationModels || []),
+                    characterVoices: Array.from(productionData.characterVoices || []),
+                },
+            };
+            await window.productionService.saveProductionSession(session);
+            setSessionName('');
+            refreshSessions();
+        };
+
+        const handleLoad = async (sessionId) => {
+            const session = await window.productionService.loadProductionSession(sessionId);
+            if (session) {
+                setProductionData({
+                    ...session.data,
+                    storyboardFrames: new Map(session.data.storyboardFrames || []),
+                    characterModels: new Map(session.data.characterModels || []),
+                    locationModels: new Map(session.data.locationModels || []),
+                    characterVoices: new Map(session.data.characterVoices || []),
+                });
+            }
+        };
+
+        const handleDelete = async (sessionId) => {
+            if (window.confirm('Are you sure you want to delete this session?')) {
+                await window.productionService.deleteProductionSession(sessionId);
+                refreshSessions();
+            }
+        };
+
+        const handleExport = async (sessionId) => {
+            const session = await window.productionService.loadProductionSession(sessionId);
+            if (!session) return;
+            const blob = new Blob([JSON.stringify(session, null, 2)], { type: 'application/json' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = \`\${session.name.replace(/\\s+/g, '_')}.manga.json\`;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+        };
+        
+        const handleImport = (event) => {
+            const file = event.target.files[0];
+            if (!file) return;
+            const reader = new FileReader();
+            reader.onload = async (e) => {
+                try {
+                    const session = JSON.parse(e.target.result);
+                    // Basic validation
+                    if (session.id && session.name && session.data) {
+                        await window.productionService.saveProductionSession(session);
+                        refreshSessions();
+                    } else {
+                        throw new Error('Invalid manga file format.');
+                    }
+                } catch (err) {
+                    alert('Error importing file: ' + err.message);
+                }
+            };
+            reader.readAsText(file);
+        };
+
+        return (
+            <div className="bg-gray-900/50 p-3 rounded-lg h-full flex flex-col gap-2">
+                <h4 className="text-md font-bold text-green-400">Production Manager</h4>
+                <div className="flex gap-2">
+                    <input type="text" value={sessionName} onChange={e => setSessionName(e.target.value)} placeholder="New Session Name..." className="flex-grow bg-gray-800 border-gray-600 rounded p-1.5 text-sm" />
+                    <button onClick={handleSave} className="bg-green-600 hover:bg-green-500 font-semibold py-1.5 px-3 rounded-lg text-sm">Save</button>
+                </div>
+                <div className="flex-grow border-t border-gray-700 mt-2 pt-2 space-y-1 overflow-y-auto">
+                    {sessions.map(s => (
+                        <div key={s.id} className="bg-gray-800/70 p-2 rounded-md flex justify-between items-center">
+                            <div>
+                                <p className="font-semibold text-sm">{s.name}</p>
+                                <p className="text-xs text-gray-400">{new Date(s.createdAt).toLocaleString()}</p>
+                            </div>
+                            <div className="flex gap-1">
+                                <button onClick={() => handleLoad(s.id)} className="p-1.5 text-xs bg-blue-600 rounded">Load</button>
+                                <button onClick={() => handleExport(s.id)} className="p-1.5 text-xs bg-purple-600 rounded">Export</button>
+                                <button onClick={() => handleDelete(s.id)} className="p-1.5 text-xs bg-red-700 rounded">&times;</button>
+                            </div>
+                        </div>
+                    ))}
+                    {sessions.length === 0 && <p className="text-xs text-gray-500 text-center italic py-4">No saved sessions.</p>}
+                </div>
+                 <label className="w-full text-center bg-indigo-600 hover:bg-indigo-500 font-semibold py-2 rounded-lg cursor-pointer text-sm">
+                    Import Manga File
+                    <input type="file" accept=".json,.manga.json" onChange={handleImport} className="hidden" />
+                </label>
+            </div>
+        );
+    `
+};
+
 const PRODUCER_STUDIO_WORKBENCH_PAYLOAD: ToolCreatorPayload = {
     name: 'Producer Studio Workbench',
     description: 'A dedicated workspace for film production tasks, including script analysis, storyboarding, and content rating.',
@@ -143,6 +278,7 @@ const PRODUCER_STUDIO_WORKBENCH_PAYLOAD: ToolCreatorPayload = {
         { name: 'runtime', type: 'object', description: 'The agent runtime for AI calls.', required: true },
         { name: 'productionData', type: 'object', description: 'Shared state object for production assets.', required: false },
         { name: 'setProductionData', type: 'object', description: 'Function to update shared production data.', required: true },
+        { name: 'getTool', type: 'object', description: 'Function to get a tool by name.', required: true },
     ],
     implementationCode: `
       const [script, setScript] = React.useState(\`SCENE START
@@ -164,37 +300,25 @@ By whom?
 ELARA
 A figure cloaked in shadows. They fled towards the old observatory. Be careful, Kael. The shard warps time.
 
-SCENE END
-
-SCENE START
-
-EXT. CITY ROOFTOPS - NIGHT
-
-Kael, now equipped with a GRAPPLING HOOK, leaps across a wide gap between two rooftops, rain slicking the tiles.
-
-A SHADOWY FIGURE is ahead, clutching the glowing CHRONO-SHARD.
-
-KAEL
-(shouting)
-You can't control it! You'll tear the city apart!
-
-The Shadowy Figure turns, revealing only darkness under its hood, and holds up the shard. Time seems to slow down around them.
-
-SHADOWY FIGURE
-(voice distorted)
-Time is a cage. I will set us all free.
-
 SCENE END\`);
       
       const [isLoading, setIsLoading] = React.useState(false);
       const [loadingMessage, setLoadingMessage] = React.useState('');
-      const [animaticData, setAnimaticData] = React.useState(null); // { scenes: [], frames: Map }
-      const [characterCards, setCharacterCards] = React.useState(new Map());
-      const [locationCards, setLocationCards] = React.useState(new Map());
       const [musicPrompt, setMusicPrompt] = React.useState('tense cinematic underscore');
       const [isMusicPlaying, setIsMusicPlaying] = React.useState(false);
       const [playingDialogue, setPlayingDialogue] = React.useState(null);
-      const [characterVoices, setCharacterVoices] = React.useState(new Map());
+      
+      const animaticData = React.useMemo(() => {
+        if (!productionData || !productionData.parsedScript) return null;
+        return {
+            scenes: productionData.parsedScript.scenes,
+            frames: new Map(productionData.storyboardFrames || []),
+        };
+      }, [productionData]);
+
+      const characterCards = React.useMemo(() => new Map(productionData?.characterModels || []), [productionData]);
+      const locationCards = React.useMemo(() => new Map(productionData?.locationModels || []), [productionData]);
+      const characterVoices = React.useMemo(() => new Map(productionData?.characterVoices || []), [productionData]);
       
       const MALE_VOICES = ['Puck', 'Charon', 'Fenrir', 'Orus', 'Enceladus', 'Iapetus', 'Umbriel', 'Algenib', 'Gacrux', 'Alnilam', 'Zubenelgenubi', 'Sadaltager', 'Zephyr'];
       const FEMALE_VOICES = ['Kore', 'Leda', 'Aoede', 'Callirrhoe', 'Autonoe', 'Despina', 'Erinome', 'Laomedeia', 'Achernar', 'Schedar', 'Pulcherrima', 'Achird', 'Vindemiatrix', 'Sadachbia', 'Sulafat', 'Algieba'];
@@ -219,10 +343,9 @@ SCENE END\`);
       const handleGenerateManga = async () => {
         if (!script.trim()) return;
         setIsLoading(true); setLoadingMessage('Analyzing Script...'); 
-        setAnimaticData(null); setCharacterVoices(new Map()); setCharacterCards(new Map()); setLocationCards(new Map());
+        setProductionData({});
         
         try {
-          // 1. Analyze script to get scenes, characters, locations
           const analysisResult = await executeTool('Analyze Script for Production', { scriptText: script });
           if (!analysisResult.analysis?.scenes) throw new Error('Script analysis failed to return scenes.');
           
@@ -230,7 +353,6 @@ SCENE END\`);
           const uniqueCharacters = Array.from(new Set(scenes.flatMap(s => s.characters || [])));
           const uniqueLocations = Array.from(new Set(scenes.map(s => s.setting)));
 
-          // 2. Generate Character Model Sheets (The "World Model" for characters)
           const newCharacterCards = new Map();
           for (const charName of uniqueCharacters) {
               setLoadingMessage(\`Casting character: \${charName}...\`);
@@ -238,9 +360,7 @@ SCENE END\`);
               const imageResult = await executeTool('Generate Storyboard Frame', { sceneDescription: prompt });
               newCharacterCards.set(charName, 'data:image/jpeg;base64,' + imageResult.image_base64);
           }
-          setCharacterCards(newCharacterCards);
-
-          // 3. Generate Location Establishing Shots (The "World Model" for locations)
+          
           const newLocationCards = new Map();
           for (const locationName of uniqueLocations) {
              setLoadingMessage(\`Scouting location: \${locationName}...\`);
@@ -248,9 +368,7 @@ SCENE END\`);
              const imageResult = await executeTool('Generate Storyboard Frame', { sceneDescription: prompt });
              newLocationCards.set(locationName, 'data:image/jpeg;base64,' + imageResult.image_base64);
           }
-          setLocationCards(newLocationCards);
 
-          // 4. Voice Casting
           setLoadingMessage('Assigning character voices...');
           const voiceMap = new Map();
           let maleVoiceIndex = 0, femaleVoiceIndex = 0;
@@ -262,9 +380,7 @@ SCENE END\`);
             else { voiceName = (maleVoiceIndex + femaleVoiceIndex) % 2 === 0 ? MALE_VOICES[maleVoiceIndex++ % MALE_VOICES.length] : FEMALE_VOICES[femaleVoiceIndex++ % FEMALE_VOICES.length]; }
             voiceMap.set(char, voiceName);
           }
-          setCharacterVoices(voiceMap);
 
-          // 5. Generate Storyboard Frames using the new World Model context
           const frames = new Map();
           let frameCount = scenes.reduce((acc, s) => acc + (s.actions || []).length, 0);
           let currentFrame = 0;
@@ -275,11 +391,9 @@ SCENE END\`);
                 setLoadingMessage(\`Generating frame \${currentFrame} of \${frameCount}: "\${action.action_description}"...\`);
                 
                 const contextImages_base64 = [];
-                // Add character images for this scene
                 (scene.characters || []).forEach(char => {
                     if (newCharacterCards.has(char)) { contextImages_base64.push(newCharacterCards.get(char).split(',')[1]); }
                 });
-                // Add location image for this scene
                 if (newLocationCards.has(scene.setting)) { contextImages_base64.push(newLocationCards.get(scene.setting).split(',')[1]); }
 
                 let fullSceneDescription = \`\${scene.setting}: \${action.action_description}\`;
@@ -290,7 +404,6 @@ SCENE END\`);
             }
           }
           
-          setAnimaticData({ scenes, frames });
           setProductionData({
             parsedScript: analysisResult.analysis,
             storyboardFrames: frames,
@@ -350,21 +463,11 @@ SCENE END\`);
                 <button onClick={handleGenerateManga} disabled={isLoading} className="w-full bg-indigo-600 hover:bg-indigo-700 disabled:bg-gray-600 font-semibold py-2.5 rounded-lg">
                     {isLoading ? loadingMessage : 'Generate Manga'}
                 </button>
-                 {productionData && (
-                    <div className="mt-2 p-2 text-center bg-green-900/50 border border-green-700 rounded-lg text-sm text-green-300">
-                        ✅ Production data ready for Virtual Film Set.
-                    </div>
+                 {productionData && productionData.parsedScript && (
+                    <UIToolRunner tool={getTool('Production Manager')} props={{ productionData, setProductionData }} />
                 )}
                 {characterCards.size > 0 && <CardDisplay title="Characters" cards={characterCards} />}
                 {locationCards.size > 0 && <CardDisplay title="Locations" cards={locationCards} />}
-                <div className="pt-2 border-t border-gray-700">
-                     <h4 className="text-md font-bold text-purple-300 mb-1">Background Music</h4>
-                     <input type="text" value={musicPrompt} onChange={e => setMusicPrompt(e.target.value)} placeholder="Music prompt..." className="w-full bg-gray-900 border-gray-600 rounded p-1.5 text-sm"/>
-                     <div className="flex gap-2 mt-1">
-                        <button onClick={handlePlayMusic} disabled={isMusicPlaying} className="flex-1 bg-purple-600 hover:bg-purple-700 disabled:bg-gray-600 font-semibold py-1.5 rounded-lg text-sm">Play</button>
-                        <button onClick={handleStopMusic} disabled={!isMusicPlaying} className="flex-1 bg-red-700 hover:bg-red-600 disabled:bg-gray-600 font-semibold py-1.5 rounded-lg text-sm">Stop</button>
-                     </div>
-                </div>
             </div>
           </div>
           <div className="col-span-9 h-full flex flex-col bg-gray-900/50 border border-gray-700 rounded-xl p-4 gap-4 overflow-y-auto">
@@ -427,7 +530,8 @@ const FILM_PRODUCTION_INSTALLER_TOOL: ToolCreatorPayload = {
         runtime.logEvent('[INFO] Installing Producer Studio Suite...');
         const toolPayloads = [
             ...${JSON.stringify(FILM_PRODUCTION_TOOL_DEFINITIONS)},
-            ${JSON.stringify(PRODUCER_STUDIO_WORKBENCH_PAYLOAD)}
+            ${JSON.stringify(PRODUCER_STUDIO_WORKBENCH_PAYLOAD)},
+            ${JSON.stringify(PRODUCTION_MANAGER_PAYLOAD)},
         ];
         
         const allTools = runtime.tools.list();

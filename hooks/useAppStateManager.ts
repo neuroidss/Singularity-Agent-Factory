@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import { AI_MODELS } from '../constants';
 import type { AIModel, APIConfig, MainView } from '../types';
 
@@ -12,16 +12,29 @@ export const useAppStateManager = () => {
     const [selectedModel, setSelectedModel] = useState<AIModel>(AI_MODELS[0]);
     const [apiConfig, setApiConfig] = useState<APIConfig>(() => {
         let initialConfig: APIConfig = { 
+            googleAIAPIKey: process.env.API_KEY || '',
             openAIAPIKey: 'ollama',
             openAIBaseUrl: 'http://localhost:8008/v1',
             ollamaHost: 'http://localhost:11434',
         };
         try {
             const stored = localStorage.getItem('apiConfig');
-            if (stored) initialConfig = { ...initialConfig, ...JSON.parse(stored) };
+            if (stored) {
+                const parsed = JSON.parse(stored);
+                // Ensure the googleAIAPIKey from storage doesn't get overwritten by an empty process.env.
+                initialConfig = { 
+                    ...initialConfig, 
+                    ...parsed,
+                    googleAIAPIKey: parsed.googleAIAPIKey || initialConfig.googleAIAPIKey
+                };
+            }
         } catch {}
         return initialConfig;
     });
+
+    useEffect(() => {
+        localStorage.setItem('apiConfig', JSON.stringify(apiConfig));
+    }, [apiConfig]);
 
     const [generativeServiceConfig, setGenerativeServiceConfig] = useState({
         imageModel: 'gemini-2.5-flash-image-preview',

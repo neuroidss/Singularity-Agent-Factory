@@ -110,7 +110,7 @@ export const generateResponse = async (
 ): Promise<AIResponse> => {
     switch (model.provider) {
         case ModelProvider.GoogleAI:
-            return geminiService.generateWithNativeTools(userInput.text, systemInstruction, model.id, relevantTools, userInput.files);
+            return geminiService.generateWithNativeTools(userInput.text, systemInstruction, model.id, apiConfig, relevantTools, userInput.files);
         
         case ModelProvider.OpenAI_API:
              return openAIService.generateWithTools(userInput.text, systemInstruction, model.id, apiConfig, relevantTools, userInput.files);
@@ -146,7 +146,7 @@ export const generateTextResponse = async (
 ): Promise<string> => {
     switch (model.provider) {
         case ModelProvider.GoogleAI:
-            return geminiService.generateText(prompt, systemInstruction, model.id, files);
+            return geminiService.generateText(prompt, systemInstruction, model.id, apiConfig, files);
         case ModelProvider.OpenAI_API:
              return openAIService.generateText(prompt, systemInstruction, model.id, apiConfig, files);
         case ModelProvider.Ollama:
@@ -172,9 +172,9 @@ export const generateImages = async (
     switch (model.provider) {
         case ModelProvider.GoogleAI:
             if (model.id === 'gemini-2.5-flash-image-preview') {
-                return geminiService.generateImageWithFlash(prompt, model.id, contextImages_base64);
+                return geminiService.generateImageWithFlash(prompt, model.id, apiConfig, contextImages_base64);
             }
-            return geminiService.generateImages(prompt, model.id);
+            return geminiService.generateImages(prompt, model.id, apiConfig);
         // Other providers can be added here in the future
         default:
             throw new Error(`Image generation is not supported for the selected model provider: ${model.provider}`);
@@ -216,9 +216,9 @@ export const filterToolsWithLLM = async (
     }
 };
 
-export const contextualizeWithSearch = async (userInput: { text: string, files: any[] }): Promise<{ summary: string; sources: any[] }> => {
+export const contextualizeWithSearch = async (userInput: { text: string, files: any[] }, apiConfig: APIConfig): Promise<{ summary: string; sources: any[] }> => {
     // For now, only Gemini supports this. We can add fallbacks for other providers later if needed.
-    return geminiService.generateWithGoogleSearch(userInput.text, userInput.files);
+    return geminiService.generateWithGoogleSearch(userInput.text, apiConfig, userInput.files);
 };
 
 export const generateAudioStream = async (
@@ -233,7 +233,7 @@ export const generateAudioStream = async (
 ) => {
     switch (model.provider) {
         case ModelProvider.GoogleAI:
-            return geminiService.generateAudioStream(prompt, voice, model.id, context, contextAudio_base64, contextImage_base64);
+            return geminiService.generateAudioStream(prompt, voice, model.id, apiConfig, context, contextAudio_base64, contextImage_base64);
         default:
             throw new Error(`Audio generation is not supported for model provider: ${model.provider}`);
     }
@@ -247,7 +247,7 @@ export const connectToMusicSession = async (
 ) => {
      switch (model.provider) {
         case ModelProvider.GoogleAI:
-            return geminiService.connectToMusicSession(callbacks);
+            return geminiService.connectToMusicSession(callbacks, apiConfig);
         default:
             throw new Error(`Music generation is not supported for model provider: ${model.provider}`);
     }

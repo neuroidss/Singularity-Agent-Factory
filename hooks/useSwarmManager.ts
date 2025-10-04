@@ -193,7 +193,8 @@ export const useSwarmManager = (props: UseSwarmManagerProps) => {
                      logEvent('🔎 Performing web search for additional context...');
                     try {
                         setApiCallCount(prev => ({ ...prev, 'gemini-2.5-flash': (prev['gemini-2.5-flash'] || 0) + 1 }));
-                        const searchResult = await contextualizeWithSearch({ text: `Find technical data for this request: "${currentUserTask.userRequest.text}"`, files: currentUserTask.userRequest.files });
+                        // Fix: The call to contextualizeWithSearch was missing the required `apiConfig` argument.
+                        const searchResult = await contextualizeWithSearch({ text: `Find technical data for this request: "${currentUserTask.userRequest.text}"`, files: currentUserTask.userRequest.files }, apiConfig);
                         if (searchResult.summary) {
                             const sourceList = searchResult.sources.map(s => `- ${s.title}: ${s.uri}`).join('\n');
                             finalUserRequestText = `User request: "${currentUserTask.userRequest.text}"\n\nWeb Search Results:\n${searchResult.summary}\nSources:\n${sourceList}`;

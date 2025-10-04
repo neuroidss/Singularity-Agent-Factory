@@ -96,6 +96,7 @@ export interface AIModel {
 export type HuggingFaceDevice = 'wasm' | 'webgpu';
 
 export interface APIConfig {
+  googleAIAPIKey?: string;
   openAIAPIKey:string;
   openAIBaseUrl: string;
   ollamaHost: string;
@@ -231,3 +232,20 @@ export interface ScoredTool {
 }
 
 export type ToolRelevanceMode = 'Embeddings' | 'All' | 'LLM';
+
+// --- New types for Production/Manga Generation ---
+
+export type ProductionData = {
+  parsedScript?: any;
+  storyboardFrames?: Array<[string, string]>; // Map serialized to array
+  characterModels?: Array<[string, string]>; // Map serialized to array
+  locationModels?: Array<[string, string]>; // Map serialized to array
+  characterVoices?: Array<[string, string]>; // Map serialized to array
+};
+
+export interface ProductionSession {
+  id: string; // Unique ID, e.g., a timestamp
+  name: string; // User-provided name for the session
+  createdAt: string; // ISO date string
+  data: ProductionData;
+}

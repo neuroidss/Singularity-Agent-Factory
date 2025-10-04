@@ -1,13 +1,14 @@
 // VIBE_NOTE: Do not escape backticks or dollar signs in template literals in this file.
 // Escaping is only for 'implementationCode' strings in tool definitions.
 import { GoogleGenAI, Type, FunctionDeclaration, GenerateContentResponse, Modality } from "@google/genai";
-import type { AIResponse, LLMTool, ToolParameter, AIToolCall } from "../types";
+import type { AIResponse, LLMTool, ToolParameter, AIToolCall, APIConfig } from "../types";
 
-const getAIClient = (): GoogleGenAI => {
-    if (typeof process === 'undefined' || !process.env || !process.env.API_KEY) {
-        throw new Error("Google AI API Key not found. It must be set in the process.env.API_KEY environment variable.");
+const getAIClient = (apiKey?: string): GoogleGenAI => {
+    const key = apiKey || process.env.API_KEY;
+    if (!key) {
+        throw new Error("Google AI API Key not found. Please set it in the AI Model configuration panel or via the process.env.API_KEY environment variable.");
     }
-    return new GoogleGenAI({ apiKey: process.env.API_KEY });
+    return new GoogleGenAI({ apiKey: key });
 };
 
 const sanitizeForFunctionName = (name: string): string => {
@@ -119,10 +120,11 @@ export const generateWithNativeTools = async (
     userInput: string,
     systemInstruction: string,
     modelId: string,
+    apiConfig: APIConfig,
     relevantTools: LLMTool[],
     files: { name: string, type: string, data: string }[] = []
 ): Promise<AIResponse> => {
-    const ai = getAIClient();
+    const ai = getAIClient(apiConfig.googleAIAPIKey);
     const { functionDeclarations, toolNameMap } = buildGeminiTools(relevantTools);
     let rawResponseForDebug = "";
 
@@ -160,9 +162,10 @@ export const generateText = async (
     prompt: string,
     systemInstruction: string,
     modelId: string,
+    apiConfig: APIConfig,
     files: { name: string, type: string, data: string }[] = []
 ): Promise<string> => {
-    const ai = getAIClient();
+    const ai = getAIClient(apiConfig.googleAIAPIKey);
     
     const parts: any[] = [{ text: prompt }];
     for (const file of files) {
@@ -191,8 +194,8 @@ export const generateText = async (
     }
 };
 
-export const generateImages = async (prompt: string, modelId: string): Promise<any> => {
-    const ai = getAIClient();
+export const generateImages = async (prompt: string, modelId: string, apiConfig: APIConfig): Promise<any> => {
+    const ai = getAIClient(apiConfig.googleAIAPIKey);
     const requestPayload = {
         model: modelId,
         prompt: prompt,
@@ -210,8 +213,8 @@ export const generateImages = async (prompt: string, modelId: string): Promise<a
     }
 };
 
-export const generateImageWithFlash = async (prompt: string, modelId: string, contextImages_base64?: string[]): Promise<any> => {
-    const ai = getAIClient();
+export const generateImageWithFlash = async (prompt: string, modelId: string, apiConfig: APIConfig, contextImages_base64?: string[]): Promise<any> => {
+    const ai = getAIClient(apiConfig.googleAIAPIKey);
 
     const parts: any[] = [];
     
@@ -252,9 +255,10 @@ export const generateImageWithFlash = async (prompt: string, modelId: string, co
 
 export const generateWithGoogleSearch = async (
     prompt: string,
+    apiConfig: APIConfig,
     files: { name: string; type: string; data: string }[] = []
 ): Promise<{ summary: string; sources: any[] }> => {
-    const ai = getAIClient();
+    const ai = getAIClient(apiConfig.googleAIAPIKey);
 
     const parts: any[] = [{ text: prompt }];
     for (const file of files) {
@@ -294,11 +298,12 @@ export const generateAudioStream = async (
     prompt: string,
     voice: string,
     modelId: string,
+    apiConfig: APIConfig,
     context?: string,
     contextAudio_base64?: string,
     contextImage_base64?: string
 ) => {
-    const ai = getAIClient();
+    const ai = getAIClient(apiConfig.googleAIAPIKey);
     const config = {
         responseModalities: ['AUDIO' as const],
         speechConfig: {
@@ -328,9 +333,10 @@ export const generateAudioStream = async (
 };
 
 export const connectToMusicSession = async (
-    callbacks: any
+    callbacks: any,
+    apiConfig: APIConfig
 ) => {
-    const ai = getAIClient();
+    const ai = getAIClient(apiConfig.googleAIAPIKey);
     try {
         // This is a hypothetical API structure based on the user's code.
         // The user's original code had `apiVersion: "v1alpha"`, which suggests a preview API.

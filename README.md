@@ -24,7 +24,7 @@ This project is built upon a minimal, powerful, and reusable agentic framework d
 The framework consists of three primary libraries:
 
 1.  **Core (`framework/core.ts`):** Contains the primordial tools necessary for agent self-evolution. This includes the **`Tool Creator`** (the "tool for making tools") and the **`Workflow Creator`**, which allow the agent to learn new skills and adapt to novel problems.
-2.  **MCP (`framework/mcp.ts`):** Provides the generic **Master Control Program** library for creating and managing backend microservices. This "MCP for making MCPs" allows the agent to spawn, monitor, and terminate any number of independent server processes (e.g., for KiCad, Gazebo, or custom AI services) without any prior knowledge of their implementation.
+2.  **MCP (`framework/mcp.ts`):** Provides the generic **Model Context Protocol** library for creating and managing backend microservices. This "MCP for making MCPs" allows the agent to spawn, monitor, and terminate any number of independent server processes (e.g., for KiCad, Gazebo, or custom AI services) without any prior knowledge of their implementation.
 3.  **Automation (`framework/automation.ts`):** Houses fundamental patterns for agent learning, such as the ability to create new skills by observing human actions.
 
 This modular architecture ensures that the core framework is domain-agnostic and can be potentially packaged and used as a standalone foundation for other agentic projects, while application-specific tools (like the KiCad or Aetherium suites) reside in the `modules/` directory as distinct layers.

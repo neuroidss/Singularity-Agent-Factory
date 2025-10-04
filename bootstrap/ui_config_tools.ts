@@ -93,7 +93,7 @@ export const UI_CONFIG_TOOLS: ToolCreatorPayload[] = [
               case 'OpenAI_API':
                 return <p className="text-xs text-gray-400 mt-1">Works with any OpenAI-compatible API (e.g., a local Ollama server).</p>;
               default:
-                return <p className="text-xs text-gray-400 mt-1">Google AI API key is read from the 'process.env.API_KEY' environment variable.</p>;
+                return <p className="text-xs text-gray-400 mt-1">API key is read from the 'process.env.API_KEY' environment variable or can be entered below.</p>;
             }
           }
     
@@ -122,6 +122,21 @@ export const UI_CONFIG_TOOLS: ToolCreatorPayload[] = [
                 {renderProviderHelpText()}
               </div>
     
+              {provider === 'GoogleAI' && (
+                <div className="pt-2 border-t border-gray-700">
+                    <label htmlFor="googleAIAPIKey" className="block text-sm font-medium text-gray-300 mb-1">Gemini API Key</label>
+                    <input
+                      type="password"
+                      id="googleAIAPIKey"
+                      name="googleAIAPIKey"
+                      value={apiConfig.googleAIAPIKey || ''}
+                      onChange={handleConfigChange}
+                      placeholder="Enter Gemini API Key here"
+                      className="w-full bg-gray-700 border border-gray-600 rounded-lg p-2 focus:ring-2 focus:ring-indigo-500"
+                    />
+                </div>
+              )}
+
               {provider === 'OpenAI_API' && (
                 <div className="space-y-3 pt-2 border-t border-gray-700">
                   <div>

@@ -6,6 +6,7 @@ import UIToolRunner from './components/UIToolRunner';
 import { loadStateFromStorage, saveStateToStorage } from './versioning';
 import { EXAMPLE_PROMPTS, WORKFLOW_SCRIPTS } from './bootstrap/demo_presets';
 import { clearAllCaches, getAssetBlob, setAssetBlob } from './services/cacheService';
+import * as productionService from './services/productionService';
 import * as aiService from './services/aiService';
 
 import type { LLMTool, EnrichedAIResponse, AIToolCall, MainView, AIModel, APIConfig, ExecuteActionFunction } from './types';
@@ -19,13 +20,16 @@ import { useAppRuntime } from './hooks/useAppRuntime';
 import { useToolRelevance } from './hooks/useToolRelevance';
 import { useKnowledgeGraphManager } from './hooks/useKnowledgeGraphManager';
 
-// Expose cache functions globally for UI tools compiled from strings.
+// Expose cache and production services globally for UI tools compiled from strings.
 (window as any).cacheService = { getAssetBlob, setAssetBlob, clearAllCaches };
+(window as any).productionService = productionService;
+
 
 // Add a declaration for the global executeActionRef
 declare global {
     interface Window {
         executeActionRef?: React.MutableRefObject<ExecuteActionFunction | null>;
+        productionService: typeof productionService;
     }
 }
 
@@ -40,7 +44,7 @@ const App: React.FC = () => {
         nets: true,
     });
     const [isBootstrapping, setIsBootstrapping] = useState(true);
-    const [productionData, setProductionData] = useState(null);
+    const [productionData, setProductionData] = useState<any>(null);
     const [observationHistory, setObservationHistory] = useState<AIToolCall[]>([]);
 
     const executeActionRef = useRef<ExecuteActionFunction | null>(null);
@@ -343,7 +347,7 @@ const App: React.FC = () => {
                 return <UIToolRunner tool={getTool('Virtual Film Set Workbench')} props={filmSetProps} />;
             }
             case 'PRODUCER_STUDIO': {
-                const producerProps = { executeTool, runtime, productionData, setProductionData };
+                const producerProps = { executeTool, runtime, productionData, setProductionData, getTool };
                 return <UIToolRunner tool={getTool('Producer Studio Workbench')} props={producerProps} />;
             }
             case 'AETHERIUM_GAME': {
